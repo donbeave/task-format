@@ -150,14 +150,23 @@ pub fn wait_terminal_state(
     run_dir: &std::path::Path,
     deadline: Duration,
 ) -> anyhow::Result<Status> {
+    // herdr's per-frame classification flickers, so a terminal state must hold before we gate on
+    // it: an IDLE blip right after prompt injection (before the agent picks up work) and a
+    // BLOCKED misread while a spinner renders must both pass unnoticed.
+    const WARMUP: Duration = Duration::from_secs(90);
+    const SETTLE: Duration = Duration::from_secs(30);
     let started = Instant::now();
+    let mut candidate: Option<(String, Duration)> = None;
     loop {
         herdr::wait_terminal(manifest, 300_000);
         let status = check(manifest, run_dir).context("status check failed")?;
-        if status.terminal() {
+        let elapsed = started.elapsed();
+        let (next, confirmed) = latch_decision(&candidate, elapsed, &status.state, WARMUP, SETTLE);
+        candidate = next;
+        if confirmed {
             return Ok(status);
         }
-        if started.elapsed() >= deadline {
+        if elapsed >= deadline {
             let _ = herdr::prompt(manifest, "/goal clear");
             return Ok(Status {
                 state: KILLED_TIMEOUT.to_string(),
@@ -167,10 +176,105 @@ pub fn wait_terminal_state(
                 goal_verdicts: 0,
             });
         }
+        std::thread::sleep(Duration::from_secs(10));
+    }
+}
+
+/// Stability latch over observed states. `elapsed` is time since polling began, `candidate` the
+/// terminal state seen last (with the elapsed time it was first seen at). A terminal state is
+/// confirmed when it has held for `settle`; a bare IDLE inside `warmup` is a pre-work blip and
+/// resets the latch; anything RUNNING resets it too. Returns the next candidate and whether the
+/// current state is confirmed terminal.
+fn latch_decision(
+    candidate: &Option<(String, Duration)>,
+    elapsed: Duration,
+    state: &str,
+    warmup: Duration,
+    settle: Duration,
+) -> (Option<(String, Duration)>, bool) {
+    if state == RUNNING {
+        return (None, false);
+    }
+    if state == IDLE && elapsed < warmup {
+        return (None, false);
+    }
+    match candidate {
+        Some((seen, at)) if seen == state => {
+            let confirmed = elapsed.saturating_sub(*at) >= settle;
+            (candidate.clone(), confirmed)
+        }
+        _ => (Some((state.to_string(), elapsed)), false),
     }
 }
 
 /// A run that must not be promoted when the agent is still working.
 pub fn is_promotable(status: &Status) -> bool {
     matches!(status.state.as_str(), GOAL_MET | IDLE | GOAL_CLEARED_ERROR)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const WARMUP: Duration = Duration::from_secs(90);
+    const SETTLE: Duration = Duration::from_secs(30);
+
+    fn observe(
+        candidate: &Option<(String, Duration)>,
+        elapsed: u64,
+        state: &str,
+    ) -> (Option<(String, Duration)>, bool) {
+        latch_decision(
+            candidate,
+            Duration::from_secs(elapsed),
+            state,
+            WARMUP,
+            SETTLE,
+        )
+    }
+
+    #[test]
+    fn idle_blip_inside_warmup_never_confirms() {
+        // prompt injected at t=0, herdr reports idle at t=40 (agent has not picked up work yet)
+        let (candidate, confirmed) = observe(&None, 40, IDLE);
+        assert!(!confirmed);
+        let (_, confirmed) = observe(&candidate, 80, IDLE);
+        assert!(
+            !confirmed,
+            "an idle still inside warmup must stay unconfirmed"
+        );
+    }
+
+    #[test]
+    fn idle_after_warmup_confirms_once_it_holds() {
+        let (candidate, confirmed) = observe(&None, 200, IDLE);
+        assert!(!confirmed);
+        // the same state, re-observed a full settle later
+        let (_, confirmed) = observe(&candidate, 240, IDLE);
+        assert!(confirmed);
+    }
+
+    #[test]
+    fn working_resets_the_latch_and_a_new_state_starts_over() {
+        let (candidate, _) = observe(&None, 200, IDLE);
+        let (candidate, confirmed) = observe(&candidate, 210, RUNNING);
+        assert!(!confirmed);
+        assert!(candidate.is_none());
+        // blocked appears, but only for one poll: a spinner misread, not a dialog
+        let (candidate, confirmed) = observe(&candidate, 220, BLOCKED);
+        assert!(!confirmed);
+        let (candidate, confirmed) = observe(&candidate, 260, RUNNING);
+        assert!(!confirmed);
+        assert!(candidate.is_none());
+        let _ = candidate;
+    }
+
+    #[test]
+    fn goal_met_needs_settle_but_no_warmup() {
+        // an instant GOAL_MET (trivial task) is authoritative: warmup applies to IDLE only
+        let (candidate, confirmed) = observe(&None, 10, GOAL_MET);
+        assert!(!confirmed);
+        let (_, confirmed) = observe(&candidate, 45, GOAL_MET);
+        assert!(confirmed);
+    }
 }
