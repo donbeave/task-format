@@ -1,6 +1,6 @@
-# keep the build context small: the crate plus the image assets only
+# keep the build context small: the crate plus the image assets only.
+# images/preload/postgres.tar must stay IN the context — images/base COPYs it to /opt/preload.
 target/
-images/preload/postgres.tar
 experiments/
 docs/
 reference/

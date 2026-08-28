@@ -4,8 +4,9 @@
 #
 # Stage 1 compiles the crate; stage 2 ships only the static-ish binary on bare bookworm-slim.
 # The runtime image needs no git/docker/herdr: those live in harness-base. What it does need is
-# the same glibc the base image uses, hence bookworm-slim as the export base.
-FROM rust:1.98-slim AS build
+# the same glibc the base image uses, hence the bookworm-pinned rust image (rust:*-slim tracks
+# current Debian stable = trixie, whose glibc is newer than bookworm's) and bookworm-slim export.
+FROM rust:1.98-bookworm AS build
 
 WORKDIR /build
 # manifests first so the dependency layer caches independently of the sources

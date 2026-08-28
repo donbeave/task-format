@@ -401,7 +401,8 @@ fn check_forbidden_paths(root: &Path, base: &str, paths: &[String]) -> CheckResu
     };
     let mut rc = 0;
     for p in paths {
-        if changed.iter().any(|f| f == p) {
+        let dir_prefix = format!("{p}/");
+        if changed.iter().any(|f| f == p || f.starts_with(&dir_prefix)) {
             lines.push(format!("CHANGED {p}"));
             rc = 1;
         } else {
