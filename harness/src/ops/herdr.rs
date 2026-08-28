@@ -50,7 +50,8 @@ pub fn wait_terminal(manifest: &Manifest, timeout_ms: u64) {
     let _ = docker::exec(&manifest.container, Some("agent"), &env(), &args, false);
 }
 
-/// `herdr agent rename <pane> task` — the stable target name attach/status use.
+/// `herdr agent rename <pane> task` — the stable target name attach/status use. The pane exists
+/// before herdr registers the agent record for it, so poll until the rename lands.
 pub fn rename_to_task(manifest: &Manifest) -> anyhow::Result<()> {
     let args = vec![
         HERDR.to_string(),
@@ -59,7 +60,17 @@ pub fn rename_to_task(manifest: &Manifest) -> anyhow::Result<()> {
         manifest.pane.clone(),
         "task".to_string(),
     ];
-    docker::exec_ok(&manifest.container, Some("agent"), &env(), &args).map(|_| ())
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    loop {
+        match docker::exec_ok(&manifest.container, Some("agent"), &env(), &args) {
+            Ok(_) => return Ok(()),
+            Err(err) if std::time::Instant::now() < deadline => {
+                redact::eemit(&format!("rename not yet possible ({err:#}); retrying"));
+                std::thread::sleep(std::time::Duration::from_secs(5));
+            }
+            Err(err) => return Err(err),
+        }
+    }
 }
 
 /// `herdr agent prompt <target> "<text>"` — bracketed-paste + Enter; refuses on an open dialog.
