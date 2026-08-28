@@ -17,13 +17,14 @@ pub mod selftest;
 pub mod status;
 pub mod verify;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
 
 use crate::cli::Cli;
 use crate::config::{ExperimentConfig, Resolved};
 use crate::interactive::Interaction;
+use crate::runstate::{MANIFEST_FILE, Manifest};
 
 /// Everything a command needs besides its own arguments.
 pub struct Ctx {
@@ -156,6 +157,86 @@ pub fn resolve_task_arg(tasks_dir: &std::path::Path, task: &str) -> anyhow::Resu
         candidate = candidate.display(),
         as_path = as_path.display()
     )
+}
+
+/// How many recent run ids the "no such run" hint lists.
+pub const RECENT_RUN_HINTS: usize = 5;
+
+/// Resolve a run argument for `status` / `gate` / `promote` / `attach`. Accepted forms, in order:
+///
+/// 1. the run-dir id under `runs_dir` (what the manifests record);
+/// 2. the run's container name, `harness-<run id>` — the name `docker ps` shows;
+/// 3. any other directory whose manifest `container` field equals the argument, so a future
+///    container-naming change cannot break the argument.
+///
+/// On no match the error names the path that was tried and lists the newest run ids.
+pub fn resolve_run_arg(resolved: &Resolved, arg: &str) -> anyhow::Result<PathBuf> {
+    let runs_dir = resolved.runs_dir();
+    let direct = resolved.run_dir(arg);
+    if direct.is_dir() {
+        return Ok(direct);
+    }
+    // `harness-<run id>`: retry with the prefix stripped. A run dir whose manifest is not readable
+    // yet still counts — the id is unambiguous on its own.
+    if let Some(run_id) = arg.strip_prefix(crate::ops::container::CONTAINER_PREFIX) {
+        let candidate = runs_dir.join(run_id);
+        if candidate.is_dir() {
+            match Manifest::load(&candidate) {
+                Ok(manifest) => {
+                    if manifest.container == arg {
+                        return Ok(candidate);
+                    }
+                }
+                // no manifest (or an unreadable one): the stripped id is enough
+                Err(_) => return Ok(candidate),
+            }
+        }
+    }
+    let recent = recent_runs(&runs_dir);
+    let by_container = recent
+        .iter()
+        .find(|(dir, _)| Manifest::load(dir).is_ok_and(|manifest| manifest.container == arg))
+        .map(|(dir, _)| dir.clone());
+    if let Some(dir) = by_container {
+        return Ok(dir);
+    }
+    bail!(
+        "no such run: {} (nothing in {} matches {arg:?} as a run id, as a container name \
+         harness-<run id>, or as a manifest container); recent runs: {}",
+        direct.display(),
+        runs_dir.display(),
+        if recent.is_empty() {
+            "(none)".to_string()
+        } else {
+            recent
+                .iter()
+                .take(RECENT_RUN_HINTS)
+                .map(|(_, id)| id.clone())
+                .collect::<Vec<_>>()
+                .join(", ")
+        }
+    )
+}
+
+/// Run ids under `runs_dir`, newest first: `(run dir, run id)` for every dir holding a manifest.
+/// Runs and experiment dirs (`exp-*`, `repos`) share `runs_dir`, so a directory without a manifest
+/// is not a run.
+pub fn recent_runs(runs_dir: &Path) -> Vec<(PathBuf, String)> {
+    let Ok(entries) = std::fs::read_dir(runs_dir) else {
+        return Vec::new();
+    };
+    let mut runs: Vec<(PathBuf, String)> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|dir| dir.is_dir() && dir.join(MANIFEST_FILE).is_file())
+        .filter_map(|dir| {
+            let id = dir.file_name()?.to_string_lossy().to_string();
+            Some((dir, id))
+        })
+        .collect();
+    // run ids start with `YYYYMMDD-HHMMSS`, so reverse-lexicographic is newest first
+    runs.sort_by(|a, b| b.1.cmp(&a.1));
+    runs
 }
 
 /// Every task dir under `tasks_dir`, ordered by id.

@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use anyhow::{Context, bail};
+use anyhow::Context;
 
 use crate::cmds::Ctx;
 use crate::config::Resolved;
@@ -13,10 +13,7 @@ use crate::runstate::{GateRecord, Manifest};
 
 pub fn run(ctx: &Ctx, run_id: &str) -> anyhow::Result<i32> {
     let resolved = ctx.load()?;
-    let run_dir = resolved.run_dir(run_id);
-    if !run_dir.is_dir() {
-        bail!("no such run: {}", run_dir.display());
-    }
+    let run_dir = crate::cmds::resolve_run_arg(&resolved, run_id)?;
     let mut manifest = Manifest::load(&run_dir)?;
     let passed = gate_run(&run_dir, &resolved, &mut manifest)?;
 

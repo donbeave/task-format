@@ -3,7 +3,7 @@
 
 use std::process::Command;
 
-use anyhow::{Context, bail};
+use anyhow::Context;
 use std::os::unix::process::CommandExt;
 
 use crate::cmds::Ctx;
@@ -12,10 +12,7 @@ use crate::runstate::Manifest;
 
 pub fn run(ctx: &Ctx, run_id: &str) -> anyhow::Result<i32> {
     let resolved = ctx.load()?;
-    let run_dir = resolved.run_dir(run_id);
-    if !run_dir.is_dir() {
-        bail!("no such run: {}", run_dir.display());
-    }
+    let run_dir = crate::cmds::resolve_run_arg(&resolved, run_id)?;
     let manifest = Manifest::load(&run_dir)?;
     if !crate::ops::docker::is_running(&manifest.container) {
         redact::eemit(&format!(

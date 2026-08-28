@@ -11,9 +11,12 @@ use crate::runstate::Manifest;
 
 use super::docker;
 
+/// Every run container is named `<CONTAINER_PREFIX><run id>`.
+pub const CONTAINER_PREFIX: &str = "harness-";
+
 /// `harness-<run id>` — named and persistent so the operator can re-attach later.
 pub fn container_name(run_id: &str) -> String {
-    format!("harness-{run_id}")
+    format!("{CONTAINER_PREFIX}{run_id}")
 }
 
 /// A docker `--env-file` that exists only for the duration of one `docker run`.
