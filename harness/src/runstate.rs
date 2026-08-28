@@ -15,6 +15,15 @@ use crate::redact;
 pub const MANIFEST_FILE: &str = "manifest.json";
 pub const EXPERIMENT_FILE: &str = "experiment.json";
 
+/// `Manifest::selfcheck`: the D13 gate selfcheck was not requested (`--selfcheck` is opt-in).
+pub const SELFCHECK_NOT_RUN: &str = "not-run";
+/// `Manifest::selfcheck`: `SELFCHECK RESULT PASS`.
+pub const SELFCHECK_PASS: &str = "pass";
+/// `Manifest::selfcheck`: `SELFCHECK RESULT FAIL` from real verdicts (dispatch refused).
+pub const SELFCHECK_FAIL: &str = "fail";
+/// `Manifest::selfcheck`: a focused command was not runnable (rc 126/127; dispatch refused).
+pub const SELFCHECK_NOVERDICT: &str = "noverdict";
+
 /// State of one dispatched run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
@@ -42,6 +51,11 @@ pub struct Manifest {
     #[serde(default = "default_agent_name")]
     pub agent_name: String,
     pub start: String,
+    /// D13 gate selfcheck at dispatch: `not-run` | `pass` | `fail` | `noverdict`. Refusal
+    /// (`fail` / `noverdict`) aborts before this manifest exists, so a dispatched run carries
+    /// `not-run` or `pass`; the other two are the vocabulary of `runs/<ID>/selfcheck.log`.
+    #[serde(default = "default_selfcheck")]
+    pub selfcheck: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub experiment: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -52,6 +66,10 @@ pub struct Manifest {
 
 fn default_agent_name() -> String {
     "task".to_string()
+}
+
+fn default_selfcheck() -> String {
+    SELFCHECK_NOT_RUN.to_string()
 }
 
 /// The gate verdict for one run, recorded by `taskfmt gate`.
@@ -250,6 +268,7 @@ mod tests {
             pane: "pane-1".into(),
             agent_name: default_agent_name(),
             start: "2026-08-28T10:10:10Z".into(),
+            selfcheck: SELFCHECK_PASS.into(),
             experiment: Some("EXP-1".into()),
             gate: Some(GateRecord {
                 verdict: "fail".into(),
@@ -266,6 +285,16 @@ mod tests {
         assert_eq!(loaded.task, "TASK-101");
         assert!(!loaded.gate.as_ref().unwrap().passed());
         assert_eq!(loaded.agent_name, "task");
+        assert_eq!(loaded.selfcheck, "pass");
+    }
+
+    #[test]
+    fn manifest_without_selfcheck_field_reads_as_not_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let json = r#"{"run":"r","run_dir":"/tmp/run","container":"c","agent":"p","agent_kind":"claude","model":"m","effort":"low","task":"TASK-001","repo_url":"u","base_sha":"abc","session_id":"sid","pane":"","start":""}"#;
+        std::fs::write(dir.path().join(MANIFEST_FILE), json).unwrap();
+        let loaded = Manifest::load(dir.path()).unwrap();
+        assert_eq!(loaded.selfcheck, SELFCHECK_NOT_RUN);
     }
 
     #[test]

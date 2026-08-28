@@ -18,7 +18,7 @@ The completion gate is `taskfmt verify` (binary baked into the image, read-only)
 
 ## Protocol
 
-1. Read `/task/README.md` fully (and `/task/decisions.md` if present), then the files listed under "Read before editing" (orientation only, not rules).
+1. Read `/task/README.md` fully (and `/task/decisions.md` if present), then the files listed under "Read before editing".
 2. If `## Log` in `/progress/progress.md` is non-empty you are resuming: read it, run `git status` and `git diff --stat`, and continue from `CURRENT:`. After compaction or any resume, re-read `/task/README.md` and `progress.md` before editing; never reconstruct state from memory.
 3. State in the transcript: task ID, the one-sentence goal, the acceptance-criterion IDs, and the first leaf you will work on.
 4. Run every precondition command. If one fails, write `STATE: BLOCKED` and the failing command to `progress.md`, then emit the final report with `STATUS: BLOCKED`. Do not work around a failed precondition.
@@ -65,9 +65,9 @@ Rules: never change checklist text, IDs, order, or indentation — only the thre
 
 ## Stop conditions
 
-- `BLOCKED`: environment or dependency only — a precondition or external condition you cannot fix within scope is false (missing dependency, credentials, infrastructure). A precondition command that errors (rc 127 etc.) is `BLOCKED` too, named `precondition-broken` in `FOLLOW_UP`.
+- `BLOCKED`: environment or dependency only — a precondition or external condition you cannot fix within scope is false (missing dependency, credentials, infrastructure). A precondition command that errors (rc 127 etc.) is `BLOCKED` too.
 - `NEEDS_REPLAN`: satisfying the task requires changing its goal, acceptance criteria, fixed decisions, scope, or checklist; requirements contradict; a material design decision is unresolved; or the unblock itself needs such a change.
-- `INCOMPLETE`: the turn or budget cap is reached first. Leave `STATE: IN_PROGRESS`, fill the handoff, report `STATUS: INCOMPLETE`.
+- `INCOMPLETE`: the turn or budget cap is reached first. Leave `STATE: IN_PROGRESS`, fill the handoff.
 - Do not spin. When no evidence-backed action remains, stop with the matching status, keep the current leaf unchecked, and report what was tried and the smallest decision or dependency needed to resume.
 
 ## Turn signal

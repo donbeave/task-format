@@ -7,7 +7,7 @@ use anyhow::Context;
 use serde::Serialize;
 
 use crate::cmds::Ctx;
-use crate::ops::{git, herdr, transcript};
+use crate::ops::{herdr, transcript};
 use crate::redact;
 use crate::runstate::Manifest;
 
@@ -67,18 +67,29 @@ pub fn transcript_display(manifest: &Manifest) -> String {
 }
 
 /// `/work` is agent-writable, so the `baseline` tag can move: compare the live tag with the SHA
-/// recorded at dispatch. `None` when the run workspace is not a git checkout.
+/// recorded at dispatch. Diagnostic only — the scope base of record is `manifest.base_sha`.
+/// `Some(false)` means the tag moved or was deleted; `None` means no answer: the run workspace is
+/// not a git checkout, or git itself failed (lock, corrupt repo, spawn error), which must not be
+/// reported as drift.
 pub fn base_tag_ok(manifest: &Manifest, run_dir: &Path) -> Option<bool> {
     let workspace = run_dir.join("workspace");
     if !workspace.join(".git").exists() || manifest.base_sha.is_empty() {
         return None;
     }
-    let live = git::rev_parse(
-        &workspace,
+    let mut cmd = std::process::Command::new("git");
+    cmd.current_dir(&workspace).args([
+        "rev-parse",
+        "--verify",
+        "--quiet",
         &format!("{}^{{commit}}", crate::cmds::run::BASE_TAG),
-    )
-    .ok();
-    Some(live.as_deref() == Some(manifest.base_sha.as_str()))
+    ]);
+    let out = crate::ops::capture(&mut cmd).ok()?;
+    match out.status {
+        0 => Some(out.stdout.trim() == manifest.base_sha),
+        // `--verify --quiet` exits 1 for a ref that does not resolve: the tag is gone.
+        1 => Some(false),
+        _ => None,
+    }
 }
 
 /// `docker stop` reached it first.
@@ -389,6 +400,7 @@ mod tests {
             pane: String::new(),
             agent_name: "task".into(),
             start: String::new(),
+            selfcheck: crate::runstate::SELFCHECK_NOT_RUN.into(),
             experiment: None,
             gate: None,
             result_sha: None,
@@ -454,6 +466,12 @@ mod tests {
         ]);
         git(&["tag", "-f", "baseline"]);
         assert_eq!(base_tag_ok(&m, dir.path()), Some(false));
+        git(&["tag", "-d", "baseline"]);
+        assert_eq!(
+            base_tag_ok(&m, dir.path()),
+            Some(false),
+            "a deleted tag is drift, not a missing answer"
+        );
         let bare = Status::bare(CONTAINER_STOPPED, &m, dir.path());
         assert_eq!(bare.goal_verdicts, None);
         assert_eq!(bare.base_sha, base);
@@ -461,5 +479,17 @@ mod tests {
         assert!(json["goal_verdicts"].is_null());
         assert_eq!(json["base_tag_ok"], serde_json::Value::Bool(false));
         assert!(json["report_status"].is_null());
+        git(&["tag", "baseline", &base]);
+        assert_eq!(base_tag_ok(&m, dir.path()), Some(true));
+    }
+
+    #[test]
+    fn base_tag_ok_is_none_when_git_cannot_answer() {
+        // `.git` exists but is not a repository: git exits 128, which is no verdict on the tag.
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        std::fs::create_dir_all(workspace.join(".git")).unwrap();
+        let m = manifest("claude", dir.path(), "abc");
+        assert_eq!(base_tag_ok(&m, dir.path()), None);
     }
 }
