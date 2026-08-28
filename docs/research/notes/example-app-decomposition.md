@@ -1,3 +1,5 @@
+> Superseded in part by D23 (2026-08-28): `protected_paths`, `DENIED_GLOBS`, the protected manifest/hash step described below no longer exist — scope is the `expected_paths` whitelist alone (`RESEARCH-FINDINGS.md` §3 D23, D26). Body left as written; D24–D32 changes are in `synthesis-2026-08-28.md`.
+
 # Example app decomposition — `pgtui` (ratatui + Turso + PostgreSQL)
 
 Planning note. Purpose: a real-world fixture to run the task-format experiments (§7 backlog) against. Applies the readiness rules from `reference/task-template/README.md` (one outcome, one canonical gate, 5–20 leaves, no open decisions, verify.sh FAIL on baseline / PASS on reference solution) and D1–D18 from `RESEARCH-FINDINGS.md` §3.
