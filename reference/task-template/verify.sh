@@ -106,7 +106,7 @@ check_scope() {
 check_forbidden_patterns() {
   local rc=0 entry regex paths hits
   for entry in "${FORBIDDEN_PATTERNS[@]}"; do
-    regex="${entry%%|*}"; paths="${entry#*|}"; [[ "$paths" == "$entry" ]] && paths="."
+    if [[ "$entry" == *" @@ "* ]]; then regex="${entry%% @@ *}"; paths="${entry#* @@ }"; else regex="$entry"; paths="."; fi
     # shellcheck disable=SC2086
     hits="$(grep -rIEn --exclude-dir=.git -e "$regex" -- $paths 2>/dev/null || true)"
     if [[ -n "$hits" ]]; then echo "FORBIDDEN /$regex/ found:"; echo "$hits"; rc=1; else echo "ok /$regex/ absent"; fi

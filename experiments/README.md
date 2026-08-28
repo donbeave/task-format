@@ -1,6 +1,6 @@
 # experiments
 
-Not built yet. Headed design (herdr) in `docs/research/notes/headed-herdr-harness.md`; image/mount/gate basics in `docs/research/notes/container-harness.md`; decisions in `docs/research/RESEARCH-FINDINGS.md` §5.
+Harness not built yet. Task packages for the example app exist under `tasks/TASK-101..106` (see `fixtures/README.md` for the baseline fixture spec). Headed design (herdr) in `docs/research/notes/headed-herdr-harness.md`; image/mount/gate basics in `docs/research/notes/container-harness.md`; decisions in `docs/research/RESEARCH-FINDINGS.md` §5.
 
 Planned layout:
 

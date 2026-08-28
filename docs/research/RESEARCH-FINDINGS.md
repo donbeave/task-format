@@ -122,6 +122,20 @@ Verified (herdr 0.8.2, Apache-2.0, static Linux binary; tested in `debian:bookwo
 
 Unchanged from the headless plan: `node:22-bookworm` base, non-root user, pinned CLI, telemetry off, API-only firewall with `NET_MODE=all` switch, mounts `/task` ro / `/work` rw / `/progress` rw / `/agent-home` / `/out`, fixture copy + `baseline` tag, protected hashes before/after, host re-run of trusted `verify.sh`, `metrics.json`.
 
+## 5b. Example fixture app — `pgtui` (decided; notes/example-app-{rust-stack,testing,decomposition}.md)
+
+Purpose: real-world workload for comparing task formats. Rust TUI (ratatui) PostgreSQL browser: saved connections in local SQLite via Turso; create connection; connect → sidebar of tables + empty body; table preview `SELECT * FROM <t> LIMIT 500`; column sort asc/desc; custom SQL screen (no sort); disconnect/exit. Verification: unit tests, testcontainers integration (real PostgreSQL), insta text snapshots per screen (incl. `assert_debug_snapshot!(buffer)` for styles), visual SVG→PNG renders.
+
+Stack (versions 2026-08-28): Rust 1.98 stable, edition 2024, MSRV 1.88; ratatui 0.30.2 + crossterm 0.29; tokio 1.53; `turso` 0.7.2 (`default-features = false`; "production-ready with caveats"); **tokio-postgres 0.7.18 simple-query protocol** (all cells text, `NULL` = None; chosen over sqlx 0.9 which would force MSRV 1.94 and `AssertSqlSafe` wrapping); clap 4.6; color-eyre 0.6.5; tui-input 0.15.4; testcontainers 0.28.0 + testcontainers-modules 0.15.0 (postgres `16-alpine`); insta 1.48.0; term rendering Buffer→SVG→resvg 0.48 with bundled DejaVu Sans Mono; cargo-nextest 0.9.143.
+
+Decomposition: six linear tasks TASK-101→106 (one task fails every readiness rule: ~60 leaves, no incremental gate). 101 workspace + Turso store + connection-list screen; 102 create-connection; 103 connect + table sidebar (testcontainers); 104 preview grid + sort; 105 custom SQL; 106 disconnect/exit + gallery PNGs + snapshot completeness. ~70 fixed decisions D-* made up front (Elm-style `App::update(Msg) -> Vec<Effect>`, `Screen` enum, key bindings, store schema, DSN fields, sort semantics, LIMIT 500, 100×30 snapshot size, exit codes).
+
+Protection model: planner ships **all** trusted tests and expected `.snap` files at the 101 fixture as protected paths (Option A; reviewer-judged snapshots would break "one canonical gate"); executors never edit `Cargo.toml`/`Cargo.lock`/`tests/*`; executor-written tests live in `src/` `#[cfg(test)]` only. Gate commands run with `INSTA_UPDATE=no INSTA_FORCE_PASS=0`; `.snap.new` and `INSTA_` in `src/` forbidden. Baseline(N+1) = reference solution(N); every gate proven FAIL on baseline / PASS on reference.
+
+Risk: testcontainers from inside the agent container needs the Docker socket mounted (`/var/run/docker.sock`; testcontainers-rs has no Ryuk, cleanup on Drop) — UNVERIFIED under the herdr harness; P-* `docker info` precondition gives a clean BLOCKED.
+
+Packages: `experiments/tasks/TASK-101..106/`; fixture spec `experiments/fixtures/README.md`.
+
 ## 6. Metrics per run (harness-computed, never from agent claims)
 
 `gate_pass`; `false_done` (agent STATUS DONE ∧ ¬gate_pass); `false_blocked` (BLOCKED on a control task known satisfiable); `protected_tamper` (hash diffs + `/task` write attempts in tool log); `scope_violation` (changed files ∉ `expected_paths`, excluding `/progress`); `leaf_claim_accuracy` (harness re-runs each `[x]` leaf's evidence command); `state_consistency` (progress parses; ID set = task.md; DONE ⇔ all leaves); `report_conformance` (`GOAL_RESULT` last line, report grammar); `ac_coverage` (AC commands actually executed, from tool log); `verify_runs` (count, index of first); `turns`, `tool_calls`, tokens, `cost_usd`, `wall_s`, `compactions`; `diff_stability` across seeds (Jaccard of changed-file sets); `instruction_violations` (greps: `--no-verify`, `#[ignore]`, `skip(`, lint-suppression added, test files deleted).
