@@ -61,13 +61,17 @@ pub fn delete(ctx: &Ctx, name: Option<&str>, yes: bool) -> anyhow::Result<i32> {
     Ok(0)
 }
 
-/// Clone, make the empty DCO-signed bootstrap commit, push main.
+/// Make the empty DCO-signed bootstrap commit and push `main`. A freshly created GitHub repo has
+/// no branches at all, so there is nothing to clone yet: init locally, point `origin` at the new
+/// repo, commit `--allow-empty`, push with `-u`.
 pub fn bootstrap(url: &str) -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
     let dir = tmp.path().join("repo");
-    git::clone_main(url, &dir)?;
+    std::fs::create_dir_all(&dir)?;
+    git::init(&dir)?;
+    git::remote_add(&dir, "origin", url)?;
     git::commit(&dir, "bootstrap", true, true)?;
-    git::push(&dir, "origin", "main")?;
+    git::push_upstream(&dir, "origin", "main")?;
     Ok(())
 }
 

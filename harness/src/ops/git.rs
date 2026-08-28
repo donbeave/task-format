@@ -73,6 +73,26 @@ pub fn has_ref(dir: &Path, rev: &str) -> bool {
     .unwrap_or(false)
 }
 
+/// `git init -b main`: a fresh repo whose initial branch is already `main`, so the bootstrap
+/// commit lands where the experiment expects it.
+pub fn init(dir: &Path) -> anyhow::Result<()> {
+    output(&mut in_dir(dir, &["init", "-q", "-b", "main"]))?;
+    Ok(())
+}
+
+pub fn remote_add(dir: &Path, name: &str, url: &str) -> anyhow::Result<()> {
+    output(&mut in_dir(dir, &["remote", "add", name, url]))?;
+    Ok(())
+}
+
+/// `git push -u <remote> <branch>`: the first push, which also sets the upstream.
+pub fn push_upstream(dir: &Path, remote: &str, branch: &str) -> anyhow::Result<Captured> {
+    check(
+        &mut in_dir(dir, &["push", "-u", remote, branch]),
+        "git push",
+    )
+}
+
 /// Clone `url` into `dst` (fresh, shallow off — the gate needs the base commit and the diff).
 pub fn clone(url: &str, dst: &Path) -> anyhow::Result<Captured> {
     check(
@@ -199,7 +219,7 @@ mod tests {
     use super::*;
 
     fn git(dir: &Path, args: &[&str]) -> String {
-        output(&mut in_dir(dir, args)).unwrap()
+        output(&mut in_dir(dir, args)).unwrap().trim().to_string()
     }
 
     fn init_repo(dir: &Path) {
@@ -254,6 +274,30 @@ mod tests {
         // origin already points at the bare repo: clone_main set it
         push(&work, "origin", "main").unwrap();
         assert_eq!(head(&bare).unwrap(), sha);
+    }
+
+    #[test]
+    fn init_remote_and_upstream_push_bootstrap_a_branchless_remote() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bare = tmp.path().join("remote.git");
+        std::fs::create_dir_all(&bare).unwrap();
+        git(&bare, &["init", "-q", "--bare"]);
+
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        init(&repo).unwrap();
+        assert_eq!(git(&repo, &["symbolic-ref", "--short", "HEAD"]), "main");
+        remote_add(&repo, "origin", &format!("file://{}", bare.display())).unwrap();
+        let sha = commit(&repo, "bootstrap", true, true).unwrap();
+        push_upstream(&repo, "origin", "main").unwrap();
+        assert_eq!(head(&bare).unwrap(), sha);
+        assert_eq!(
+            git(
+                &repo,
+                &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]
+            ),
+            "origin/main"
+        );
     }
 
     #[test]
