@@ -258,10 +258,61 @@ pub fn run() -> Report {
         )],
     );
 
+    // ---- command lists run under `bash -eo pipefail`: an early failing statement and a failing
+    // pipe stage both fail the check; a clean pipe passes ----
+    let task2 = tmp.path().join("task2");
+    std::fs::create_dir_all(&task2).expect("task2 dir");
+    std::fs::write(task2.join("README.md"), &readme).expect("task2 README");
+    for (name, command, want_pass) in COMMAND_CASES {
+        let toml = GATE_VERIFY_TOML.replacen(
+            "[focused]\ncommands = []",
+            &format!("[focused]\ncommands = [{command:?}]"),
+            1,
+        );
+        std::fs::write(task2.join("verify.toml"), toml).expect("task2 verify.toml");
+        let output = gate::run(GateOpts {
+            root: workspace.clone(),
+            task_dir: task2.clone(),
+            progress: Some(done_path.display().to_string()),
+            base: Some("baseline".to_string()),
+            log_dir: Some(logs.clone()),
+            fail_fast: false,
+        });
+        let ok = if *want_pass {
+            output.is_pass()
+        } else {
+            !output.is_pass() && output.failed_checks == ["focused.1"]
+        };
+        report.push(
+            &format!("cmds: {name}"),
+            ok,
+            vec![format!(
+                "exit {} last line {:?} failed {:?}",
+                output.exit, output.last_line, output.failed_checks
+            )],
+        );
+    }
+
     report
 }
 
-/// The four broken-contract mutants selftest must reject.
+/// (name, focused command, whole-gate verdict) — the git-free command-semantics cases mirrored
+/// from `tests/gate_tamper_matrix.rs`, so `taskfmt selftest` proves them inside the image.
+const COMMAND_CASES: &[(&str, &str, bool)] = &[
+    (
+        "'false; true' fails focused.1 (errexit)",
+        "false; true",
+        false,
+    ),
+    ("'true | true' passes", "true | true", true),
+    (
+        "'false | true' fails focused.1 (pipefail)",
+        "false | true",
+        false,
+    ),
+];
+
+/// The broken-contract mutants selftest must reject.
 fn lint_mutants(readme: &str) -> Vec<(&'static str, String)> {
     let mut out = Vec::new();
     // breaks the line grammar: the ID token is no longer `N.N`
@@ -287,6 +338,60 @@ fn lint_mutants(readme: &str) -> Vec<(&'static str, String)> {
     // H1 no longer matches the id
     let mismatch = readme.replacen("id: TASK-042", "id: TASK-043", 1);
     out.push(("H1/id mismatch", mismatch));
+    out.push((
+        "empty leaf evidence (C1)",
+        readme.replacen(
+            "evidence: `cargo test -p auth valid_refresh_rotation` → `1 passed`.",
+            "evidence: .",
+            1,
+        ),
+    ));
+    out.push((
+        "duplicate R definition (C2)",
+        readme.replacen("- **R-003 (MUST NOT):**", "- **R-002 (MUST NOT):**", 1),
+    ));
+    out.push((
+        "uncited requirement (C3)",
+        readme.replacen("(`R-001`, `R-003`, `AC-001`)", "(`R-001`, `AC-001`)", 1),
+    ));
+    out.push((
+        "template placeholder left (C4)",
+        readme.replacen(
+            "Expired refresh tokens are rejected before any session state is rotated.",
+            "Given <state>, tokens are rejected.",
+            1,
+        ),
+    ));
+    out.push((
+        "AC cited only on a bare parent (C5)",
+        readme
+            .replacen(
+                "(`AC-002`) — evidence: `cargo test -p auth valid_refresh_rotation` → `1 passed`.",
+                "— evidence: `cargo test -p auth valid_refresh_rotation` exits 0.",
+                1,
+            )
+            .replacen(
+                "- [ ] **2** Required behavior is implemented.",
+                "- [ ] **2** Required behavior is implemented (`AC-002`).",
+                1,
+            ),
+    ));
+    out.push((
+        "identical evidence on two items (C5)",
+        readme.replacen(
+            "evidence: `cargo test -p auth valid_refresh_rotation` → `1 passed`.",
+            "evidence: `cargo test -p auth expired_refresh_token` exits 0.",
+            1,
+        ),
+    ));
+    out.push((
+        "hint references /task/ (C8)",
+        readme.replacen(
+            "4. `docs/decisions/D-041.md` — error-code contract.",
+            "4. `/task/decisions.md` — error-code contract.",
+            1,
+        ),
+    ));
     out
 }
 
@@ -299,7 +404,7 @@ fn tamper_matrix(done: &str) -> Vec<(&'static str, String)> {
         ),
         (
             "CURRENT not NONE",
-            done.replacen("CURRENT: NONE", "CURRENT: 4.2", 1),
+            done.replacen("CURRENT: NONE", "CURRENT: 3.2", 1),
         ),
         (
             "BASELINE not recorded",
@@ -383,7 +488,7 @@ fn append_after_checklist(text: &str) -> String {
     let mut out = Vec::new();
     for line in text.lines() {
         if line.trim() == crate::taskfile::CHECKLIST_END.trim() {
-            out.push("    - [x] **4.3** extra — evidence: none.".to_string());
+            out.push("    - [x] **3.3** extra — evidence: none.".to_string());
         }
         out.push(line.to_string());
     }

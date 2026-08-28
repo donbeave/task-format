@@ -52,6 +52,25 @@ pub struct GateOutput {
     pub log_dir: PathBuf,
     /// Failing check names, in gate order.
     pub failed_checks: Vec<String>,
+    /// Every check that ran, in gate order, with its verdict (structured: no parsing of `text`).
+    pub checks: Vec<CheckResult>,
+}
+
+/// One named check and its verdict, e.g. `focused.1` / `regression.2` / `scope`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckResult {
+    pub name: String,
+    pub pass: bool,
+}
+
+impl GateOutput {
+    /// Verdict of one check by name; `None` when it never ran.
+    pub fn check(&self, name: &str) -> Option<bool> {
+        self.checks
+            .iter()
+            .find(|check| check.name == name)
+            .map(|check| check.pass)
+    }
 }
 
 impl GateOutput {
@@ -74,6 +93,7 @@ pub fn run(opts: GateOpts) -> GateOutput {
                 summary: format!("RESULT FAIL internal-error {err:#}"),
                 log_dir: PathBuf::new(),
                 failed_checks: vec!["internal-error".to_string()],
+                checks: Vec::new(),
                 text,
             }
         }
@@ -81,13 +101,14 @@ pub fn run(opts: GateOpts) -> GateOutput {
 }
 
 /// A check body reports its lines and either succeeds (`Ok`) or fails with a return code.
-type CheckResult = Result<Vec<String>, (Vec<String>, i32)>;
+type CheckBody = Result<Vec<String>, (Vec<String>, i32)>;
 
 struct Session {
     lines: Vec<String>,
     passes: usize,
     fails: usize,
     failed_checks: Vec<String>,
+    checks: Vec<CheckResult>,
     log_dir: PathBuf,
     fail_fast: bool,
     root: PathBuf,
@@ -99,7 +120,7 @@ impl Session {
     }
 
     /// Run one named check. Returns `false` when a `--fail-fast` run must stop.
-    fn check(&mut self, name: &str, body: impl FnOnce() -> CheckResult) -> bool {
+    fn check(&mut self, name: &str, body: impl FnOnce() -> CheckBody) -> bool {
         let (report, rc) = match body() {
             Ok(lines) => (lines, 0),
             Err((lines, rc)) => (lines, rc),
@@ -111,6 +132,10 @@ impl Session {
             self.lines
                 .push(format!("WARN log write failed for {name}: {err}"));
         }
+        self.checks.push(CheckResult {
+            name: name.to_string(),
+            pass: rc == 0,
+        });
         if rc == 0 {
             self.lines.push(format!("CHECK {name} PASS"));
             self.passes += 1;
@@ -134,7 +159,8 @@ impl Session {
         }
     }
 
-    /// Run a command list under `bash -o pipefail`, naming checks `<prefix>.<n>`.
+    /// Run a command list under `bash -eo pipefail` (errexit + pipefail: an early failing
+    /// statement or a failing pipe stage fails the check), naming checks `<prefix>.<n>`.
     fn run_cmd_list(&mut self, prefix: &str, commands: &[String]) {
         for (i, cmd) in commands.iter().enumerate() {
             let name = format!("{prefix}.{}", i + 1);
@@ -168,6 +194,7 @@ impl Session {
             summary,
             log_dir: self.log_dir,
             failed_checks: self.failed_checks,
+            checks: self.checks,
             text: crate::redact::scrub(&(self.lines.join("\n") + "\n")),
         }
     }
@@ -193,6 +220,7 @@ fn run_inner(opts: GateOpts) -> anyhow::Result<GateOutput> {
         passes: 0,
         fails: 0,
         failed_checks: Vec::new(),
+        checks: Vec::new(),
         log_dir,
         fail_fast: opts.fail_fast,
         root: root.clone(),
@@ -210,6 +238,10 @@ fn run_inner(opts: GateOpts) -> anyhow::Result<GateOutput> {
             summary: format!("CHECK config FAIL missing {}", verify_config.display()),
             log_dir: session.log_dir,
             failed_checks: vec!["config".to_string()],
+            checks: vec![CheckResult {
+                name: "config".to_string(),
+                pass: false,
+            }],
             text,
         });
     }
@@ -217,6 +249,10 @@ fn run_inner(opts: GateOpts) -> anyhow::Result<GateOutput> {
     session
         .lines
         .push(format!("CHECK config PASS {}", verify_config.display()));
+    session.checks.push(CheckResult {
+        name: "config".to_string(),
+        pass: true,
+    });
 
     // ---------- scope ----------
     let base = resolve_base(&opts.base, &cfg);
@@ -288,11 +324,11 @@ pub fn resolve_base_from(
     DEFAULT_BASE.to_string()
 }
 
-fn fail(lines: Vec<String>) -> CheckResult {
+fn fail(lines: Vec<String>) -> CheckBody {
     Err((lines, 1))
 }
 
-fn check_scope(root: &Path, base: &str, globs: &[String]) -> CheckResult {
+fn check_scope(root: &Path, base: &str, globs: &[String]) -> CheckBody {
     let mut lines = Vec::new();
     if base.is_empty() {
         return fail(vec!["BASE_REF not set".to_string()]);
@@ -305,7 +341,20 @@ fn check_scope(root: &Path, base: &str, globs: &[String]) -> CheckResult {
     }
     let matchers: Vec<Regex> = globs.iter().filter_map(|g| glob_regex(g).ok()).collect();
     let mut rc = 0;
-    let files = match changed_files(root, base) {
+    // index flags that make `git diff` blind to worktree edits: reported, never trusted
+    let hidden = match ops::git::hidden_index_entries(root) {
+        Ok(entries) => entries,
+        Err(err) => return fail(vec![format!("git ls-files -v failed: {err:#}")]),
+    };
+    if !hidden.is_empty() {
+        lines.push(
+            "HIDDEN index entries (skip-worktree 'S' / assume-unchanged lowercase) blind the diff:"
+                .to_string(),
+        );
+        lines.extend(hidden);
+        rc = 1;
+    }
+    let files = match ops::git::changed_files(root, base) {
         Ok(files) => files,
         Err(err) => return fail(vec![format!("git diff failed: {err:#}")]),
     };
@@ -318,36 +367,6 @@ fn check_scope(root: &Path, base: &str, globs: &[String]) -> CheckResult {
         }
     }
     if rc == 0 { Ok(lines) } else { Err((lines, rc)) }
-}
-
-/// Changed files: diff vs the base, plus staged, plus untracked (git's own exclude rules).
-fn changed_files(root: &Path, base: &str) -> anyhow::Result<Vec<String>> {
-    let mut files: Vec<String> = Vec::new();
-    files.extend(split_lines(&ops::git::output(
-        Command::new("git")
-            .current_dir(root)
-            .args(["diff", "--name-only", base, "--"]),
-    )?));
-    files.extend(split_lines(&ops::git::output(
-        Command::new("git")
-            .current_dir(root)
-            .args(["diff", "--name-only", "--cached", "--"]),
-    )?));
-    files.extend(split_lines(&ops::git::output(
-        Command::new("git")
-            .current_dir(root)
-            .args(["ls-files", "--others", "--exclude-standard"]),
-    )?));
-    files.sort();
-    files.dedup();
-    Ok(files)
-}
-
-fn split_lines(text: &str) -> Vec<String> {
-    text.lines()
-        .map(str::to_string)
-        .filter(|line| !line.is_empty())
-        .collect()
 }
 
 fn ref_resolves(root: &Path, base: &str) -> bool {
@@ -374,7 +393,7 @@ fn glob_regex(glob: &str) -> anyhow::Result<Regex> {
     Ok(Regex::new(&pattern)?)
 }
 
-fn check_required_paths(root: &Path, paths: &[String]) -> CheckResult {
+fn check_required_paths(root: &Path, paths: &[String]) -> CheckBody {
     let mut lines = Vec::new();
     let mut rc = 0;
     for p in paths {
@@ -391,9 +410,9 @@ fn check_required_paths(root: &Path, paths: &[String]) -> CheckResult {
 /// A forbidden path must not be created or modified by this run: it must be absent from the
 /// changed-file set vs the base commit. Trusted material shipped by earlier tasks exists on the
 /// base commit, so existence alone is not a violation — changing it is.
-fn check_forbidden_paths(root: &Path, base: &str, paths: &[String]) -> CheckResult {
+fn check_forbidden_paths(root: &Path, base: &str, paths: &[String]) -> CheckBody {
     let mut lines = Vec::new();
-    let changed = match changed_files(root, base) {
+    let changed = match ops::git::changed_files(root, base) {
         Ok(files) => files,
         Err(e) => {
             return Err((vec![format!("BASE_UNRESOLABLE {base}: {e}")], 1));
@@ -412,7 +431,7 @@ fn check_forbidden_paths(root: &Path, base: &str, paths: &[String]) -> CheckResu
     if rc == 0 { Ok(lines) } else { Err((lines, rc)) }
 }
 
-fn check_forbidden_patterns(root: &Path, patterns: &[verifycfg::ForbiddenPattern]) -> CheckResult {
+fn check_forbidden_patterns(root: &Path, patterns: &[verifycfg::ForbiddenPattern]) -> CheckBody {
     let mut lines = Vec::new();
     let mut rc = 0;
     for entry in patterns {
@@ -438,11 +457,11 @@ fn check_forbidden_patterns(root: &Path, patterns: &[verifycfg::ForbiddenPattern
     if rc == 0 { Ok(lines) } else { Err((lines, rc)) }
 }
 
-fn run_shell(root: &Path, cmd: &str) -> CheckResult {
+fn run_shell(root: &Path, cmd: &str) -> CheckBody {
     let mut command = Command::new("bash");
     command
         .current_dir(root)
-        .args(["-o", "pipefail", "-c", cmd]);
+        .args(["-eo", "pipefail", "-c", cmd]);
     match ops::capture(&mut command) {
         Ok(out) => {
             let mut lines = Vec::new();
@@ -478,7 +497,7 @@ pub fn checklist_normalized(text: &str) -> Vec<String> {
 }
 
 /// The progress check, ported from `check_progress` in verify.sh.
-fn check_progress(task_file: &Path, progress_file: &Path) -> CheckResult {
+fn check_progress(task_file: &Path, progress_file: &Path) -> CheckBody {
     let mut lines: Vec<String> = Vec::new();
 
     if !progress_file.is_file() {

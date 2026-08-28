@@ -305,4 +305,54 @@ mod tests {
         assert!(codex_dir.path().join("config.toml").is_file());
         assert!(preseed_agent_home(dir.path(), "ghost").is_err());
     }
+
+    #[test]
+    fn launch_plan_pins_the_scope_base_to_the_recorded_sha() {
+        let cfg = ExperimentConfig::parse(
+            "schema = \"experiment/v1\"\n[agents.default]\nprofile = \"p\"\n[agents.profiles.p]\nkind = \"claude\"\nimage = \"i\"\n",
+        )
+        .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let resolved = Resolved::new(dir.path(), cfg.clone());
+        let profile = cfg.profile("p").unwrap().clone();
+        let manifest = Manifest {
+            run: "r".into(),
+            run_dir: dir.path().display().to_string(),
+            container: "harness-r".into(),
+            agent: "p".into(),
+            agent_kind: "claude".into(),
+            model: "m".into(),
+            effort: "low".into(),
+            task: "TASK-001".into(),
+            repo_url: "u".into(),
+            base_sha: "0123456789abcdef0123456789abcdef01234567".into(),
+            clone_sha: String::new(),
+            session_id: "sid".into(),
+            pane: String::new(),
+            agent_name: "task".into(),
+            start: String::new(),
+            experiment: None,
+            gate: None,
+            result_sha: None,
+        };
+        let plan = launch_plan(
+            &cfg,
+            &resolved,
+            &manifest,
+            &profile,
+            "claude",
+            &manifest.base_sha,
+        );
+        let base = plan
+            .env
+            .iter()
+            .find(|(key, _)| key == "TASKFMT_BASE")
+            .map(|(_, value)| value.as_str());
+        assert_eq!(base, Some(manifest.base_sha.as_str()));
+        assert_ne!(
+            base,
+            Some("baseline"),
+            "the movable tag must not be the scope base"
+        );
+    }
 }

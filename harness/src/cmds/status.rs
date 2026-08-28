@@ -1,14 +1,17 @@
 //! `taskfmt status <RUN>` — completion detection from outside the container (port of status.sh).
 
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use serde::Serialize;
 
 use crate::cmds::Ctx;
-use crate::ops::{herdr, transcript};
+use crate::ops::{git, herdr, transcript};
 use crate::redact;
 use crate::runstate::Manifest;
+
+pub const CODEX_TRANSCRIPT_NA: &str = "n/a (rollout jsonl not parsed)";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Status {
@@ -16,13 +19,66 @@ pub struct Status {
     pub herdr_status: String,
     pub goal_reason: String,
     pub goal_result_line: String,
-    pub goal_verdicts: usize,
+    /// Agent-authored `status=` of `goal_result_line` (DONE|BLOCKED|NEEDS_REPLAN|INCOMPLETE); a
+    /// label only, never load-bearing.
+    pub report_status: Option<String>,
+    /// Real (non-sentinel) evaluator verdicts; `None` for non-claude agents (rollout jsonl is not
+    /// parsed).
+    pub goal_verdicts: Option<usize>,
+    /// Claude session transcript path, or `n/a (rollout jsonl not parsed)` for codex.
+    pub transcript: String,
+    /// The trusted base commit recorded at dispatch (the scope base of record).
+    pub base_sha: String,
+    /// Does the agent-writable `baseline` tag in the run workspace still point at `base_sha`?
+    /// `None` when the workspace is absent.
+    pub base_tag_ok: Option<bool>,
 }
 
 impl Status {
     pub fn terminal(&self) -> bool {
         self.state != "RUNNING"
     }
+
+    /// A status with only the state and the manifest-derived fields filled in.
+    fn bare(state: &str, manifest: &Manifest, run_dir: &Path) -> Self {
+        Self {
+            state: state.to_string(),
+            herdr_status: String::new(),
+            goal_reason: String::new(),
+            goal_result_line: String::new(),
+            report_status: None,
+            goal_verdicts: None,
+            transcript: transcript_display(manifest),
+            base_sha: manifest.base_sha.clone(),
+            base_tag_ok: base_tag_ok(manifest, run_dir),
+        }
+    }
+}
+
+/// Where the authoritative transcript is (claude) or why there is none (codex).
+pub fn transcript_display(manifest: &Manifest) -> String {
+    if manifest.agent_kind == "claude" {
+        transcript::claude_transcript(manifest)
+            .display()
+            .to_string()
+    } else {
+        CODEX_TRANSCRIPT_NA.to_string()
+    }
+}
+
+/// `/work` is agent-writable, so the `baseline` tag can move: compare the live tag with the SHA
+/// recorded at dispatch. `None` when the run workspace is not a git checkout.
+pub fn base_tag_ok(manifest: &Manifest, run_dir: &Path) -> Option<bool> {
+    let workspace = run_dir.join("workspace");
+    if !workspace.join(".git").exists() || manifest.base_sha.is_empty() {
+        return None;
+    }
+    let live = git::rev_parse(
+        &workspace,
+        &format!("{}^{{commit}}", crate::cmds::run::BASE_TAG),
+    )
+    .ok();
+    Some(live.as_deref() == Some(manifest.base_sha.as_str()))
 }
 
 /// `docker stop` reached it first.
@@ -60,13 +116,7 @@ pub fn run(ctx: &Ctx, run_id: &str, wait: bool, kill_after: Option<u64>) -> anyh
                 // `/goal clear` stops the loop; the operator inspects the live container after.
                 let _ = herdr::prompt(&manifest, "/goal clear");
                 redact::emit(&format!("{{\"state\":\"{KILLED_TIMEOUT}\"}}"));
-                break Status {
-                    state: KILLED_TIMEOUT.to_string(),
-                    herdr_status: String::new(),
-                    goal_reason: String::new(),
-                    goal_result_line: String::new(),
-                    goal_verdicts: 0,
-                };
+                break Status::bare(KILLED_TIMEOUT, &manifest, &run_dir);
             }
         }
     } else {
@@ -80,19 +130,13 @@ pub fn run(ctx: &Ctx, run_id: &str, wait: bool, kill_after: Option<u64>) -> anyh
 }
 
 /// The three-signal state machine.
-pub fn check(manifest: &Manifest, _run_dir: &std::path::Path) -> anyhow::Result<Status> {
+pub fn check(manifest: &Manifest, run_dir: &Path) -> anyhow::Result<Status> {
     let mut state = RUNNING.to_string();
     let mut reason = String::new();
-    let mut verdicts = 0usize;
+    let mut verdicts: Option<usize> = None;
 
     if !crate::ops::docker::is_running(&manifest.container) {
-        return Ok(Status {
-            state: CONTAINER_STOPPED.to_string(),
-            herdr_status: String::new(),
-            goal_reason: String::new(),
-            goal_result_line: String::new(),
-            goal_verdicts: 0,
-        });
+        return Ok(Status::bare(CONTAINER_STOPPED, manifest, run_dir));
     }
 
     // herdr's own classification (idle|working|blocked|done|unknown|none)
@@ -113,7 +157,7 @@ pub fn check(manifest: &Manifest, _run_dir: &std::path::Path) -> anyhow::Result<
                 state = GOAL_MET.to_string();
             }
         }
-        verdicts = transcript::verdict_count(&tr);
+        verdicts = Some(transcript::verdict_count(&tr));
         if transcript::goal_cleared_error(&manifest.tui_log()) {
             state = GOAL_CLEARED_ERROR.to_string();
         }
@@ -143,8 +187,12 @@ pub fn check(manifest: &Manifest, _run_dir: &std::path::Path) -> anyhow::Result<
         state,
         herdr_status: hstate,
         goal_reason: reason,
+        report_status: transcript::report_status(&result).map(|status| status.as_str().to_string()),
         goal_result_line: result,
         goal_verdicts: verdicts,
+        transcript: transcript_display(manifest),
+        base_sha: manifest.base_sha.clone(),
+        base_tag_ok: base_tag_ok(manifest, run_dir),
     })
 }
 
@@ -170,7 +218,7 @@ fn json_line(status: &Status) -> String {
 /// Used by `run --wait` and `experiment`: poll until terminal or the deadline.
 pub fn wait_terminal_state(
     manifest: &Manifest,
-    run_dir: &std::path::Path,
+    run_dir: &Path,
     deadline: Duration,
 ) -> anyhow::Result<Status> {
     // herdr's per-frame classification flickers, so a terminal state must hold before we gate on
@@ -191,13 +239,7 @@ pub fn wait_terminal_state(
         }
         if elapsed >= deadline {
             let _ = herdr::prompt(manifest, "/goal clear");
-            return Ok(Status {
-                state: KILLED_TIMEOUT.to_string(),
-                herdr_status: String::new(),
-                goal_reason: String::new(),
-                goal_result_line: String::new(),
-                goal_verdicts: 0,
-            });
+            return Ok(Status::bare(KILLED_TIMEOUT, manifest, run_dir));
         }
         std::thread::sleep(Duration::from_secs(10));
     }
@@ -328,5 +370,96 @@ mod tests {
         )
         .unwrap();
         assert!(!transcript::recently_active(&tr, Duration::from_secs(300)));
+    }
+
+    fn manifest(kind: &str, run_dir: &Path, base_sha: &str) -> Manifest {
+        Manifest {
+            run: "r".into(),
+            run_dir: run_dir.display().to_string(),
+            container: "harness-r".into(),
+            agent: "p".into(),
+            agent_kind: kind.into(),
+            model: String::new(),
+            effort: "high".into(),
+            task: "TASK-001".into(),
+            repo_url: "https://example.invalid/x.git".into(),
+            base_sha: base_sha.into(),
+            clone_sha: String::new(),
+            session_id: "sid".into(),
+            pane: String::new(),
+            agent_name: "task".into(),
+            start: String::new(),
+            experiment: None,
+            gate: None,
+            result_sha: None,
+        }
+    }
+
+    #[test]
+    fn transcript_display_by_kind() {
+        let dir = tempfile::tempdir().unwrap();
+        let claude = manifest("claude", dir.path(), "abc");
+        assert!(transcript_display(&claude).ends_with("agent-home/projects/work/sid.jsonl"));
+        let codex = manifest("codex", dir.path(), "abc");
+        assert_eq!(transcript_display(&codex), CODEX_TRANSCRIPT_NA);
+    }
+
+    #[test]
+    fn base_tag_ok_is_none_without_a_workspace_and_tracks_tag_drift() {
+        let dir = tempfile::tempdir().unwrap();
+        let m = manifest("claude", dir.path(), "abc");
+        assert_eq!(base_tag_ok(&m, dir.path()), None);
+
+        let workspace = dir.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .current_dir(&workspace)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        git(&["init", "-q"]);
+        git(&[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@x",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "base",
+        ]);
+        let base = git(&["rev-parse", "HEAD"]);
+        git(&["tag", "baseline"]);
+        let m = manifest("claude", dir.path(), &base);
+        assert_eq!(base_tag_ok(&m, dir.path()), Some(true));
+        git(&[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@x",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "moved",
+        ]);
+        git(&["tag", "-f", "baseline"]);
+        assert_eq!(base_tag_ok(&m, dir.path()), Some(false));
+        let bare = Status::bare(CONTAINER_STOPPED, &m, dir.path());
+        assert_eq!(bare.goal_verdicts, None);
+        assert_eq!(bare.base_sha, base);
+        let json: serde_json::Value = serde_json::from_str(&json_line(&bare)).unwrap();
+        assert!(json["goal_verdicts"].is_null());
+        assert_eq!(json["base_tag_ok"], serde_json::Value::Bool(false));
+        assert!(json["report_status"].is_null());
     }
 }

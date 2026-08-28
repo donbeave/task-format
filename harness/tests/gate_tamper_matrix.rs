@@ -406,3 +406,277 @@ fn checklist_normalization_is_the_only_allowed_drift() {
     );
     assert!(taskfile::checklist_block(&readme).len() >= 5);
 }
+
+// ---------------------------------------------------------------------------------------------
+// Scope bypass matrix (D23): every way of hiding a change from `git diff` must still fail scope,
+// while ordinary ignored files pass. Fresh workspace per case: no cross-case index state.
+// ---------------------------------------------------------------------------------------------
+
+const SCOPE_VERIFY_TOML: &str = r#"schema = "verify/v1"
+base_ref = "baseline"
+allowed_globs = ["src/allowed/*"]
+
+[focused]
+commands = []
+
+[regression]
+commands = []
+
+[lint]
+commands = []
+"#;
+
+fn git_out(dir: &Path, args: &[&str]) -> String {
+    let mut cmd = Command::new("git");
+    cmd.current_dir(dir).args(args);
+    let captured = ops::capture(&mut cmd).unwrap();
+    assert!(captured.ok(), "git {:?}: {}", args, captured.stderr);
+    captured.stdout
+}
+
+fn commit_all(dir: &Path, msg: &str) {
+    git(dir, &["add", "-A"]);
+    git(
+        dir,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "-m",
+            msg,
+        ],
+    );
+}
+
+/// Baseline: `src/allowed/a.rs`, `src/legacy/foo.rs`, committed `.gitignore` = `*.log`, tag
+/// `baseline`. Returns (work, task, first-sha).
+fn scope_fixture(dir: &Path) -> (PathBuf, PathBuf, String) {
+    let work = dir.join("work");
+    std::fs::create_dir_all(work.join("src/allowed")).unwrap();
+    std::fs::create_dir_all(work.join("src/legacy")).unwrap();
+    git(&work, &["init", "-q", "."]);
+    std::fs::write(work.join("src/allowed/a.rs"), "a\n").unwrap();
+    std::fs::write(work.join("src/legacy/foo.rs"), "foo\n").unwrap();
+    std::fs::write(work.join(".gitignore"), "*.log\n").unwrap();
+    commit_all(&work, "baseline");
+    git(&work, &["tag", "baseline"]);
+    let sha = git_out(&work, &["rev-parse", "HEAD"]).trim().to_string();
+    let task = dir.join("task");
+    std::fs::create_dir_all(&task).unwrap();
+    std::fs::copy(example().join("README.md"), task.join("README.md")).unwrap();
+    std::fs::write(task.join("verify.toml"), SCOPE_VERIFY_TOML).unwrap();
+    (work, task, sha)
+}
+
+fn scope_gate(work: &Path, task: &Path, base: &str) -> gate::GateOutput {
+    gate::run(GateOpts {
+        root: work.to_path_buf(),
+        task_dir: task.to_path_buf(),
+        progress: None,
+        base: Some(base.to_string()),
+        log_dir: Some(work.parent().unwrap().join("logs")),
+        fail_fast: false,
+    })
+}
+
+/// Run one scope scenario on a fresh fixture; `want_pass` is the whole-gate verdict.
+fn scope_case(name: &str, want_pass: bool, setup: impl FnOnce(&Path)) -> gate::GateOutput {
+    let tmp = tempfile::tempdir().unwrap();
+    let (work, task, _) = scope_fixture(tmp.path());
+    setup(&work);
+    let output = scope_gate(&work, &task, "baseline");
+    if want_pass {
+        assert!(output.is_pass(), "{name}: must pass\n{}", output.text);
+    } else {
+        assert!(!output.is_pass(), "{name}: must fail\n{}", output.text);
+        assert_eq!(
+            output.failed_checks,
+            vec!["scope"],
+            "{name}: scope must be the failing check\n{}",
+            output.text
+        );
+    }
+    output
+}
+
+fn append(path: &Path, text: &str) {
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+    f.write_all(text.as_bytes()).unwrap();
+}
+
+#[test]
+fn scope_bypasses_fail_out_of_scope_tracked_edit() {
+    let out = scope_case("out-of-scope tracked edit", false, |w| {
+        append(&w.join("src/legacy/foo.rs"), "mod\n");
+    });
+    assert!(
+        out.text.contains("OUTSIDE src/legacy/foo.rs"),
+        "{}",
+        out.text
+    );
+}
+
+#[test]
+fn scope_bypasses_fail_in_scope_edit_passes() {
+    scope_case("in-scope edit", true, |w| {
+        append(&w.join("src/allowed/a.rs"), "mod\n");
+    });
+}
+
+#[test]
+fn scope_bypasses_fail_ignored_log_passes() {
+    scope_case("ordinary .gitignore'd file", true, |w| {
+        std::fs::write(w.join("src/legacy/build.log"), "log\n").unwrap();
+        std::fs::write(w.join("build.log"), "log\n").unwrap();
+    });
+}
+
+#[test]
+fn scope_bypasses_fail_out_of_scope_untracked_file() {
+    let out = scope_case("out-of-scope untracked file", false, |w| {
+        std::fs::write(w.join("src/legacy/new.rs"), "new\n").unwrap();
+    });
+    assert!(
+        out.text.contains("OUTSIDE src/legacy/new.rs"),
+        "{}",
+        out.text
+    );
+}
+
+#[test]
+fn scope_bypasses_fail_staged_rename_out_to_in() {
+    let out = scope_case("staged rename out->in", false, |w| {
+        git(w, &["mv", "src/legacy/foo.rs", "src/allowed/foo.rs"]);
+    });
+    assert!(
+        out.text.contains("OUTSIDE src/legacy/foo.rs"),
+        "the deleted out-of-scope path must surface (--no-renames):\n{}",
+        out.text
+    );
+}
+
+#[test]
+fn scope_bypasses_fail_info_exclude_hidden_file() {
+    let out = scope_case(".git/info/exclude-hidden file", false, |w| {
+        std::fs::create_dir_all(w.join(".git/info")).unwrap();
+        append(&w.join(".git/info/exclude"), "hidden.rs\n");
+        std::fs::write(w.join("src/legacy/hidden.rs"), "h\n").unwrap();
+    });
+    assert!(
+        out.text.contains("OUTSIDE src/legacy/hidden.rs"),
+        "{}",
+        out.text
+    );
+}
+
+#[test]
+fn scope_bypasses_fail_untracked_self_ignoring_gitignore() {
+    let out = scope_case("untracked self-ignoring .gitignore", false, |w| {
+        std::fs::create_dir_all(w.join("src/legacy/sub")).unwrap();
+        std::fs::write(w.join("src/legacy/sub/.gitignore"), "*\n").unwrap();
+        std::fs::write(w.join("src/legacy/sub/z.rs"), "z\n").unwrap();
+    });
+    assert!(
+        out.text.contains("OUTSIDE src/legacy/sub/.gitignore"),
+        "{}",
+        out.text
+    );
+}
+
+#[test]
+fn scope_bypasses_fail_skip_worktree_edit() {
+    let out = scope_case("skip-worktree file", false, |w| {
+        git(w, &["update-index", "--skip-worktree", "src/legacy/foo.rs"]);
+        append(&w.join("src/legacy/foo.rs"), "mod\n");
+    });
+    assert!(out.text.contains("HIDDEN index entries"), "{}", out.text);
+    assert!(out.text.contains("S src/legacy/foo.rs"), "{}", out.text);
+}
+
+#[test]
+fn scope_bypasses_fail_assume_unchanged_edit() {
+    let out = scope_case("assume-unchanged file", false, |w| {
+        git(
+            w,
+            &["update-index", "--assume-unchanged", "src/legacy/foo.rs"],
+        );
+        append(&w.join("src/legacy/foo.rs"), "mod\n");
+    });
+    assert!(out.text.contains("HIDDEN index entries"), "{}", out.text);
+    assert!(out.text.contains("h src/legacy/foo.rs"), "{}", out.text);
+}
+
+/// A moved `baseline` tag hides a prior out-of-scope commit; pinning the recorded base SHA
+/// (D25: the harness records it at dispatch) still catches it.
+#[test]
+fn scope_bypasses_fail_base_sha_pins_past_moved_tag() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (work, task, first_sha) = scope_fixture(tmp.path());
+    append(&work.join("src/legacy/foo.rs"), "mod\n");
+    commit_all(&work, "out");
+    git(&work, &["tag", "-f", "baseline", "HEAD"]);
+
+    let pinned = scope_gate(&work, &task, &first_sha);
+    assert!(!pinned.is_pass(), "pinned base must fail:\n{}", pinned.text);
+    assert_eq!(pinned.failed_checks, vec!["scope"], "{}", pinned.text);
+    assert!(
+        pinned.text.contains("OUTSIDE src/legacy/foo.rs"),
+        "{}",
+        pinned.text
+    );
+
+    let head = scope_gate(&work, &task, "HEAD");
+    assert!(
+        head.is_pass(),
+        "HEAD base hides the prior commit:\n{}",
+        head.text
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Command semantics: `bash -eo pipefail` — an early failing statement and a failing pipe stage
+// both fail the check.
+// ---------------------------------------------------------------------------------------------
+
+fn command_gate(dir: &Path, focused: &[&str]) -> gate::GateOutput {
+    let (work, task, _) = scope_fixture(dir);
+    let list = focused
+        .iter()
+        .map(|c| format!("{c:?}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let toml = SCOPE_VERIFY_TOML.replacen(
+        "[focused]\ncommands = []",
+        &format!("[focused]\ncommands = [{list}]"),
+        1,
+    );
+    std::fs::write(task.join("verify.toml"), toml).unwrap();
+    scope_gate(&work, &task, "baseline")
+}
+
+#[test]
+fn commands_run_with_errexit_early_failure_fails_check() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = command_gate(tmp.path(), &["false; true"]);
+    assert!(!out.is_pass(), "{}", out.text);
+    assert_eq!(out.failed_checks, vec!["focused.1"], "{}", out.text);
+}
+
+#[test]
+fn commands_run_with_pipefail_passing_pipe_passes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = command_gate(tmp.path(), &["true | true"]);
+    assert!(out.is_pass(), "{}", out.text);
+}
+
+#[test]
+fn commands_run_with_pipefail_failing_stage_fails_check() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = command_gate(tmp.path(), &["false | true"]);
+    assert!(!out.is_pass(), "{}", out.text);
+    assert_eq!(out.failed_checks, vec!["focused.1"], "{}", out.text);
+}

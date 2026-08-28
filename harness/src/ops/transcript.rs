@@ -96,6 +96,41 @@ pub fn goal_result_line(tui_log: &Path) -> Option<String> {
         .map(str::to_string)
 }
 
+/// The agent-authored `STATUS:` in a `GOAL_RESULT` line (`status=<X>` token).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReportStatus {
+    Done,
+    Blocked,
+    NeedsReplan,
+    Incomplete,
+}
+
+impl ReportStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Done => "DONE",
+            Self::Blocked => "BLOCKED",
+            Self::NeedsReplan => "NEEDS_REPLAN",
+            Self::Incomplete => "INCOMPLETE",
+        }
+    }
+}
+
+/// Parse the `status=` token of a `GOAL_RESULT` line; `None` when absent or not one of the four
+/// protocol values (the agent's report is never load-bearing — this only labels it).
+pub fn report_status(goal_result_line: &str) -> Option<ReportStatus> {
+    let value = goal_result_line
+        .split_whitespace()
+        .find_map(|token| token.strip_prefix("status="))?;
+    match value.trim_end_matches([',', ';']) {
+        "DONE" => Some(ReportStatus::Done),
+        "BLOCKED" => Some(ReportStatus::Blocked),
+        "NEEDS_REPLAN" => Some(ReportStatus::NeedsReplan),
+        "INCOMPLETE" => Some(ReportStatus::Incomplete),
+        _ => None,
+    }
+}
+
 /// Did the goal evaluator die?
 pub fn goal_cleared_error(tui_log: &Path) -> bool {
     std::fs::read_to_string(tui_log)
@@ -219,5 +254,32 @@ mod tests {
         assert!(!goal_cleared_error(&log));
         std::fs::write(&log, "Goal cleared after an unrecoverable error\n").unwrap();
         assert!(goal_cleared_error(&log));
+    }
+
+    #[test]
+    fn report_status_parses_the_four_protocol_values_only() {
+        assert_eq!(
+            report_status("GOAL_RESULT task=TASK-101 status=DONE"),
+            Some(ReportStatus::Done)
+        );
+        assert_eq!(
+            report_status("GOAL_RESULT status=BLOCKED reason=P-001"),
+            Some(ReportStatus::Blocked)
+        );
+        assert_eq!(
+            report_status("GOAL_RESULT task=TASK-101 status=NEEDS_REPLAN"),
+            Some(ReportStatus::NeedsReplan)
+        );
+        assert_eq!(
+            report_status("GOAL_RESULT task=TASK-101 status=INCOMPLETE turns=40"),
+            Some(ReportStatus::Incomplete)
+        );
+        assert_eq!(
+            report_status("GOAL_RESULT task=TASK-101 status=MAYBE"),
+            None
+        );
+        assert_eq!(report_status("GOAL_RESULT task=TASK-101"), None);
+        assert_eq!(report_status(""), None);
+        assert_eq!(ReportStatus::NeedsReplan.as_str(), "NEEDS_REPLAN");
     }
 }

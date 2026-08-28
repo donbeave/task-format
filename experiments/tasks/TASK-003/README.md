@@ -34,11 +34,10 @@ Desired behavior:
 
 - `CreateForm`/`Field` exactly as D-010, form keys as D-032, validation messages as D-032, `Effect::SaveConnection` handled by `runtime::execute` against the store, and the D-060 CreateConnection layout; `Enter` on the list stays a no-op (TASK-004).
 
-Read before editing (in order):
+Read before editing (orientation only, non-normative, in order):
 
-1. `/task/decisions.md` — D-032 (form keys and validation) and D-060 (CreateConnection layout) are the contract for this task.
-2. `crates/pgtui/tests/app_create_form_test.rs` — the state-machine oracle: field cycling, typing, port filtering, validation errors, `Esc`.
-3. `crates/pgtui/tests/runtime_create_test.rs` and `crates/pgtui/tests/screen_create_form_test.rs` — persistence and rendering oracles.
+1. `crates/pgtui/tests/app_create_form_test.rs` — the state-machine oracle: field cycling, typing, port filtering, validation errors, `Esc`.
+2. `crates/pgtui/tests/runtime_create_test.rs` and `crates/pgtui/tests/screen_create_form_test.rs` — persistence and rendering oracles.
 
 Code flow: `keys.rs` routes printable chars, `Tab`/`BackTab`, `Backspace`, `Enter`, `Esc` while `screen == CreateConnection`; `App::update` mutates `self.form`, and on a valid form emits `Effect::SaveConnection(form.validate()?)`. `runtime::execute` calls `ConnectionStore::insert` and replies `Msg::Saved(..)`, which reloads the list (`Effect::LoadConnections`) or surfaces `error: name already exists`. `ui/create_form.rs` draws the six labelled lines with the `> ` focus marker and the masked password.
 
@@ -95,7 +94,8 @@ Observable behaviour plus the exact evidence command. The gate runs these; the h
 
 ## Fixed decisions
 
-Implement; do not reopen. Verbatim text in `/task/decisions.md`. Anything not decided there that changes public behaviour, architecture, data or security posture is `NEEDS_REPLAN`, not executor discretion.
+Full text: `/task/decisions.md` (binding, read-only).
+Implement; do not reopen. Anything not decided there that changes public behaviour, architecture, data or security posture is `NEEDS_REPLAN`, not executor discretion.
 
 - **D-010:** `CreateForm`/`Field` shape and `blank()`/`validate()`.
 - **D-011, D-012:** `SaveConnection`/`Saved` round trip through the async runtime.
@@ -122,6 +122,7 @@ Static plan. Hierarchical IDs, four spaces per level, max depth 4. Every leaf na
     - [ ] **4.1** `ui/create_form.rs` per D-060 with masked password (`R-005`, `AC-003`) — evidence: `cargo test -p pgtui --test screen_create_form_test` prints `3 passed`.
     - [ ] **4.2** Lint is clean (`D-004`) — evidence: `cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings` exits 0.
 - [ ] **5** Gate passes.
-    - [ ] **5.1** Regression `AC-004` holds and only `expected_paths` changed — evidence: the combined `cargo test -p pgtui --test ...` command of `AC-004` prints `35 passed`, and `git status --porcelain` lists only in-scope files.
-    - [ ] **5.2** Gate green (`AC-005`) — evidence: `taskfmt verify` exits 0 with last line `DONE`.
+    - [ ] **5.1** Regression `AC-004` holds — evidence: the combined `cargo test -p pgtui --test ...` command of `AC-004` prints `35 passed`.
+    - [ ] **5.2** Diff reviewed: only `expected_paths` changed, nothing temporary or unrelated (`R-006`, `R-007`) — evidence: `git status --porcelain` and `git diff --no-renames --stat $TASKFMT_BASE` show only in-scope files.
+    - [ ] **5.3** `taskfmt verify` exits 0 with last line `DONE` (`AC-005`) — evidence: final full run (with progress check), full output shown in the transcript.
 <!-- checklist:end -->

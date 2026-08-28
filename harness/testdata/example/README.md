@@ -29,12 +29,12 @@ Desired behavior:
 
 - `POST /auth/refresh` with an expired token returns HTTP 401, body `{"error":"refresh_token_expired"}`, and no session row, counter, or replacement token is written.
 
-Read before editing (non-normative hints, in order):
+Read before editing (orientation only, non-normative, in order):
 
 1. `AGENTS.md` — test and lint commands.
 2. `src/auth/session/rotate.rs` — the rotation flow; the ordering bug is here.
 3. `src/auth/token_store.rs` — `validate()` already returns `TokenError::Expired`; reuse it.
-4. `docs/decisions/D-041.md` — error-code contract; decided, do not reopen.
+4. `docs/decisions/D-041.md` — error-code contract.
 
 Code flow: the HTTP handler in `src/auth/http/refresh.rs` calls `SessionService::rotate(token)`. `rotate` opens a DB transaction, increments the counter, calls `TokenStore::validate`, then issues a new token. The expiry check must move before the transaction opens. The legacy `legacy_expiry_check` helper in `rotate.rs` duplicates `validate` and must go.
 
@@ -79,7 +79,7 @@ Out of scope:
 | --- | --- | --- | --- |
 | AC-001 | Given an existing session and an expired refresh token, when the refresh endpoint receives it, then it returns 401 `refresh_token_expired` and session state is unchanged. | `cargo test -p auth expired_refresh_token` | exit 0, `1 passed` |
 | AC-002 | Given a valid refresh token, when the endpoint receives it, then rotation succeeds exactly as before. | `cargo test -p auth valid_refresh_rotation` | exit 0, `1 passed` |
-| AC-003 | Given the repository after the change, when searched for the legacy helper, then no reference remains. | `grep -rn legacy_expiry_check src tests` | no output, exit 1 |
+| AC-003 | Given the repository after the change, when searched for the legacy helper, then no reference remains. | `! grep -rn legacy_expiry_check src tests` | exit 0, no output |
 
 ## Fixed decisions
 
@@ -89,23 +89,20 @@ Out of scope:
 
 ## Checklist
 
-Static plan. IDs `N`…`N.N.N.N`, max depth 4, four spaces per level. State lives in `progress.md`.
+Static plan (grammar and state handling: see AGENTS.md). Each `AC-*` is cited on the item whose evidence is that AC's command. State lives in `progress.md`.
 
 <!-- checklist:start -->
 - [ ] **1** Baseline is reproduced.
     - [ ] **1.1** Preconditions `P-001..P-002` pass — evidence: both commands exit 0.
-    - [ ] **1.2** Baseline failure recorded in `progress.md` `BASELINE:` — evidence: `cargo test -p auth expired_refresh_token` shows `1 failed`.
+    - [ ] **1.2** Baseline failure recorded in `progress.md` `BASELINE:` — evidence: `cargo test -p auth expired_refresh_token` shows `1 failed` — `rotation_counter == 1, want 0`.
 - [ ] **2** Required behavior is implemented.
-    - [ ] **2.1** Expiry validated before the transaction (`R-001`, `R-003`) — evidence: `cargo test -p auth expired_refresh_token` exits 0.
+    - [ ] **2.1** Expiry validated before the transaction (`R-001`, `R-003`, `AC-001`) — evidence: `cargo test -p auth expired_refresh_token` exits 0.
         - [ ] **2.1.1** `TokenStore::validate` called before `begin_transaction` in `rotate` — evidence: `grep -n "validate\|begin_transaction" src/auth/session/rotate.rs` shows validate on an earlier line.
-        - [ ] **2.1.2** Counter increment moved inside the post-validation branch — evidence: `cargo test -p auth expired_refresh_token` asserts `rotation_counter == 0`.
+        - [ ] **2.1.2** Counter increment moved inside the post-validation branch — evidence: `cargo test -p auth expired_refresh_token` → `1 passed` (the `rotation_counter == 0` assertion holds).
     - [ ] **2.2** Handler maps `TokenError::Expired` to 401 `refresh_token_expired` (`R-002`, `D-002`) — evidence: `cargo test -p auth expired_error_code` exits 0.
-    - [ ] **2.3** `legacy_expiry_check` removed (`R-004`, `D-003`) — evidence: `grep -rn legacy_expiry_check src tests` prints nothing.
-- [ ] **3** Acceptance criteria are proven.
-    - [ ] **3.1** `AC-001` — evidence: `cargo test -p auth expired_refresh_token` → `1 passed`.
-    - [ ] **3.2** `AC-002` — evidence: `cargo test -p auth valid_refresh_rotation` → `1 passed`.
-    - [ ] **3.3** `AC-003` — evidence: `grep -rn legacy_expiry_check src tests` → no output.
-- [ ] **4** Gate passes.
-    - [ ] **4.1** Diff reviewed: only `src/auth/session/*` and `tests/auth/*` changed — evidence: `git status --porcelain` shows only those paths.
-    - [ ] **4.2** `taskfmt verify` exits 0 with last line `DONE` — evidence: full output in the transcript.
+    - [ ] **2.3** `legacy_expiry_check` removed (`R-004`, `D-003`, `AC-003`) — evidence: `! grep -rn legacy_expiry_check src tests` exits 0.
+    - [ ] **2.4** Valid refresh path unchanged (`AC-002`) — evidence: `cargo test -p auth valid_refresh_rotation` → `1 passed`.
+- [ ] **3** Gate passes.
+    - [ ] **3.1** Diff reviewed: only `expected_paths` changed, nothing temporary or unrelated — evidence: `git status --porcelain` and `git diff --no-renames --stat $TASKFMT_BASE` show only in-scope files.
+    - [ ] **3.2** `taskfmt verify` exits 0 with last line `DONE` — evidence: final full run (with progress check); full output in the transcript.
 <!-- checklist:end -->

@@ -1,7 +1,7 @@
 //! `taskfmt run --task TASK-101` — dispatch ONE task into ONE fresh, persistent, headed container.
 //!
 //! Pipeline: fresh clone → trusted overlay + base commit → task snapshot (+ template top-up) →
-//! lint → progress-init → agent-home preseed → `docker run -d --privileged` (no `--rm`) → prereq
+//! gate selfcheck (D13: nop + polarity, refuses on FAIL) → lint → progress-init → agent-home preseed → `docker run -d --privileged` (no `--rm`) → prereq
 //! wait → herdr pane → agent idle → prompt injection → goal-acceptance check → manifest.
 
 use std::io::Write;
@@ -16,8 +16,11 @@ use crate::ops::container::{self, SecretEnvFile};
 use crate::ops::{docker, git, herdr};
 use crate::redact;
 use crate::runstate::{Manifest, run_dir_name};
+use crate::selfcheck::{self, Report, SelfcheckOpts};
 
 pub const BASE_TAG: &str = "baseline";
+/// `runs/<ID>/selfcheck.log`: the full D13 selfcheck report of the dispatch precondition.
+pub const SELFCHECK_LOG: &str = "selfcheck.log";
 const PREREQ_READY: &str = "/out/prereqs.ready";
 const PREREQ_FAILED: &str = "/out/prereqs.FAILED";
 const PANE_FILE: &str = "/out/pane-id";
@@ -39,6 +42,7 @@ pub fn run(
     wait: bool,
     kill_after: Option<u64>,
     exp: Option<&str>,
+    skip_selfcheck: bool,
 ) -> anyhow::Result<i32> {
     let resolved = ctx.load()?;
     let profile_name = agent
@@ -54,6 +58,7 @@ pub fn run(
         task,
         &repo_url,
         exp,
+        skip_selfcheck,
     )?;
 
     if wait {
@@ -69,6 +74,7 @@ pub fn run(
 }
 
 /// Dispatch one task: everything up to and including prompt injection.
+#[allow(clippy::too_many_arguments)]
 pub fn dispatch_one(
     resolved: &Resolved,
     profile_name: &str,
@@ -77,6 +83,7 @@ pub fn dispatch_one(
     task_id: &str,
     repo_url: &str,
     exp: Option<&str>,
+    skip_selfcheck: bool,
 ) -> anyhow::Result<RunOutcome> {
     let cfg = &resolved.cfg;
     let profile = cfg.profile(profile_name)?.clone();
@@ -133,7 +140,10 @@ pub fn dispatch_one(
     crate::ops::copy_tree(&task_dir, &snapshot)?;
     top_up_snapshot(&snapshot, &resolved.template_dir())?;
 
-    // ---------- 4. lint (aborts dispatch) + progress ----------
+    // ---------- 4. gate selfcheck (D13, aborts dispatch): nop + polarity on the built workspace ----------
+    gate_selfcheck(&snapshot, &workspace, &base_sha, &run_dir, skip_selfcheck)?;
+
+    // ---------- 5. lint (aborts dispatch) + progress ----------
     let report = crate::lint::lint_path(&task_dir);
     crate::ops::write_file(&run_dir.join("lint.log"), &report.render())?;
     if !report.passed() {
@@ -148,7 +158,7 @@ pub fn dispatch_one(
         Some(&run_dir.join("progress/progress.md")),
     )?;
 
-    // ---------- 5. seed dir ----------
+    // ---------- 6. seed dir ----------
     let seed_dir = resolved.seed_dir();
     if seed_dir.is_dir() {
         crate::ops::copy_tree(&seed_dir, &run_dir.join("seed"))?;
@@ -159,16 +169,16 @@ pub fn dispatch_one(
         ));
     }
 
-    // ---------- 6. prompt + session ----------
-    let prompt = build_prompt(&resolved.goal_prompt())?;
+    // ---------- 7. prompt + session ----------
+    let prompt = build_prompt(&resolved.goal_prompt(), &profile.kind)?;
     redact::write_scrubbed(&run_dir.join("prompt.txt"), prompt.as_bytes())?;
     let session_id = uuid::Uuid::new_v4().to_string();
 
-    // ---------- 7. agent home ----------
+    // ---------- 8. agent home ----------
     let agent_home = run_dir.join("agent-home");
     container::preseed_agent_home(&agent_home, &profile.kind)?;
 
-    // ---------- 8. container: named, persistent, detached, no -t (herdr server needs no TTY) ----------
+    // ---------- 9. container: named, persistent, detached, no -t (herdr server needs no TTY) ----------
     let agent_cmd = match profile.kind.as_str() {
         "claude" => container::claude_agent_cmd(&session_id, &model, &effort),
         _ => container::codex_agent_cmd(&model, &effort),
@@ -196,7 +206,16 @@ pub fn dispatch_one(
 
     let secrets = crate::ops::op::resolve_all(&profile.env_secret)?;
     let env_file = SecretEnvFile::create(&secrets)?;
-    let plan = container::launch_plan(cfg, resolved, &manifest, &profile, &agent_cmd, BASE_TAG);
+    // The recorded base SHA, not the movable `baseline` tag: the in-container `taskfmt verify` and the
+    // host gate then share one immovable scope base (the tag stays for humans).
+    let plan = container::launch_plan(
+        cfg,
+        resolved,
+        &manifest,
+        &profile,
+        &agent_cmd,
+        &manifest.base_sha,
+    );
     redact::emit(&format!(
         "== docker run {} (privileged, persistent, no --rm)",
         manifest.container
@@ -204,7 +223,7 @@ pub fn dispatch_one(
     container::launch(&plan, &env_file)?;
     drop(env_file); // the 0600 env file is gone the moment the docker invocation returned
 
-    // ---------- 9. prereq stage (inner dockerd + postgres + seeds) ----------
+    // ---------- 10. prereq stage (inner dockerd + postgres + seeds) ----------
     let timeout = Duration::from_secs(cfg.runtime.prereq_timeout_s);
     redact::emit(&format!(
         "== waiting for the prereq stage (inner dockerd + postgres, up to {} s)",
@@ -212,14 +231,14 @@ pub fn dispatch_one(
     ));
     wait_prereqs(&manifest, &run_dir, timeout)?;
 
-    // ---------- 10. herdr pane ----------
+    // ---------- 11. herdr pane ----------
     manifest.pane = wait_pane(&manifest, Duration::from_secs(50))?;
     // rename before any `agent`-targeted call: "task" is the only stable target name, and the
     // agent does not exist under it until the rename lands
     herdr::rename_to_task(&manifest)?;
     manifest.save(&run_dir)?;
 
-    // ---------- 11. readiness + prompt injection ----------
+    // ---------- 12. readiness + prompt injection ----------
     if !herdr::wait_idle(&manifest, 180_000)? {
         redact::eemit("agent not idle after 180 s (dialog? auth?). Screen:");
         if let Ok(screen) = herdr::pane_visible(&manifest) {
@@ -274,6 +293,56 @@ pub fn wait_and_gate(
     Ok(status)
 }
 
+/// D13 dispatch precondition: `taskfmt selfcheck` (nop + polarity; oracle SKIPPED — no reference
+/// ships yet) against the task snapshot (trusted copies, `verify.toml` topped up) and the freshly
+/// built workspace at the recorded base SHA. The workspace is never mutated (scratch copy). It runs
+/// the fixture's toolchain on the host: run `taskfmt selfcheck` inside the run image when that
+/// toolchain is container-only (TASK-001's nop is vacuous on an empty repo).
+fn gate_selfcheck(
+    task_dir: &Path,
+    workspace: &Path,
+    base_sha: &str,
+    run_dir: &Path,
+    skip: bool,
+) -> anyhow::Result<()> {
+    if skip {
+        redact::emit("== gate selfcheck SKIPPED (--skip-selfcheck)");
+        return Ok(());
+    }
+    redact::emit(&format!(
+        "== gate selfcheck (nop + polarity, base {base_sha})"
+    ));
+    let report = selfcheck::run(SelfcheckOpts {
+        task_dir: task_dir.to_path_buf(),
+        workspace: workspace.to_path_buf(),
+        base: base_sha.to_string(),
+        reference: None,
+        keep: false,
+    })
+    .context("gate selfcheck")?;
+    record_selfcheck(run_dir, &report)
+}
+
+/// Pure part of [`gate_selfcheck`]: write `runs/<ID>/selfcheck.log`, echo the verdict lines, and
+/// refuse to dispatch on `SELFCHECK RESULT FAIL` (the full report goes to stdout then).
+fn record_selfcheck(run_dir: &Path, report: &Report) -> anyhow::Result<()> {
+    let log = run_dir.join(SELFCHECK_LOG);
+    let text = report.render();
+    crate::ops::write_file(&log, &text)?;
+    if !report.pass {
+        redact::emit_lines(text.lines());
+        bail!(
+            "gate selfcheck FAILED — not dispatching (log: {}); --skip-selfcheck to override",
+            log.display()
+        );
+    }
+    redact::emit_lines(
+        text.lines()
+            .filter(|line| line.starts_with("SELFCHECK ") && !line.starts_with("SELFCHECK work ")),
+    );
+    Ok(())
+}
+
 /// Copy `AGENTS.md` and `verify.toml` from the template when the task package lacks them, plus the
 /// `CLAUDE.md` → `AGENTS.md` sibling symlink (hard rule: never a real CLAUDE.md).
 pub fn top_up_snapshot(snapshot: &Path, template_dir: &Path) -> anyhow::Result<()> {
@@ -294,23 +363,39 @@ pub fn top_up_snapshot(snapshot: &Path, template_dir: &Path) -> anyhow::Result<(
     Ok(())
 }
 
-/// The ```text block of goal-prompt.md, collapsed to one line (one line avoids the
-/// `[Pasted text]` chip in the agent TUI).
-pub fn build_prompt(goal_prompt: &Path) -> anyhow::Result<String> {
+/// The first ```` ```text ```` block of goal-prompt.md whose info-string words name `kind`
+/// (`text claude`, `text codex`, or a shared `text claude codex`), collapsed to one line (one
+/// line avoids the `[Pasted text]` chip in the agent TUI).
+pub fn build_prompt(goal_prompt: &Path, kind: &str) -> anyhow::Result<String> {
     let text = std::fs::read_to_string(goal_prompt)
         .with_context(|| format!("cannot read {}", goal_prompt.display()))?;
+    build_prompt_from_str(&text, kind).with_context(|| format!("in {}", goal_prompt.display()))
+}
+
+/// Pure part of [`build_prompt`]: select + collapse, error when no block names `kind`.
+pub fn build_prompt_from_str(text: &str, kind: &str) -> anyhow::Result<String> {
+    if kind.is_empty() || kind.chars().any(char::is_whitespace) {
+        bail!("invalid agent kind {kind:?}");
+    }
     let mut lines: Vec<&str> = Vec::new();
     let mut inside = false;
     for line in text.lines() {
-        match line.trim() {
-            "```text" if !inside => inside = true,
-            "```" if inside => break,
-            _ if inside => lines.push(line),
-            _ => {}
+        let trimmed = line.trim();
+        if inside {
+            if trimmed == "```" {
+                break;
+            }
+            lines.push(line);
+            continue;
+        }
+        if let Some(info) = trimmed.strip_prefix("```text")
+            && info.split_whitespace().any(|word| word == kind)
+        {
+            inside = true;
         }
     }
-    if lines.is_empty() {
-        bail!("no ```text prompt block found in {}", goal_prompt.display());
+    if !inside || lines.is_empty() {
+        bail!("no ```text prompt block tagged for agent kind {kind:?}");
     }
     Ok(lines
         .join(" ")
@@ -456,4 +541,143 @@ fn print_summary(manifest: &Manifest, run_dir: &Path, prompt: &str) {
             prompt.len()
         ),
     ]);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::selfcheck::Phase;
+
+    fn report(pass: bool) -> Report {
+        let phase = |pass: bool, name: &str| Phase {
+            pass,
+            lines: vec![format!("SELFCHECK phase {name}")],
+        };
+        Report {
+            header: vec!["SELFCHECK task t".into()],
+            nop: phase(pass, "nop"),
+            polarity: phase(pass, "polarity"),
+            oracle: None,
+            pass,
+            kept: None,
+        }
+    }
+
+    #[test]
+    fn selfcheck_fail_writes_log_and_refuses_dispatch() {
+        let run_dir = tempfile::tempdir().unwrap();
+        let err = record_selfcheck(run_dir.path(), &report(false)).unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("gate selfcheck FAILED"), "{message}");
+        assert!(message.contains("--skip-selfcheck"), "{message}");
+        let log = std::fs::read_to_string(run_dir.path().join(SELFCHECK_LOG)).unwrap();
+        assert!(log.ends_with("SELFCHECK RESULT FAIL\n"), "{log}");
+        assert!(log.contains("SELFCHECK oracle SKIPPED (no reference)"));
+    }
+
+    #[test]
+    fn selfcheck_pass_writes_log_and_dispatches() {
+        let run_dir = tempfile::tempdir().unwrap();
+        record_selfcheck(run_dir.path(), &report(true)).unwrap();
+        let log = std::fs::read_to_string(run_dir.path().join(SELFCHECK_LOG)).unwrap();
+        assert!(log.ends_with("SELFCHECK RESULT PASS\n"), "{log}");
+    }
+
+    #[test]
+    fn skip_selfcheck_never_runs_nor_logs() {
+        let run_dir = tempfile::tempdir().unwrap();
+        // A non-existent task dir would be a missing input (66) if selfcheck ran.
+        gate_selfcheck(
+            Path::new("/nonexistent/task"),
+            Path::new("/nonexistent/workspace"),
+            "deadbeef",
+            run_dir.path(),
+            true,
+        )
+        .unwrap();
+        assert!(!run_dir.path().join(SELFCHECK_LOG).exists());
+        let err = gate_selfcheck(
+            Path::new("/nonexistent/task"),
+            Path::new("/nonexistent/workspace"),
+            "deadbeef",
+            run_dir.path(),
+            false,
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("no such task dir"), "{err:#}");
+    }
+
+    const FIXTURE: &str = "# Launch prompt\n\nprose with ```text inline\n\n```sh\nclaude -p never\n```\n\n```text claude codex\n/goal Implement the task.\n  Done when:  verify   exits 0\nand DONE is printed.\n```\n\n```text codex\nunreachable second block\n```\n";
+
+    /// The pre-kind extraction (first plain ```` ```text ```` fence, collapsed) — the claude
+    /// prompt must stay byte-identical to what it produced.
+    fn legacy_extract(text: &str) -> String {
+        let mut lines: Vec<&str> = Vec::new();
+        let mut inside = false;
+        for line in text.lines() {
+            match line.trim() {
+                "```text" if !inside => inside = true,
+                "```" if inside => break,
+                _ if inside => lines.push(line),
+                _ => {}
+            }
+        }
+        lines
+            .join(" ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    #[test]
+    fn shared_block_serves_both_kinds_and_matches_legacy_extraction() {
+        let expected = "/goal Implement the task. Done when: verify exits 0 and DONE is printed.";
+        let claude = build_prompt_from_str(FIXTURE, "claude").unwrap();
+        let codex = build_prompt_from_str(FIXTURE, "codex").unwrap();
+        assert_eq!(claude, expected);
+        assert_eq!(codex, expected, "first matching block wins for codex too");
+        let legacy_fixture = FIXTURE.replacen("```text claude codex", "```text", 1);
+        assert_eq!(
+            claude.as_bytes(),
+            legacy_extract(&legacy_fixture).as_bytes(),
+            "claude extraction must be byte-identical to the single-block extraction"
+        );
+    }
+
+    #[test]
+    fn split_blocks_diverge_by_kind() {
+        let text = "```text claude\nclaude only\n```\n```text codex\ncodex only\n```\n";
+        assert_eq!(
+            build_prompt_from_str(text, "claude").unwrap(),
+            "claude only"
+        );
+        assert_eq!(build_prompt_from_str(text, "codex").unwrap(), "codex only");
+    }
+
+    #[test]
+    fn untagged_or_foreign_fences_are_never_injected() {
+        let text = "```text\nplain\n```\n```sh\nclaude -p x\n```\n";
+        let err = build_prompt_from_str(text, "claude").unwrap_err();
+        assert!(err.to_string().contains("claude"), "{err:#}");
+        assert!(build_prompt_from_str(FIXTURE, "ghost").is_err());
+        assert!(build_prompt_from_str(FIXTURE, "").is_err());
+        assert!(build_prompt_from_str("```text claude\n```\n", "claude").is_err());
+    }
+
+    #[test]
+    fn real_goal_prompt_serves_claude_and_codex_under_the_cap() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("goal-prompt.md");
+        let claude = build_prompt(&path, "claude").unwrap();
+        let codex = build_prompt(&path, "codex").unwrap();
+        assert_eq!(claude, codex);
+        assert!(claude.starts_with("/goal "));
+        assert!(claude.contains("after the last file change"));
+        assert!(claude.contains("STATUS: INCOMPLETE"));
+        assert!(
+            claude.chars().count() <= 4_000,
+            "{}",
+            claude.chars().count()
+        );
+        assert!(build_prompt(&path, "ghost").is_err());
+    }
 }

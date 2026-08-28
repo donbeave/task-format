@@ -12,6 +12,7 @@ pub mod progress_init;
 pub mod promote;
 pub mod repo;
 pub mod run;
+pub mod selfcheck;
 pub mod selftest;
 pub mod status;
 pub mod verify;
@@ -59,17 +60,29 @@ pub fn dispatch(cli: &Cli) -> anyhow::Result<i32> {
             root,
             task_dir,
             progress,
+            no_progress,
             base,
             log_dir,
             fail_fast,
         } => verify::run(
             root.as_deref(),
             task_dir.as_deref(),
-            progress.clone(),
+            if *no_progress {
+                Some(String::new())
+            } else {
+                progress.clone()
+            },
             base.clone(),
             log_dir.as_deref(),
             *fail_fast,
         ),
+        Command::Selfcheck {
+            task,
+            workspace,
+            base,
+            reference,
+            keep,
+        } => selfcheck::run(task, workspace, base.clone(), reference.as_deref(), *keep),
         Command::BuildImages { agent, no_cache } => {
             build_images::run(&ctx, (*agent).into(), *no_cache)
         }
@@ -87,6 +100,7 @@ pub fn dispatch(cli: &Cli) -> anyhow::Result<i32> {
             wait,
             kill_after,
             exp,
+            skip_selfcheck,
         } => run::run(
             &ctx,
             task,
@@ -97,6 +111,7 @@ pub fn dispatch(cli: &Cli) -> anyhow::Result<i32> {
             *wait,
             *kill_after,
             exp.as_deref(),
+            *skip_selfcheck,
         ),
         Command::Gate { run: run_id } => gate::run(&ctx, run_id),
         Command::Promote { run: run_id, yes } => promote::run(&ctx, run_id, *yes),
@@ -111,12 +126,14 @@ pub fn dispatch(cli: &Cli) -> anyhow::Result<i32> {
             repo,
             agent,
             resume,
+            skip_selfcheck,
         } => experiment::run(
             &ctx,
             tasks,
             repo.as_deref(),
             agent.as_deref(),
             resume.as_deref(),
+            *skip_selfcheck,
         ),
         Command::ContainerEntrypoint => container_entrypoint::run(),
         Command::Prereqs => container_entrypoint::prereqs_only(),

@@ -39,11 +39,10 @@ Desired behavior:
 
 - `grid.rs` implements D-050..D-053 (model, comparison, null placement, client-side sort); `PgSession::query` returns `QueryOutcome` for the D-025 preview SQL; `app.rs` handles `Effect::Query`/`Msg::QueryDone` for `Preview`; `ui/grid.rs` renders the D-060 grid. Custom SQL and `x` stay inert (TASK-006); `d` stays inert (TASK-007).
 
-Read before editing (in order):
+Read before editing (orientation only, non-normative, in order):
 
-1. `/task/decisions.md` — D-050..D-053 (grid) and D-025 (preview SQL) are the contract for this task.
-2. `crates/pgtui/tests/grid_sort_test.rs` — the pure sort oracle: stable ties, numeric vs byte-wise compare, null placement, sort reset.
-3. `crates/pgtui/tests/pg_preview_test.rs`, `app_preview_test.rs`, `screen_preview_test.rs` — live-server, state and rendering oracles.
+1. `crates/pgtui/tests/grid_sort_test.rs` — the pure sort oracle: stable ties, numeric vs byte-wise compare, null placement, sort reset.
+2. `crates/pgtui/tests/pg_preview_test.rs`, `app_preview_test.rs`, `screen_preview_test.rs` — live-server, state and rendering oracles.
 
 Code flow: `Enter` on a sidebar row stores the pending `TableRef` and emits `Effect::Query { kind: Preview(t), sql }`; `runtime::execute` calls `PgSession::query(sql)`, which runs the exact D-025 preview SQL and replies `Msg::QueryDone { kind, result }`. `Ok(QueryOutcome::Rows(rs))` builds `Grid::from(rs)` into `app.grid`, focuses the grid and resets cursors/sort; `Err` keeps any existing grid and sets `Status::Error`. `s` cycles the sort on the cursor column (D-052) and `visible_rows()` feeds the renderer.
 
@@ -102,7 +101,8 @@ Observable behaviour plus the exact evidence command. The gate runs these; the h
 
 ## Fixed decisions
 
-Implement; do not reopen. Verbatim text in `/task/decisions.md`. Anything not decided there that changes public behaviour, architecture, data or security posture is `NEEDS_REPLAN`, not executor discretion.
+Full text: `/task/decisions.md` (binding, read-only).
+Implement; do not reopen. Anything not decided there that changes public behaviour, architecture, data or security posture is `NEEDS_REPLAN`, not executor discretion.
 
 - **D-050..D-053:** grid model, comparison, null placement and cycling, client-side sort.
 - **D-025:** exact preview SQL, `PREVIEW_LIMIT`, no `ORDER BY`.
@@ -120,8 +120,8 @@ Static plan. Hierarchical IDs, four spaces per level, max depth 4. Every leaf na
     - [ ] **1.1** Preconditions `P-001..P-005` pass — evidence: each listed command exits 0.
     - [ ] **1.2** Baseline failure recorded in `progress.md` `BASELINE:` — evidence: `cargo test -p pgtui --test grid_sort_test` fails to compile with `pgtui::grid` unresolved.
 - [ ] **2** Grid model is implemented.
-    - [ ] **2.1** D-050 model with order-preserving `from` and `visible_rows` (`R-001`, `AC-001`) — evidence: `cargo test -p pgtui --test grid_sort_test` prints `8 passed`.
-    - [ ] **2.2** D-051/D-052 comparison, stability and null placement (`R-002`) — evidence: `grep -q 'sort_by' crates/pgtui/src/grid.rs && ! grep -q 'sort_unstable' crates/pgtui/src` exits 0.
+    - [ ] **2.1** D-050 model with order-preserving `from` and `visible_rows` (`R-001`, `R-003`, `AC-001`) — evidence: `cargo test -p pgtui --test grid_sort_test` prints `8 passed`.
+    - [ ] **2.2** D-051/D-052 comparison, stability and null placement, stable sort only (`R-002`, `R-003`, `R-007`) — evidence: `grep -q 'sort_by' crates/pgtui/src/grid.rs && ! grep -q 'sort_unstable' crates/pgtui/src` exits 0.
 - [ ] **3** Preview path is implemented.
     - [ ] **3.1** `PgSession::query` with the exact D-025 preview SQL (`R-004`, `AC-002`) — evidence: `cargo test -p pgtui --test pg_preview_test` prints `4 passed`.
     - [ ] **3.2** `Effect::Query`/`Msg::QueryDone` handling and grid keys (`R-005`, `AC-003`) — evidence: `cargo test -p pgtui --test app_preview_test` prints `8 passed`.
@@ -129,6 +129,7 @@ Static plan. Hierarchical IDs, four spaces per level, max depth 4. Every leaf na
     - [ ] **4.1** `ui/grid.rs` and browser main pane per D-060 (`R-006`, `AC-004`) — evidence: `cargo test -p pgtui --test screen_preview_test` prints `5 passed`.
     - [ ] **4.2** Lint is clean (`D-004`) — evidence: `cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings` exits 0.
 - [ ] **5** Gate passes.
-    - [ ] **5.1** Regression `AC-005` holds and only `expected_paths` changed — evidence: the combined `cargo test -p pgtui --test ...` command of `AC-005` prints `73 passed`, and `git status --porcelain` lists only in-scope files.
-    - [ ] **5.2** Gate green (`AC-006`) — evidence: `taskfmt verify` exits 0 with last line `DONE`.
+    - [ ] **5.1** Regression `AC-005` holds — evidence: the combined `cargo test -p pgtui --test ...` command of `AC-005` prints `73 passed`.
+    - [ ] **5.2** Diff reviewed: only `expected_paths` changed, nothing temporary or unrelated (`R-007`) — evidence: `git status --porcelain` and `git diff --no-renames --stat $TASKFMT_BASE` show only in-scope files.
+    - [ ] **5.3** `taskfmt verify` exits 0 with last line `DONE` (`AC-006`) — evidence: final full run (with progress check), full output shown in the transcript.
 <!-- checklist:end -->

@@ -165,13 +165,22 @@ pub fn push(dir: &Path, remote: &str, refspec: &str) -> anyhow::Result<Captured>
     check(&mut in_dir(dir, &["push", remote, refspec]), "git push")
 }
 
-/// Changed files vs `base`: diff + staged + untracked, sorted and deduped.
+/// Fail-closed enumeration of every path the executor touched, vs `base`:
+/// - `--no-renames`: a rename out->in must surface the deleted out-of-scope path, not just the
+///   new one;
+/// - untracked files honour only per-directory `.gitignore` (not `.git/info/exclude` or
+///   `core.excludesFile`, both writable by the executor);
+/// - an untracked `.gitignore` that ignores itself (`*`) is listed anyway, so a new ignore file
+///   cannot hide its siblings.
+///
+/// Sorted and deduped.
 pub fn changed_files(dir: &Path, base: &str) -> anyhow::Result<Vec<String>> {
     let mut files: Vec<String> = Vec::new();
     for args in [
-        vec!["diff", "--name-only", base, "--"],
-        vec!["diff", "--name-only", "--cached", "--"],
-        vec!["ls-files", "--others", "--exclude-standard"],
+        vec!["diff", "--no-renames", "--name-only", base, "--"],
+        vec!["diff", "--no-renames", "--name-only", "--cached", "--"],
+        vec!["ls-files", "--others", "--exclude-per-directory=.gitignore"],
+        vec!["ls-files", "--others", "--", ":(top,glob)**/.gitignore"],
     ] {
         let out = output(&mut in_dir(dir, &args))?;
         files.extend(
@@ -183,6 +192,21 @@ pub fn changed_files(dir: &Path, base: &str) -> anyhow::Result<Vec<String>> {
     files.sort();
     files.dedup();
     Ok(files)
+}
+
+/// Index entries whose flags make `git diff` blind to worktree edits: `S` = skip-worktree,
+/// lowercase tag = assume-unchanged (`git ls-files -v` lines, verbatim).
+pub fn hidden_index_entries(dir: &Path) -> anyhow::Result<Vec<String>> {
+    let out = output(&mut in_dir(dir, &["ls-files", "-v"]))?;
+    Ok(out
+        .lines()
+        .filter(|line| {
+            let mut chars = line.chars();
+            matches!(chars.next(), Some(c) if c == 'S' || c.is_ascii_lowercase())
+                && chars.next() == Some(' ')
+        })
+        .map(str::to_string)
+        .collect())
 }
 
 /// Signed-off-by line of `HEAD`, when present.

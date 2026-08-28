@@ -38,11 +38,10 @@ Desired behavior:
 
 - Disconnect (D-033/D-024), exit codes (D-040/D-012) and gallery (D-080) behave exactly as R-001..R-004 state and AC-001..AC-004 prove.
 
-Read before editing (in order):
+Read before editing (orientation only, non-normative, in order):
 
-1. `/task/decisions.md` — D-080 (gallery contract), D-024 (disconnect), D-040 (exit codes) are the contract for this task.
-2. `crates/pgtui/tests/app_disconnect_test.rs` and `crates/pgtui/tests/pg_disconnect_test.rs` — the disconnect oracles (state reset, backend actually closed).
-3. `crates/pgtui/tests/cli_exit_test.rs` and `crates/pgtui/tests/gallery_test.rs` — pty exit codes and the ten-screen contract.
+1. `crates/pgtui/tests/app_disconnect_test.rs` and `crates/pgtui/tests/pg_disconnect_test.rs` — the disconnect oracles (state reset, backend actually closed).
+2. `crates/pgtui/tests/cli_exit_test.rs` and `crates/pgtui/tests/gallery_test.rs` — pty exit codes and the ten-screen contract.
 
 Code flow: `keys.rs` routes `d` in the browser to `Effect::Disconnect`; `runtime::execute` removes the `PgSession`, drops the `Client`, awaits the spawned connection's `JoinHandle`, and replies `Msg::Disconnected`. `main.rs` keeps the D-012 loop, with `Ctrl+C` emitting `Disconnect` before `Quit` (D-030). `src/bin/gallery.rs` builds the ten D-080 states locally, renders through `pgtui::render`, and writes `<name>.svg`/`<name>.png`; the repository `README.md` and the committed `docs/screens/` are produced by running it with the default `--out`.
 
@@ -101,7 +100,8 @@ Observable behaviour plus the exact evidence command. The gate runs these; the h
 
 ## Fixed decisions
 
-Implement; do not reopen. Verbatim text in `/task/decisions.md`. Anything not decided there that changes public behaviour, architecture, data or security posture is `NEEDS_REPLAN`, not executor discretion.
+Full text: `/task/decisions.md` (binding, read-only).
+Implement; do not reopen. Anything not decided there that changes public behaviour, architecture, data or security posture is `NEEDS_REPLAN`, not executor discretion.
 
 - **D-024, D-033:** disconnect semantics, socket teardown, `d` key.
 - **D-012, D-030, D-040:** loop, global `Ctrl+C`, exit codes.
@@ -127,6 +127,7 @@ Static plan. Hierarchical IDs, four spaces per level, max depth 4. Every leaf na
     - [ ] **4.2** `docs/screens/` holds the committed run and `README.md` lists the ten names (`R-005`) — evidence: `test "$(ls docs/screens/*.png | wc -l | tr -d ' ')" = 10 && grep -q '## Screens' README.md` exits 0.
     - [ ] **4.3** Lint is clean (`D-004`) — evidence: `cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings` exits 0.
 - [ ] **5** Gate passes.
-    - [ ] **5.1** Full series `AC-005` holds and only `expected_paths` changed — evidence: the combined `cargo test -p pgtui --test ...` command of `AC-005` prints `102 passed`, and `git status --porcelain` lists only in-scope files.
-    - [ ] **5.2** Gate green (`AC-006`) — evidence: `taskfmt verify` exits 0 with last line `DONE`.
+    - [ ] **5.1** Full series `AC-005` holds — evidence: the combined `cargo test -p pgtui --test ...` command of `AC-005` prints `102 passed`.
+    - [ ] **5.2** Diff reviewed: only `expected_paths` changed, nothing temporary or unrelated (`R-006`, `R-007`) — evidence: `git status --porcelain` and `git diff --no-renames --stat $TASKFMT_BASE` show only in-scope files.
+    - [ ] **5.3** `taskfmt verify` exits 0 with last line `DONE` (`AC-006`) — evidence: final full run (with progress check), full output shown in the transcript.
 <!-- checklist:end -->

@@ -38,11 +38,10 @@ Desired behavior:
 
 - `crates/pgtui/src/store/mod.rs` implements D-020..D-022; `app.rs` implements D-010/D-011 with the full `Screen`, `Msg` and `Effect` sets; `keys.rs` maps D-030/D-031; `ui/` renders the list and the status line; `main.rs` runs the D-012 loop for the connection list; not-yet-implemented behaviour keeps failing with exit 2 or is a no-op exactly as D-031 states.
 
-Read before editing (in order):
+Read before editing (orientation only, non-normative, in order):
 
-1. `/task/decisions.md` — D-010..D-013, D-020..D-022, D-030..D-031, D-060 are the contract for this task.
-2. `crates/pgtui/tests/store_test.rs` and `crates/pgtui/tests/app_connection_list_test.rs` — the store and state-machine oracles.
-3. `crates/pgtui/tests/screen_connection_list_test.rs` and `crates/pgtui/tests/cli_test.rs` — the rendering and process-level oracles.
+1. `crates/pgtui/tests/store_test.rs` and `crates/pgtui/tests/app_connection_list_test.rs` — the store and state-machine oracles.
+2. `crates/pgtui/tests/screen_connection_list_test.rs` and `crates/pgtui/tests/cli_test.rs` — the rendering and process-level oracles.
 
 Code flow: `main.rs` parses `--db`, opens the store, feeds `Msg::Connections(list)` into `App::update`, then loops draw/read-key/effects. `keys.rs` turns a `KeyEvent` into the `Msg::Key` handling that `App::update` performs; effects that need IO go through `runtime::execute` (D-011). Rendering goes `ui::draw(app, &mut Buffer)` (D-061), split across `ui/connection_list.rs` and `ui/status.rs`.
 
@@ -101,7 +100,8 @@ Observable behaviour plus the exact evidence command. The gate runs these; the h
 
 ## Fixed decisions
 
-Implement; do not reopen. Verbatim text in `/task/decisions.md`. Anything not decided there that changes public behaviour, architecture, data or security posture is `NEEDS_REPLAN`, not executor discretion.
+Full text: `/task/decisions.md` (binding, read-only).
+Implement; do not reopen. Anything not decided there that changes public behaviour, architecture, data or security posture is `NEEDS_REPLAN`, not executor discretion.
 
 - **D-010, D-011:** `App` field set, `Screen`/`Msg`/`Effect`/`QueryKind`/`QueryOutcome` variants, pure `update` plus async `runtime::execute`.
 - **D-012, D-013:** runtime loop shape; status line semantics.
@@ -130,6 +130,7 @@ Static plan. Hierarchical IDs, four spaces per level, max depth 4. Every leaf na
     - [ ] **4.2** `main.rs` runs the D-012 loop with D-040 exit codes (`R-005`, `AC-004`) — evidence: `cargo test -p pgtui --test cli_test` prints `3 passed`.
     - [ ] **4.3** Lint is clean (`D-004`) — evidence: `cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings` exits 0.
 - [ ] **5** Gate passes.
-    - [ ] **5.1** Regression `AC-005` holds and only `expected_paths` changed — evidence: `cargo test -p pgtui --test skeleton_test --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test` prints `20 passed`, and `git status --porcelain` lists only in-scope files.
-    - [ ] **5.2** Gate green (`AC-006`) — evidence: `taskfmt verify` exits 0 with last line `DONE`.
+    - [ ] **5.1** Regression `AC-005` holds — evidence: `cargo test -p pgtui --test skeleton_test --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test` prints `20 passed`.
+    - [ ] **5.2** Diff reviewed: only `expected_paths` changed, nothing temporary or unrelated (`R-006`, `R-007`) — evidence: `git status --porcelain` and `git diff --no-renames --stat $TASKFMT_BASE` show only in-scope files.
+    - [ ] **5.3** `taskfmt verify` exits 0 with last line `DONE` (`AC-006`) — evidence: final full run (with progress check), full output shown in the transcript.
 <!-- checklist:end -->
