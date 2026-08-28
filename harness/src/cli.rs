@@ -93,7 +93,8 @@ pub enum Command {
     },
 
     /// Prove a task package's gate: RED on the untouched baseline, GREEN on the reference (D13).
-    /// Exit 0 only on SELFCHECK RESULT PASS; 1 FAIL; 66 missing input; 70 internal error.
+    /// Exit 0 only on SELFCHECK RESULT PASS; 1 FAIL; 64 usage; 66 missing input; 69 no verdict
+    /// (a focused command was not runnable: rc 126/127); 70 internal error.
     Selfcheck {
         /// Task package dir holding verify.toml (+ README.md).
         task: PathBuf,
@@ -157,9 +158,11 @@ pub enum Command {
         /// Record the run under experiments/runs/<ID>/ for an experiment.
         #[arg(long)]
         exp: Option<String>,
-        /// Dispatch even when the D13 gate selfcheck (nop + polarity) FAILS on the built workspace.
+        /// Run the D13 gate selfcheck (nop + polarity) on the built workspace after lint; refuse
+        /// to dispatch on FAIL or NOVERDICT. Off by default: it runs the fixture's toolchain on
+        /// the host (container-mode selfcheck is pending).
         #[arg(long)]
-        skip_selfcheck: bool,
+        selfcheck: bool,
     },
 
     /// Host gate for one run: re-run verify on the workspace with trusted copies.
@@ -201,9 +204,10 @@ pub enum Command {
         /// Resume an interrupted experiment: skip tasks already recorded passed.
         #[arg(long)]
         resume: Option<String>,
-        /// Dispatch even when the D13 gate selfcheck (nop + polarity) FAILS on the built workspace.
+        /// Run the D13 gate selfcheck (nop + polarity) before each dispatch; refuse on FAIL or
+        /// NOVERDICT. Off by default (host toolchain; container-mode selfcheck is pending).
         #[arg(long)]
-        skip_selfcheck: bool,
+        selfcheck: bool,
     },
 
     /// Container PID 1 (root): inner dockerd, codex seeding, prereqs, then the agent.

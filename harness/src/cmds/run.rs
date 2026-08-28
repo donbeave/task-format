@@ -1,8 +1,9 @@
 //! `taskfmt run --task TASK-101` — dispatch ONE task into ONE fresh, persistent, headed container.
 //!
 //! Pipeline: fresh clone → trusted overlay + base commit → task snapshot (+ template top-up) →
-//! gate selfcheck (D13: nop + polarity, refuses on FAIL) → lint → progress-init → agent-home preseed → `docker run -d --privileged` (no `--rm`) → prereq
-//! wait → herdr pane → agent idle → prompt injection → goal-acceptance check → manifest.
+//! lint → gate selfcheck (opt-in `--selfcheck`; D13 nop + polarity, refuses on FAIL/NOVERDICT) →
+//! progress-init → agent-home preseed → `docker run -d --privileged` (no `--rm`) → prereq wait →
+//! herdr pane → agent idle → prompt injection → goal-acceptance check → manifest.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -15,11 +16,13 @@ use crate::config::{Resolved, timestamp_compact};
 use crate::ops::container::{self, SecretEnvFile};
 use crate::ops::{docker, git, herdr};
 use crate::redact;
-use crate::runstate::{Manifest, run_dir_name};
+use crate::runstate::{
+    Manifest, SELFCHECK_FAIL, SELFCHECK_NOT_RUN, SELFCHECK_NOVERDICT, SELFCHECK_PASS, run_dir_name,
+};
 use crate::selfcheck::{self, Report, SelfcheckOpts};
 
 pub const BASE_TAG: &str = "baseline";
-/// `runs/<ID>/selfcheck.log`: the full D13 selfcheck report of the dispatch precondition.
+/// `runs/<ID>/selfcheck.log`: the full D13 selfcheck report of the (opt-in) dispatch precondition.
 pub const SELFCHECK_LOG: &str = "selfcheck.log";
 const PREREQ_READY: &str = "/out/prereqs.ready";
 const PREREQ_FAILED: &str = "/out/prereqs.FAILED";
@@ -42,7 +45,7 @@ pub fn run(
     wait: bool,
     kill_after: Option<u64>,
     exp: Option<&str>,
-    skip_selfcheck: bool,
+    selfcheck: bool,
 ) -> anyhow::Result<i32> {
     let resolved = ctx.load()?;
     let profile_name = agent
@@ -58,7 +61,7 @@ pub fn run(
         task,
         &repo_url,
         exp,
-        skip_selfcheck,
+        selfcheck,
     )?;
 
     if wait {
@@ -83,7 +86,7 @@ pub fn dispatch_one(
     task_id: &str,
     repo_url: &str,
     exp: Option<&str>,
-    skip_selfcheck: bool,
+    selfcheck: bool,
 ) -> anyhow::Result<RunOutcome> {
     let cfg = &resolved.cfg;
     let profile = cfg.profile(profile_name)?.clone();
@@ -140,10 +143,7 @@ pub fn dispatch_one(
     crate::ops::copy_tree(&task_dir, &snapshot)?;
     top_up_snapshot(&snapshot, &resolved.template_dir())?;
 
-    // ---------- 4. gate selfcheck (D13, aborts dispatch): nop + polarity on the built workspace ----------
-    gate_selfcheck(&snapshot, &workspace, &base_sha, &run_dir, skip_selfcheck)?;
-
-    // ---------- 5. lint (aborts dispatch) + progress ----------
+    // ---------- 4. lint (aborts dispatch) ----------
     let report = crate::lint::lint_path(&task_dir);
     crate::ops::write_file(&run_dir.join("lint.log"), &report.render())?;
     if !report.passed() {
@@ -153,12 +153,17 @@ pub fn dispatch_one(
             run_dir.join("lint.log").display()
         );
     }
+
+    // ---------- 5. gate selfcheck (opt-in, aborts dispatch): D13 nop + polarity on the built workspace ----------
+    let selfcheck_status = gate_selfcheck(&snapshot, &workspace, &base_sha, &run_dir, selfcheck)?;
+
+    // ---------- 6. progress ----------
     crate::cmds::progress_init::generate_and_write(
         &task_dir,
         Some(&run_dir.join("progress/progress.md")),
     )?;
 
-    // ---------- 6. seed dir ----------
+    // ---------- 7. seed dir ----------
     let seed_dir = resolved.seed_dir();
     if seed_dir.is_dir() {
         crate::ops::copy_tree(&seed_dir, &run_dir.join("seed"))?;
@@ -169,16 +174,16 @@ pub fn dispatch_one(
         ));
     }
 
-    // ---------- 7. prompt + session ----------
+    // ---------- 8. prompt + session ----------
     let prompt = build_prompt(&resolved.goal_prompt(), &profile.kind)?;
     redact::write_scrubbed(&run_dir.join("prompt.txt"), prompt.as_bytes())?;
     let session_id = uuid::Uuid::new_v4().to_string();
 
-    // ---------- 8. agent home ----------
+    // ---------- 9. agent home ----------
     let agent_home = run_dir.join("agent-home");
     container::preseed_agent_home(&agent_home, &profile.kind)?;
 
-    // ---------- 9. container: named, persistent, detached, no -t (herdr server needs no TTY) ----------
+    // ---------- 10. container: named, persistent, detached, no -t (herdr server needs no TTY) ----------
     let agent_cmd = match profile.kind.as_str() {
         "claude" => container::claude_agent_cmd(&session_id, &model, &effort),
         _ => container::codex_agent_cmd(&model, &effort),
@@ -199,6 +204,7 @@ pub fn dispatch_one(
         pane: String::new(),
         agent_name: "task".to_string(),
         start: crate::config::timestamp_rfc3339(),
+        selfcheck: selfcheck_status.to_string(),
         experiment: exp.map(str::to_string),
         gate: None,
         result_sha: None,
@@ -223,7 +229,7 @@ pub fn dispatch_one(
     container::launch(&plan, &env_file)?;
     drop(env_file); // the 0600 env file is gone the moment the docker invocation returned
 
-    // ---------- 10. prereq stage (inner dockerd + postgres + seeds) ----------
+    // ---------- 11. prereq stage (inner dockerd + postgres + seeds) ----------
     let timeout = Duration::from_secs(cfg.runtime.prereq_timeout_s);
     redact::emit(&format!(
         "== waiting for the prereq stage (inner dockerd + postgres, up to {} s)",
@@ -231,14 +237,14 @@ pub fn dispatch_one(
     ));
     wait_prereqs(&manifest, &run_dir, timeout)?;
 
-    // ---------- 11. herdr pane ----------
+    // ---------- 12. herdr pane ----------
     manifest.pane = wait_pane(&manifest, Duration::from_secs(50))?;
     // rename before any `agent`-targeted call: "task" is the only stable target name, and the
     // agent does not exist under it until the rename lands
     herdr::rename_to_task(&manifest)?;
     manifest.save(&run_dir)?;
 
-    // ---------- 12. readiness + prompt injection ----------
+    // ---------- 13. readiness + prompt injection ----------
     if !herdr::wait_idle(&manifest, 180_000)? {
         redact::eemit("agent not idle after 180 s (dialog? auth?). Screen:");
         if let Ok(screen) = herdr::pane_visible(&manifest) {
@@ -293,21 +299,24 @@ pub fn wait_and_gate(
     Ok(status)
 }
 
-/// D13 dispatch precondition: `taskfmt selfcheck` (nop + polarity; oracle SKIPPED — no reference
-/// ships yet) against the task snapshot (trusted copies, `verify.toml` topped up) and the freshly
-/// built workspace at the recorded base SHA. The workspace is never mutated (scratch copy). It runs
-/// the fixture's toolchain on the host: run `taskfmt selfcheck` inside the run image when that
-/// toolchain is container-only (TASK-001's nop is vacuous on an empty repo).
+/// Opt-in D13 dispatch precondition (`--selfcheck`): `taskfmt selfcheck` (nop + polarity; oracle
+/// SKIPPED — no reference ships yet) against the task snapshot (trusted copies, `verify.toml`
+/// topped up) and the freshly built workspace at the recorded base SHA. The workspace is never
+/// mutated (scratch copy). Off by default: it runs the fixture's toolchain on the host, which is
+/// container-only for the postgres-backed tasks — the container-mode selfcheck (inside the run
+/// image, after the prereq stage) is pending. Returns the `Manifest::selfcheck` value.
 fn gate_selfcheck(
     task_dir: &Path,
     workspace: &Path,
     base_sha: &str,
     run_dir: &Path,
-    skip: bool,
-) -> anyhow::Result<()> {
-    if skip {
-        redact::emit("== gate selfcheck SKIPPED (--skip-selfcheck)");
-        return Ok(());
+    enabled: bool,
+) -> anyhow::Result<&'static str> {
+    if !enabled {
+        redact::emit(
+            "== gate selfcheck not run (opt in with --selfcheck; container-mode selfcheck pending)",
+        );
+        return Ok(SELFCHECK_NOT_RUN);
     }
     redact::emit(&format!(
         "== gate selfcheck (nop + polarity, base {base_sha})"
@@ -323,16 +332,34 @@ fn gate_selfcheck(
     record_selfcheck(run_dir, &report)
 }
 
+/// `Manifest::selfcheck` vocabulary for a report that ran.
+fn selfcheck_status(report: &Report) -> &'static str {
+    if report.pass {
+        SELFCHECK_PASS
+    } else if report.noverdict {
+        SELFCHECK_NOVERDICT
+    } else {
+        SELFCHECK_FAIL
+    }
+}
+
 /// Pure part of [`gate_selfcheck`]: write `runs/<ID>/selfcheck.log`, echo the verdict lines, and
-/// refuse to dispatch on `SELFCHECK RESULT FAIL` (the full report goes to stdout then).
-fn record_selfcheck(run_dir: &Path, report: &Report) -> anyhow::Result<()> {
+/// refuse to dispatch on `SELFCHECK RESULT FAIL` (the full report goes to stdout then). NOVERDICT
+/// (a focused command not runnable on the host) refuses too — the package is unproven, not wrong.
+fn record_selfcheck(run_dir: &Path, report: &Report) -> anyhow::Result<&'static str> {
     let log = run_dir.join(SELFCHECK_LOG);
     let text = report.render();
     crate::ops::write_file(&log, &text)?;
-    if !report.pass {
+    let status = selfcheck_status(report);
+    if status != SELFCHECK_PASS {
         redact::emit_lines(text.lines());
+        let why = if status == SELFCHECK_NOVERDICT {
+            "NOVERDICT (a focused command is not runnable on the host: toolchain missing?)"
+        } else {
+            "FAILED"
+        };
         bail!(
-            "gate selfcheck FAILED — not dispatching (log: {}); --skip-selfcheck to override",
+            "gate selfcheck {why} — not dispatching (log: {}). Selfcheck is opt-in (--selfcheck) and runs on the host; the container-mode selfcheck is pending — dispatch without --selfcheck to proceed unproven",
             log.display()
         );
     }
@@ -340,7 +367,7 @@ fn record_selfcheck(run_dir: &Path, report: &Report) -> anyhow::Result<()> {
         text.lines()
             .filter(|line| line.starts_with("SELFCHECK ") && !line.starts_with("SELFCHECK work ")),
     );
-    Ok(())
+    Ok(status)
 }
 
 /// Copy `AGENTS.md` and `verify.toml` from the template when the task package lacks them, plus the
@@ -548,7 +575,7 @@ mod tests {
     use super::*;
     use crate::selfcheck::Phase;
 
-    fn report(pass: bool) -> Report {
+    fn report(pass: bool, noverdict: bool) -> Report {
         let phase = |pass: bool, name: &str| Phase {
             pass,
             lines: vec![format!("SELFCHECK phase {name}")],
@@ -559,6 +586,7 @@ mod tests {
             polarity: phase(pass, "polarity"),
             oracle: None,
             pass,
+            noverdict,
             kept: None,
         }
     }
@@ -566,42 +594,63 @@ mod tests {
     #[test]
     fn selfcheck_fail_writes_log_and_refuses_dispatch() {
         let run_dir = tempfile::tempdir().unwrap();
-        let err = record_selfcheck(run_dir.path(), &report(false)).unwrap_err();
+        let err = record_selfcheck(run_dir.path(), &report(false, false)).unwrap_err();
         let message = err.to_string();
         assert!(message.contains("gate selfcheck FAILED"), "{message}");
-        assert!(message.contains("--skip-selfcheck"), "{message}");
+        assert!(message.contains(SELFCHECK_LOG), "{message}");
+        assert!(
+            message.contains("container-mode selfcheck is pending"),
+            "{message}"
+        );
+        assert!(!message.contains("skip-selfcheck"), "{message}");
         let log = std::fs::read_to_string(run_dir.path().join(SELFCHECK_LOG)).unwrap();
         assert!(log.ends_with("SELFCHECK RESULT FAIL\n"), "{log}");
         assert!(log.contains("SELFCHECK oracle SKIPPED (no reference)"));
     }
 
     #[test]
+    fn selfcheck_noverdict_writes_log_and_refuses_dispatch() {
+        let run_dir = tempfile::tempdir().unwrap();
+        let err = record_selfcheck(run_dir.path(), &report(false, true)).unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("gate selfcheck NOVERDICT"), "{message}");
+        assert!(message.contains("toolchain missing"), "{message}");
+        assert!(message.contains(SELFCHECK_LOG), "{message}");
+        assert!(run_dir.path().join(SELFCHECK_LOG).is_file());
+        assert_eq!(selfcheck_status(&report(false, true)), SELFCHECK_NOVERDICT);
+        assert_eq!(selfcheck_status(&report(false, false)), SELFCHECK_FAIL);
+        assert_eq!(selfcheck_status(&report(true, false)), SELFCHECK_PASS);
+    }
+
+    #[test]
     fn selfcheck_pass_writes_log_and_dispatches() {
         let run_dir = tempfile::tempdir().unwrap();
-        record_selfcheck(run_dir.path(), &report(true)).unwrap();
+        let status = record_selfcheck(run_dir.path(), &report(true, false)).unwrap();
+        assert_eq!(status, SELFCHECK_PASS);
         let log = std::fs::read_to_string(run_dir.path().join(SELFCHECK_LOG)).unwrap();
         assert!(log.ends_with("SELFCHECK RESULT PASS\n"), "{log}");
     }
 
     #[test]
-    fn skip_selfcheck_never_runs_nor_logs() {
+    fn selfcheck_is_opt_in_and_never_runs_nor_logs_by_default() {
         let run_dir = tempfile::tempdir().unwrap();
         // A non-existent task dir would be a missing input (66) if selfcheck ran.
-        gate_selfcheck(
+        let status = gate_selfcheck(
             Path::new("/nonexistent/task"),
             Path::new("/nonexistent/workspace"),
             "deadbeef",
             run_dir.path(),
-            true,
+            false,
         )
         .unwrap();
+        assert_eq!(status, SELFCHECK_NOT_RUN);
         assert!(!run_dir.path().join(SELFCHECK_LOG).exists());
         let err = gate_selfcheck(
             Path::new("/nonexistent/task"),
             Path::new("/nonexistent/workspace"),
             "deadbeef",
             run_dir.path(),
-            false,
+            true,
         )
         .unwrap_err();
         assert!(format!("{err:#}").contains("no such task dir"), "{err:#}");

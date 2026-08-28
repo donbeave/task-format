@@ -17,7 +17,7 @@ Artifact mapping (every script name in §1–§11 reads through this table):
 | `harness/task-lint.sh` (C1–C9) | `taskfmt lint`; corpus `harness/tests/lint_corpus.rs` |
 | `harness/progress-init.sh` | `taskfmt progress-init` |
 | `harness/selftest.sh` (56 scenarios) | `taskfmt selftest` + `cargo test` (`harness/tests/gate_tamper_matrix.rs`, `lint_corpus.rs`) |
-| `harness/gate-selfcheck.sh <task> <fixture> <reference\|.patch>` (nop / polarity / oracle) | `taskfmt selfcheck <task>` (being implemented): nop + per-command polarity against the trusted base commit; oracle only when a reference is supplied — none ship yet |
+| `harness/gate-selfcheck.sh <task> <fixture> <reference\|.patch>` (nop / polarity / oracle) | `taskfmt selfcheck <task> <workspace>` (shipped; opt-in at dispatch via `--selfcheck`): nop + focused-only polarity against the trusted base commit (regression INFO, unrunnable = NOVERDICT); oracle only when a reference is supplied — none ship yet |
 | `run-headed.sh` writing `baseline_sha` to `meta.json` | `taskfmt run` records `manifest.json base_sha` (D25) and passes it into the container as `TASKFMT_BASE` (was the movable `baseline` tag) |
 | `VERIFY_BASE_REF=<sha>` host override | `taskfmt verify --base <sha>` / `TASKFMT_BASE`; `taskfmt gate <run>` sets it from the manifest |
 | `status.sh` (`goal_verdicts: null` for Codex, `baseline_sha`, `baseline_tag_ok`) | `taskfmt status` (`goal_verdicts` null for codex, `transcript: n/a`, `base_tag_ok`, `report_status`) |
@@ -28,14 +28,25 @@ Artifact mapping (every script name in §1–§11 reads through this table):
 | TASK-101..106 package fixes (F1–F5, E7) | TASK-001..007 analogues (002 store+list, 003 create form, 004 connect+sidebar, 005 preview+sort, 006 custom SQL, 007 disconnect/exit+gallery): F1 ` -- ` filter form → C7 WARN; F2 leaked-container check → a `[regression]` command with the testcontainers label filter; F4 snapshot `check_no_snap_new` → moot (behavioral tests, D28); F5 protected files → `forbidden_paths` (D28, `1042f5e` dir-prefix semantics); F3 fixture chain (`pgtui-10N`) → moot (D25: base = fresh `origin/main` after task N−1) |
 | `schema: task/v3` unchanged | `schema: task/v4` unchanged |
 
+### Merge review 2026-08-29
+
+The port (PR #1) went through five independent reviewers and three paired debates before merge. Outcome per topic:
+
+- **T1 selfcheck in dispatch — reviewer Q's structure won, with P's semantic fixes.** Accepted facts: the "regression PASS at base" polarity contradicts D28 (packages ship their own new tests) and would refuse all seven packages; rc 126/127 counted as RED gives a vacuous PASS; host-mode selfcheck is a false RED for postgres-backed focused tests (TASK-004+); the oracle never runs (no references); `experiment --auto` died at TASK-001; `--skip-selfcheck` would have been used every time. Result: polarity = every `[focused]` FAIL at base, `[regression]` INFO only; unrunnable command = NOVERDICT (exit 69, never RED); the dispatch precondition is **opt-in** (`--selfcheck` on `run`/`experiment`, `--skip-selfcheck` removed, manifest `selfcheck: not-run|pass|fail|noverdict`, lint first); TASK-001 `[focused]` #4 (`git diff --exit-code -- render.rs fonts`) dropped — `forbidden_paths` covers it. Backlog: container prereq-stage selfcheck (then default-on), reference solutions.
+- **T2 lint — split.** C3 stays ERROR without new syntax (the 13 hits were real); the author checklist now says behavioral `R-*` on the proving item, policy `R-*` on the diff-review leaf, "cite everything on the gate leaf" is an anti-pattern. C6 reshaped: rows whose command is the frontmatter `verify` skip; `cargo test` compared by parsed target set (package, `--test` targets, filter, trailing args; order-insensitive); exact substring otherwise — 0 warnings expected after TASK-004..007 README/verify.toml order alignment. C9 reshaped: only `kind ∈ {feature, bugfix}`; tolerant of trailing `-- <filter>` / a subset of `--test` targets; suppressed when the baseline command matches a `verify.toml` command by target set (clears TASK-001).
+- **T3 AGENTS.md — reviewer P mostly; cuts agreed by both.** Cut: the `precondition-broken` label (the rc-127-is-BLOCKED sentence stays), the step-1 "(orientation only, not rules)" parenthetical, the INCOMPLETE bullet's duplicated "report `STATUS: INCOMPLETE`" clause. Kept: git-derived `CHANGED:` (the evaluator is transcript-only and gate stdout lists no files on PASS), the behavior-scope prohibition, the flaky-check rule, step-7 parent evidence.
+- **Consensus corrections:** `lint.rs` loses the `EMBEDDED_TEMPLATE` `include_str!` fallback (the template is the research variable; hard error instead); `status.rs` `base_tag_ok` returns `None` on a git error (was `Some(false)`); crate version bumped + README note that the in-container `taskfmt` is the image copy (rebuild after upgrading; runtime version check → backlog); the tracked-whitelisted-`.gitignore` scope hole → backlog with the exact fix; TASK-004..007 README regression commands aligned with `verify.toml` target order; findings D33/D36/D38 text corrected (see below); docs stay in this PR.
+
+D-number remap (this note → findings on `main`): D24 → D31, D25 → D32, D26 → D33, D27 → D34, D28 → D35, D29 → D36, D30 → D37, D31 → D38, D32 → D39. Rows in §3 that say "fixed (D24)" etc. use this note's v3.1 numbering.
+
 Sections §1–§10 below are kept as history of the v3.1 branch; script names are left as written there. §11 is replaced by the v4 verification block.
 
 Status: research synthesis and change record for the branch `research-improvements`.
 Inputs: `raw/03` (AIHero `/to-spec`, `/to-tickets`), `raw/04` (Tracer Bullets, AIHero
 `/implement`), `notes/aihero-spec-tickets.md`, `notes/tracer-bullets.md`, eight parallel
 sub-agent reports (this session), one skeptic verdict over the consolidated change list.
-Decisions recorded as D24–D32 in `RESEARCH-FINDINGS.md` §3. Nothing here was run against a
-live agent; every claim about `/goal` behaviour is a hypothesis until §7 experiments run.
+Decisions recorded here as D24–D32 (v3.1 numbering; = D31–D39 in `RESEARCH-FINDINGS.md` §3,
+remap above). Nothing here was run against a live agent; every claim about `/goal` behaviour is a hypothesis until §7 experiments run.
 
 ## 1. Method
 
@@ -88,13 +99,13 @@ C1 (template/protocol/verify/lint), probes run against HEAD:
 
 | # | Defect | Status |
 | --- | --- | --- |
-| 1 | AGENTS step 8 said "run verify.sh to DONE, *then* set STATE DONE" but `check_progress` needs `STATE: DONE` + every leaf `[x]` incl. the gate leaf → cannot pass; D6 described the fix but it never reached the protocol | fixed (D24) |
-| 2 | `baseline` is a movable tag in agent-writable `/work`; `git tag -f baseline HEAD` hides every change from the scope check; SHA recorded nowhere | fixed (D26: `baseline_sha` in `meta.json`, `VERIFY_BASE_REF`) |
+| 1 | AGENTS step 8 said "run verify.sh to DONE, *then* set STATE DONE" but `check_progress` needs `STATE: DONE` + every leaf `[x]` incl. the gate leaf → cannot pass; D6 described the fix but it never reached the protocol | fixed (D24) (v3.1 numbering; = D31 on main) |
+| 2 | `baseline` is a movable tag in agent-writable `/work`; `git tag -f baseline HEAD` hides every change from the scope check; SHA recorded nowhere | fixed (D26: `baseline_sha` in `meta.json`, `VERIFY_BASE_REF`) (v3.1 numbering; = D33 on main) |
 | 3 | `git diff --name-only` with default rename detection: staged `git mv out-of-scope → in-scope` lists only the new path → scope PASS | fixed (`--no-renames`) |
 | 4 | `.git/info/exclude` line or `skip-worktree`/`assume-unchanged` flag hides files from the scope check | fixed (`--exclude-per-directory=.gitignore`, hidden-index-entry check) |
 | 5 | Commands ran under `bash -o pipefail -c`: `"false; true"` passes | fixed (`-eo pipefail`; all 36 corpus commands unaffected) |
 | 6 | No terminal status for the turn/budget cap; agent must misreport as DONE/BLOCKED/NEEDS_REPLAN | fixed (D25 `INCOMPLETE`) |
-| 7 | "Read before editing (non-normative hints)" lists binding decision records | fixed (D28) |
+| 7 | "Read before editing (non-normative hints)" lists binding decision records | fixed (D28) (v3.1 numbering; = D35 on main) |
 | 8 | D17 ordering override has no slot in the template | deferred (no evidence a task needs it yet) |
 | 9 | BLOCKED/NEEDS_REPLAN boundary overlaps; errored precondition command indistinguishable from false one | fixed (D31) |
 | 10 | Resume branch keyed on `STATE: IN_PROGRESS`, which the generator always writes → every fresh run "resumes" | fixed (keyed on `## Log` non-empty) |
@@ -119,7 +130,7 @@ C2 (experiment packages + harness):
 | F4 | `check_no_snap_new` `! find … \| grep -q .` can flip under SIGPIPE | fixed (`-print -quit` form) |
 | F5 | TASK-101 whitelist covers files its R-007 calls protected | fixed (`protected_untouched` extra check) |
 | F6 | 24 identical evidence-command pairs between 2.x implement leaves and 3.x proof leaves across six packages | fixed (D27; section 3 dropped everywhere) |
-| F7 | `/task/decisions.md` listed under non-normative hints in all six; AGENTS files table did not name it | fixed (D28) |
+| F7 | `/task/decisions.md` listed under non-normative hints in all six; AGENTS files table did not name it | fixed (D28) (v3.1 numbering; = D35 on main) |
 | F8 | Same `D-id` with different text across tasks (D-024, D-060, D-011/D-033 subsets) despite "means the same thing in every task" | deferred (§8; needs pgtui design judgment) |
 | F9 | ACs that pass at baseline (TASK-106 AC-006 invariant, AC-004 likely; TASK-105 AC-002 half); requirements with no AC (102 R-004, 106 R-006, 101 R-005) | AC-006 moved to `REGRESSION_CMDS`; polarity now caught mechanically by `gate-selfcheck.sh` (D29); remaining suspicions in §8 |
 | F10 | TASK-101 has no stated home for `DbError`/`ResultSet`/`QueryKind` placeholders → per-seed variance | deferred (§8) |
@@ -278,8 +289,8 @@ History of the v3.1 branch; each script maps to a `taskfmt` subcommand or `verif
 
 ## 9. Deliberately unchanged, removed, simplified
 
-Unchanged: D1–D23 architecture; `schema: task/v3` string (v3.1 is the decision set D24–D32,
-not a frontmatter bump — no lint or package references a new string); checklist grammar and
+Unchanged: D1–D23 architecture; `schema: task/v3` string (v3.1 is the decision set D24–D32 in this note's numbering,
+= D31–D39 on main; not a frontmatter bump — no lint or package references a new string); checklist grammar and
 5–20 leaf bounds; six prohibitions became seven (the behavior-scope rule has a gate-visible
 symptom: `FOLLOW_UP` vs diff); `/goal` condition length (≈ 700 chars of 4,000); commit policy
 (allowed, not required — per-leaf commits are a backlog experiment); D17 ordering override.

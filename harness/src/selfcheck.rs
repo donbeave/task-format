@@ -6,8 +6,12 @@
 //!   1 with `RESULT FAIL` from real checks — exit 2 (no config) and 70 (internal error) are not a
 //!   gate verdict.
 //! - **polarity**: from the very same nop run (no second execution): every `focused.N` must FAIL
-//!   on the baseline (delta), every `regression.N` must PASS (invariant). An empty `focused` list
-//!   proves nothing RED and is BAD.
+//!   on the baseline (delta). An empty `focused` list proves nothing RED and is BAD. A focused
+//!   command that is not runnable (rc 126/127, or the shell could not be spawned) is **NOVERDICT**:
+//!   its failure says nothing about the package (toolchain missing?), the phase FAILs and the
+//!   report exits 69 (`EX_UNAVAILABLE`) — never a vacuous RED. `regression.N` results are reported
+//!   as `INFO` only and never affect the verdict: D28 lets a package list its own new tests under
+//!   `[regression]`, so those legitimately fail on the baseline.
 //! - **oracle** (only with a reference): the reference applied over a scratch copy of the workspace
 //!   (dir: mirror with delete semantics, `.git` kept; `.patch`/`.diff`: `git apply`), everything
 //!   staged, the gate must PASS with `DONE`, and every focused/regression check must PASS.
@@ -34,6 +38,9 @@ pub const EXIT_FAIL: i32 = 1;
 pub const EXIT_USAGE: i32 = 64;
 /// Exit code for a missing input (task dir, verify.toml, workspace, reference).
 pub const EXIT_NOINPUT: i32 = 66;
+/// Exit code when a focused command was not runnable on the baseline (rc 126/127): no verdict,
+/// `EX_UNAVAILABLE`.
+pub const EXIT_NOVERDICT: i32 = 69;
 /// Exit code for an internal error.
 pub const EXIT_INTERNAL: i32 = 70;
 
@@ -58,6 +65,12 @@ pub struct Phase {
     pub lines: Vec<String>,
 }
 
+impl Phase {
+    fn new(pass: bool, lines: Vec<String>) -> Self {
+        Self { pass, lines }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Report {
     /// Header lines (`SELFCHECK task …`, `SELFCHECK work …`).
@@ -68,13 +81,23 @@ pub struct Report {
     pub oracle: Option<Phase>,
     /// Overall verdict: nop AND polarity AND (oracle, when it ran).
     pub pass: bool,
+    /// A focused command was not runnable on the baseline (rc 126/127): the FAIL is no verdict.
+    pub noverdict: bool,
     /// The retained scratch copy (`keep`), if any.
     pub kept: Option<PathBuf>,
 }
 
 impl Report {
+    /// 0 PASS, 69 when any focused command was NOVERDICT (takes precedence: the FAIL is not a
+    /// verdict on the package), 1 FAIL otherwise.
     pub fn exit_code(&self) -> i32 {
-        if self.pass { EXIT_PASS } else { EXIT_FAIL }
+        if self.pass {
+            EXIT_PASS
+        } else if self.noverdict {
+            EXIT_NOVERDICT
+        } else {
+            EXIT_FAIL
+        }
     }
 
     /// Full stdout of the command, ending with `SELFCHECK RESULT PASS|FAIL`.
@@ -213,7 +236,8 @@ pub fn run(opts: SelfcheckOpts) -> anyhow::Result<Report> {
         .as_deref()
         .map(|reference| oracle_phase(&cfg, &work, reference, &opts.base, &gate_at));
 
-    let pass = nop.pass && polarity.pass && oracle.as_ref().is_none_or(|phase| phase.pass);
+    let pass = nop.pass && polarity.phase.pass && oracle.as_ref().is_none_or(|phase| phase.pass);
+    let noverdict = polarity.noverdict;
     let kept = if opts.keep {
         Some(scratch.keep())
     } else {
@@ -222,9 +246,10 @@ pub fn run(opts: SelfcheckOpts) -> anyhow::Result<Report> {
     Ok(Report {
         header,
         nop,
-        polarity,
+        polarity: polarity.phase,
         oracle,
         pass,
+        noverdict,
         kept,
     })
 }
@@ -246,7 +271,20 @@ fn nop_phase(gate: &GateOutput) -> Phase {
             gate.exit
         ));
     }
-    Phase { pass, lines }
+    Phase::new(pass, lines)
+}
+
+/// Return codes that mean "the command never ran", not "the command failed": 126 (found, not
+/// executable) and 127 (not found; also the gate's code for a shell that could not be spawned).
+fn not_runnable(rc: i32) -> bool {
+    rc == 126 || rc == 127
+}
+
+fn got_text(got: Option<&gate::CheckResult>) -> &'static str {
+    match got {
+        Some(check) => verdict(check.pass),
+        None => "MISSING",
+    }
 }
 
 /// Emit one `POLARITY` line per command of `prefix`; `false` when any verdict is BAD.
@@ -262,22 +300,73 @@ fn polarity_lines(
     let mut ok = true;
     for (i, cmd) in commands.iter().enumerate() {
         let name = format!("{prefix}.{}", i + 1);
-        let got = gate.check(&name);
-        let got_text = match got {
-            Some(pass) => verdict(pass),
-            None => "MISSING",
-        };
-        let good = got == Some(want_pass);
+        let got = gate.check_result(&name);
+        let good = got.is_some_and(|check| check.pass == want_pass);
         ok &= good;
         lines.push(format!(
-            "POLARITY {name} {want}-ON-{label} {} got={got_text} cmd={cmd}",
-            if good { "OK" } else { "BAD" }
+            "POLARITY {name} {want}-ON-{label} {} got={} cmd={cmd}",
+            if good { "OK" } else { "BAD" },
+            got_text(got)
         ));
     }
     ok
 }
 
-fn polarity_phase(cfg: &VerifyConfig, nop: &GateOutput) -> Phase {
+/// The polarity phase plus whether any focused command was NOVERDICT.
+struct PolarityOutcome {
+    phase: Phase,
+    noverdict: bool,
+}
+
+/// Every `focused.N` must FAIL on the baseline for a real reason: a not-runnable command (rc
+/// 126/127) is NOVERDICT — BAD for the phase, but flagged apart so the caller can tell "toolchain
+/// missing" from "the package is wrong".
+fn focused_polarity_lines(
+    lines: &mut Vec<String>,
+    gate: &GateOutput,
+    commands: &[String],
+) -> (bool, bool) {
+    let mut ok = true;
+    let mut noverdict = false;
+    for (i, cmd) in commands.iter().enumerate() {
+        let name = format!("focused.{}", i + 1);
+        let got = gate.check_result(&name);
+        match got {
+            Some(check) if !check.pass && not_runnable(check.rc) => {
+                ok = false;
+                noverdict = true;
+                lines.push(format!(
+                    "POLARITY {name} FAIL-ON-BASELINE NOVERDICT rc={} cmd={cmd} (command not runnable: toolchain missing?)",
+                    check.rc
+                ));
+            }
+            _ => {
+                let good = got.is_some_and(|check| !check.pass);
+                ok &= good;
+                lines.push(format!(
+                    "POLARITY {name} FAIL-ON-BASELINE {} got={} cmd={cmd}",
+                    if good { "OK" } else { "BAD" },
+                    got_text(got)
+                ));
+            }
+        }
+    }
+    (ok, noverdict)
+}
+
+/// `regression.N` on the baseline is information only (D28: the list may hold the task's own new
+/// tests): one `INFO` line each, never a verdict.
+fn regression_info_lines(lines: &mut Vec<String>, gate: &GateOutput, commands: &[String]) {
+    for (i, cmd) in commands.iter().enumerate() {
+        let name = format!("regression.{}", i + 1);
+        lines.push(format!(
+            "POLARITY {name} PASS-ON-BASELINE INFO got={} cmd={cmd}",
+            got_text(gate.check_result(&name))
+        ));
+    }
+}
+
+fn polarity_phase(cfg: &VerifyConfig, nop: &GateOutput) -> PolarityOutcome {
     let mut lines = vec!["SELFCHECK phase polarity".to_string()];
     let mut pass = true;
     if cfg.focused.commands.is_empty() {
@@ -287,23 +376,13 @@ fn polarity_phase(cfg: &VerifyConfig, nop: &GateOutput) -> Phase {
                 .to_string(),
         );
     }
-    pass &= polarity_lines(
-        &mut lines,
-        nop,
-        "focused",
-        &cfg.focused.commands,
-        false,
-        "BASELINE",
-    );
-    pass &= polarity_lines(
-        &mut lines,
-        nop,
-        "regression",
-        &cfg.regression.commands,
-        true,
-        "BASELINE",
-    );
-    Phase { pass, lines }
+    let (focused_ok, noverdict) = focused_polarity_lines(&mut lines, nop, &cfg.focused.commands);
+    pass &= focused_ok;
+    regression_info_lines(&mut lines, nop, &cfg.regression.commands);
+    PolarityOutcome {
+        phase: Phase::new(pass, lines),
+        noverdict,
+    }
 }
 
 fn oracle_phase(
@@ -317,12 +396,12 @@ fn oracle_phase(
     if let Err(err) = apply_reference(work, reference) {
         lines.push("ORACLE apply FAIL".to_string());
         lines.extend(indented(&format!("{err:#}")));
-        return Phase { pass: false, lines };
+        return Phase::new(false, lines);
     }
     if let Err(err) = ops::git::add_all(work) {
         lines.push("ORACLE apply FAIL (git add -A)".to_string());
         lines.extend(indented(&format!("{err:#}")));
-        return Phase { pass: false, lines };
+        return Phase::new(false, lines);
     }
     let changed = staged_count(work, base);
     lines.push(format!("ORACLE apply PASS changed={changed}"));
@@ -357,7 +436,7 @@ fn oracle_phase(
         true,
         "REFERENCE",
     );
-    Phase { pass, lines }
+    Phase::new(pass, lines)
 }
 
 fn staged_count(work: &Path, base: &str) -> usize {
@@ -496,13 +575,109 @@ mod tests {
             failed_checks: vec!["scope".into()],
             checks: vec![],
         };
-        let phase = polarity_phase(&cfg, &empty);
-        assert!(!phase.pass);
+        let outcome = polarity_phase(&cfg, &empty);
+        assert!(!outcome.phase.pass);
+        assert!(!outcome.noverdict);
         assert!(
-            phase
+            outcome
+                .phase
                 .lines
                 .iter()
                 .any(|l| l.starts_with("POLARITY focused none BAD"))
         );
+    }
+
+    fn gate_with(checks: Vec<gate::CheckResult>) -> GateOutput {
+        let failed_checks = checks
+            .iter()
+            .filter(|check| !check.pass)
+            .map(|check| check.name.clone())
+            .collect();
+        GateOutput {
+            exit: gate::EXIT_FAIL,
+            text: String::new(),
+            last_line: "RESULT FAIL".into(),
+            summary: String::new(),
+            log_dir: PathBuf::new(),
+            failed_checks,
+            checks,
+        }
+    }
+
+    fn check(name: &str, rc: i32) -> gate::CheckResult {
+        gate::CheckResult {
+            name: name.into(),
+            pass: rc == 0,
+            rc,
+        }
+    }
+
+    #[test]
+    fn focused_rc_126_or_127_is_noverdict_and_regression_is_info_only() {
+        let cfg = VerifyConfig::parse(
+            "schema = \"verify/v1\"\n[focused]\ncommands = [\"a\", \"b\", \"c\"]\n[regression]\ncommands = [\"r\"]\n",
+        )
+        .unwrap();
+        let outcome = polarity_phase(
+            &cfg,
+            &gate_with(vec![
+                check("focused.1", 1),
+                check("focused.2", 127),
+                check("focused.3", 126),
+                check("regression.1", 1),
+            ]),
+        );
+        assert!(!outcome.phase.pass);
+        assert!(outcome.noverdict);
+        let lines = outcome.phase.lines.join("\n");
+        assert!(
+            lines.contains("POLARITY focused.1 FAIL-ON-BASELINE OK got=FAIL cmd=a"),
+            "{lines}"
+        );
+        assert!(
+            lines.contains("POLARITY focused.2 FAIL-ON-BASELINE NOVERDICT rc=127 cmd=b (command not runnable: toolchain missing?)"),
+            "{lines}"
+        );
+        assert!(
+            lines.contains("POLARITY focused.3 FAIL-ON-BASELINE NOVERDICT rc=126 cmd=c"),
+            "{lines}"
+        );
+        assert!(
+            lines.contains("POLARITY regression.1 PASS-ON-BASELINE INFO got=FAIL cmd=r"),
+            "{lines}"
+        );
+
+        // a failing regression alone never fails the phase
+        let outcome = polarity_phase(
+            &cfg,
+            &gate_with(vec![
+                check("focused.1", 1),
+                check("focused.2", 1),
+                check("focused.3", 2),
+                check("regression.1", 1),
+            ]),
+        );
+        assert!(outcome.phase.pass, "{}", outcome.phase.lines.join("\n"));
+        assert!(!outcome.noverdict);
+    }
+
+    #[test]
+    fn exit_code_prefers_noverdict_over_plain_fail() {
+        let phase = |pass: bool| Phase::new(pass, vec![]);
+        let mut report = Report {
+            header: vec![],
+            nop: phase(true),
+            polarity: phase(false),
+            oracle: None,
+            pass: false,
+            noverdict: true,
+            kept: None,
+        };
+        assert_eq!(report.exit_code(), EXIT_NOVERDICT);
+        report.noverdict = false;
+        assert_eq!(report.exit_code(), EXIT_FAIL);
+        report.pass = true;
+        report.polarity = phase(true);
+        assert_eq!(report.exit_code(), EXIT_PASS);
     }
 }

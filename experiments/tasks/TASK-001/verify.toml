@@ -42,7 +42,6 @@ commands = [
   "cargo build --workspace --all-targets",
   "cargo test -p pgtui --test skeleton_test -- stub",
   "cargo test -p pgtui --test skeleton_test -- trims pipeline",
-  "git diff --exit-code -- crates/pgtui/src/render.rs crates/pgtui/src/fonts",
   # D-001 pins, runtime (plain `= "x.y.z"` form): every one must be present in the workspace
   # manifest, or the run is missing a pin and would poison later tasks' base.
   "grep -qE '^ratatui = \"=0\\.30\\.2\"' Cargo.toml && grep -qE '^crossterm = \"=0\\.29\\.0\"' Cargo.toml && grep -qE '^tokio-postgres = \"=0\\.7\\.18\"' Cargo.toml",

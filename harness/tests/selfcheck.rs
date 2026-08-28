@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use taskfmt::ops;
-use taskfmt::selfcheck::{self, EXIT_NOINPUT, Report, SelfcheckOpts};
+use taskfmt::selfcheck::{self, EXIT_NOINPUT, EXIT_NOVERDICT, Report, SelfcheckOpts};
 
 const VERIFY_TOML: &str = r#"schema = "verify/v1"
 base_ref = "baseline"
@@ -28,6 +28,36 @@ allowed_globs = ["done.txt"]
 
 [focused]
 commands = ["test -f done.txt", "test -f keep.txt"]
+
+[regression]
+commands = ["test -f keep.txt"]
+
+[lint]
+commands = []
+"#;
+
+/// `[regression]` lists the task's own new test (D28): red on the baseline, green on the reference.
+const VERIFY_TOML_OWN_REGRESSION: &str = r#"schema = "verify/v1"
+base_ref = "baseline"
+allowed_globs = ["done.txt"]
+
+[focused]
+commands = ["test -f done.txt"]
+
+[regression]
+commands = ["test -f done.txt"]
+
+[lint]
+commands = []
+"#;
+
+/// focused.2 is not on PATH (rc 127), focused.3 exists but is not executable (rc 126).
+const VERIFY_TOML_NOT_RUNNABLE: &str = r#"schema = "verify/v1"
+base_ref = "baseline"
+allowed_globs = ["done.txt"]
+
+[focused]
+commands = ["test -f done.txt", "taskfmt-no-such-toolchain-xyz --version", "./keep.txt"]
 
 [regression]
 commands = ["test -f keep.txt"]
@@ -165,8 +195,13 @@ fn correct_package_passes_all_three_phases() {
     );
     assert_line(
         &report,
-        "POLARITY regression.1 PASS-ON-BASELINE OK got=PASS cmd=test -f keep.txt",
+        "POLARITY regression.1 PASS-ON-BASELINE INFO got=PASS cmd=test -f keep.txt",
     );
+    assert_line(
+        &report,
+        "POLARITY regression.1 PASS-ON-REFERENCE OK got=PASS cmd=test -f keep.txt",
+    );
+    assert!(!report.noverdict);
     assert_line(
         &report,
         "POLARITY focused.1 PASS-ON-REFERENCE OK got=PASS cmd=test -f done.txt",
@@ -191,6 +226,10 @@ fn focused_command_green_at_baseline_fails_polarity_only() {
     let f = fixture();
     let report = selfcheck(&f.task_green_focused, &f.workspace, Some(&f.ref_ok));
     assert!(!report.pass);
+    assert!(
+        !report.noverdict,
+        "a green focused command is a real verdict"
+    );
     assert_eq!(report.exit_code(), 1);
     assert!(report.nop.pass);
     assert!(!report.polarity.pass);
@@ -201,6 +240,76 @@ fn focused_command_green_at_baseline_fails_polarity_only() {
         "POLARITY focused.2 FAIL-ON-BASELINE BAD got=PASS cmd=test -f keep.txt",
     );
     assert_line(&report, "SELFCHECK RESULT FAIL");
+}
+
+/// D28: a regression list may hold the task's own new tests — red on the baseline is information,
+/// not a polarity verdict; the oracle still demands green on the reference.
+#[test]
+fn regression_failing_at_baseline_is_info_not_a_polarity_verdict() {
+    let f = fixture();
+    let task = task(f._tmp.path(), "task-own-reg", VERIFY_TOML_OWN_REGRESSION);
+    let report = selfcheck(&task, &f.workspace, Some(&f.ref_ok));
+    assert!(report.pass, "{}", report.render());
+    assert_eq!(report.exit_code(), 0);
+    assert!(report.polarity.pass);
+    assert_line(&report, "SELFCHECK polarity PASS");
+    assert_line(
+        &report,
+        "POLARITY regression.1 PASS-ON-BASELINE INFO got=FAIL cmd=test -f done.txt",
+    );
+    assert_line(
+        &report,
+        "POLARITY regression.1 PASS-ON-REFERENCE OK got=PASS cmd=test -f done.txt",
+    );
+    assert_line(&report, "SELFCHECK RESULT PASS");
+    assert!(!has_line(
+        &report,
+        "POLARITY regression.1 PASS-ON-BASELINE BAD got=FAIL cmd=test -f done.txt"
+    ));
+
+    // and a regression that stays red on the reference is still an oracle failure
+    let report = selfcheck(&task, &f.workspace, Some(&f.ref_bad));
+    assert!(!report.pass);
+    assert!(report.polarity.pass);
+    assert!(!report.oracle.as_ref().unwrap().pass);
+    assert_line(
+        &report,
+        "POLARITY regression.1 PASS-ON-REFERENCE BAD got=FAIL cmd=test -f done.txt",
+    );
+    assert_eq!(report.exit_code(), 1);
+}
+
+/// A focused command that cannot run (rc 126/127) is no evidence of RED: NOVERDICT, exit 69.
+#[test]
+fn focused_not_runnable_is_noverdict_with_exit_69() {
+    let f = fixture();
+    let task = task(f._tmp.path(), "task-noverdict", VERIFY_TOML_NOT_RUNNABLE);
+    let report = selfcheck(&task, &f.workspace, None);
+    assert!(!report.pass);
+    assert!(report.noverdict);
+    assert_eq!(report.exit_code(), EXIT_NOVERDICT);
+    assert_eq!(EXIT_NOVERDICT, 69);
+    assert!(report.nop.pass, "{}", report.render());
+    assert!(!report.polarity.pass);
+    assert_line(
+        &report,
+        "POLARITY focused.1 FAIL-ON-BASELINE OK got=FAIL cmd=test -f done.txt",
+    );
+    assert_line(
+        &report,
+        "POLARITY focused.2 FAIL-ON-BASELINE NOVERDICT rc=127 cmd=taskfmt-no-such-toolchain-xyz --version (command not runnable: toolchain missing?)",
+    );
+    assert_line(
+        &report,
+        "POLARITY focused.3 FAIL-ON-BASELINE NOVERDICT rc=126 cmd=./keep.txt (command not runnable: toolchain missing?)",
+    );
+    assert_line(&report, "SELFCHECK polarity FAIL");
+    assert_line(&report, "SELFCHECK RESULT FAIL");
+    assert!(!has_line(
+        &report,
+        "POLARITY focused.2 FAIL-ON-BASELINE OK got=FAIL cmd=taskfmt-no-such-toolchain-xyz --version"
+    ));
+    assert_untouched(&f.workspace);
 }
 
 #[test]

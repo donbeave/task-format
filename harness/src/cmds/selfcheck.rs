@@ -1,6 +1,7 @@
 //! `taskfmt selfcheck <task> <workspace> [--base …] [--reference …] [--keep]` — prove the gate of
 //! one task package is RED on the untouched baseline and (with a reference) GREEN on the solution.
-//! Exit 0 only on `SELFCHECK RESULT PASS`; 1 on FAIL; 66 missing input; 70 internal error.
+//! Exit 0 only on `SELFCHECK RESULT PASS`; 1 on FAIL; 64 usage; 66 missing input; 69 no verdict
+//! (a focused command was not runnable: rc 126/127); 70 internal error.
 
 use std::path::Path;
 

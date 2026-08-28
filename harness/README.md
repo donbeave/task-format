@@ -17,6 +17,8 @@ harness/
   testdata/example/              lint corpus (TASK-042, v4) used by selftest
 ```
 
+The `taskfmt` inside a run container is the copy baked into `harness-base` by `taskfmt build-images`, not the host binary. After upgrading the crate (`version` in `Cargo.toml`) rebuild the images, or the container gate keeps running the old version; no runtime version check exists yet at dispatch (backlog, findings §7).
+
 ## The task package (what ships to the agent)
 
 | File | Mount | Owner | Content |
@@ -39,21 +41,22 @@ taskfmt selftest                      # lint corpus + mutants + progress shape +
                                       #   + repo-wide AGENTS.md/CLAUDE.md symlink audit
 taskfmt verify [flags]                # THE GATE: exit 0 and last line DONE <=> pass
 taskfmt selfcheck <TASK> <WS> [--base R] [--reference D|F.patch] [--keep]
-                                      #   D13: gate RED on the untouched base (nop + polarity),
-                                      #   GREEN on the reference (oracle); exit 0 only on PASS
+                                      #   D13/D36: gate RED on the untouched base (nop + focused
+                                      #   polarity), GREEN on the reference (oracle); exit 0 only
+                                      #   on PASS, 69 when any command could not run (NOVERDICT)
 taskfmt build-images [--agent all] [--no-cache]
 taskfmt preload                       # pull pinned postgres:16-alpine -> docker save -> preload tar
 taskfmt repo create [--name N]        # gh private repo + allow-empty bootstrap commit on main
 taskfmt repo delete [--name N]
 taskfmt run --task TASK-00N [--repo URL] [--agent PROFILE] [--model M] [--effort E]
-                                      #   [--wait] [--exp ID] [--skip-selfcheck]  — one task, one
+                                      #   [--wait] [--exp ID] [--selfcheck]  — one task, one
                                       #   fresh container, one fresh clone/fetch of origin/main
 taskfmt gate <RUN>                    # host gate on the run workspace (trusted snapshot copies)
 taskfmt promote <RUN>                 # commit -s + push main; refuses unless the gate PASSED
 taskfmt status <RUN> [--wait] [--kill-after MIN]
 taskfmt attach <RUN>                  # docker exec -it ... herdr (detach: ctrl+b q — never ctrl+c)
 taskfmt experiment [--tasks 1-3,5|all] [--repo URL] [--agent PROFILE] [--auto] [--resume ID]
-                                      #   [--skip-selfcheck]
+                                      #   [--selfcheck]
 ```
 
 Globals: `--config PATH` (default `experiment.toml`), `--auto`, `--yes`, `-v`. Interactive by default: every mutating/expensive step prints what it will do and asks `[y/N]`; `--auto` prints the plan and proceeds; no TTY without `--auto`/`--yes` is a hard error for mutating commands.
@@ -61,29 +64,29 @@ Globals: `--config PATH` (default `experiment.toml`), `--auto`, `--yes`, `-v`. I
 ## Lifecycle (one experiment, gate-protected)
 
 1. `taskfmt repo create` — disposable private GitHub repo; `main` = one allow-empty bootstrap commit.
-2. For every task in order: fresh clone/fetch of `origin/main` → record base SHA → overlay `trusted/` → commit it as the trusted base (pushed together with the task commit) → task snapshot → gate selfcheck (D13, `runs/<id>/selfcheck.log`; refuses on FAIL unless `--skip-selfcheck`) → lint → `progress-init` → container (`docker run -d --privileged`, no `--rm`; `/work`, `/task:ro`, `/progress`, `/agent-home`, `/out`, `/seed:ro`; `TASKFMT_BASE=<base SHA>`) → prereq stage (inner dockerd `vfs`, `docker load` postgres, standing `prereq-postgres`, seed restore) → herdr pane + agent → inject the one-line `/goal` prompt: the first ```` ```text ```` block of `harness/goal-prompt.md` whose info string names the profile's agent kind (`text claude`, `text codex`, or the shared `text claude codex`), collapsed to one line (`<run>/prompt.txt`).
+2. For every task in order: fresh clone/fetch of `origin/main` → record base SHA → overlay `trusted/` → commit it as the trusted base (pushed together with the task commit) → task snapshot → lint → gate selfcheck only with `--selfcheck` (D13/D36, `runs/<id>/selfcheck.log`; refuses on FAIL) → `progress-init` → container (`docker run -d --privileged`, no `--rm`; `/work`, `/task:ro`, `/progress`, `/agent-home`, `/out`, `/seed:ro`; `TASKFMT_BASE=<base SHA>`) → prereq stage (inner dockerd `vfs`, `docker load` postgres, standing `prereq-postgres`, seed restore) → herdr pane + agent → inject the one-line `/goal` prompt: the first ```` ```text ```` block of `harness/goal-prompt.md` whose info string names the profile's agent kind (`text claude`, `text codex`, or the shared `text claude codex`), collapsed to one line (`<run>/prompt.txt`).
 3. On completion: host `gate` re-runs `taskfmt verify` against trusted copies. PASS ⇒ `promote` (`git commit -s`, push `main`). FAIL/BLOCKED ⇒ never pushed; the experiment stops there.
 4. Every step lands in `runs/<id>/manifest.json` (+ `experiment.json` for the loop): repo URL, base/result SHAs, gate verdict, agent profile/model/effort, session id, container.
 
 Secrets: `env_secret` values are `op://` references resolved by `op read` at dispatch only, passed to the container via a 0600 env-file that is deleted immediately after `docker run` returns, and registered with the redactor that scrubs every output path. Values never appear in argv, logs, transcripts, or artifacts.
 
-### Gate selfcheck (D13)
+### Gate selfcheck (D13, D36)
 
 `taskfmt selfcheck <task-dir> <workspace> [--base <sha|ref>] [--reference <dir|file.patch>] [--keep]`
 
 Proves one package's gate distinguishes "not done" from "done" (SWE-bench FAIL_TO_PASS/PASS_TO_PASS, Harbor nop/oracle). `<workspace>` is a git repo at the trusted base commit (the run's `workspace/` after the `baseline` tag); it is never mutated — every phase runs in a scratch copy under `TMPDIR` (`--keep` retains it). The progress check is disabled throughout.
 
 - **nop** — `taskfmt verify --no-progress` on the untouched base must exit 1 with `RESULT FAIL` from real checks (exit 2 = no config, 70 = internal error are not verdicts).
-- **polarity** — from the same run: every `focused.N` FAIL on baseline, every `regression.N` PASS. Empty `[focused]` = nothing proves RED = BAD.
+- **polarity** — from the same run: every `focused.N` must FAIL on the base. `regression.N` results are reported as INFO only, never a verdict: under D28 a package ships its own new tests in `trusted/`, so a regression command may legitimately be RED at the base. Empty `[focused]` = nothing proves RED = BAD. A command that cannot run (rc 126/127 or a spawn failure — toolchain missing) is **NOVERDICT**: reported as polarity BAD with "toolchain missing / command not runnable", never counted as a RED that proves anything.
 - **oracle** — only with `--reference`: dir mirrored over the tree (`.git` kept) or `.patch`/`.diff` via `git apply`; everything staged; gate must PASS with `DONE` and every focused/regression PASS. Reference solutions do not ship yet, so `taskfmt run` invokes nop+polarity only and prints `SELFCHECK oracle SKIPPED (no reference)`.
 
-Output: gate lines indented `  | `, then `NOP …`, `POLARITY <focused|regression>.<i> <FAIL|PASS>-ON-<BASELINE|REFERENCE> OK|BAD got=… cmd=…`, `SELFCHECK nop|polarity|oracle PASS|FAIL|SKIPPED`, `SELFCHECK RESULT PASS|FAIL`. Exit 0 only on RESULT PASS; 1 FAIL; 66 missing input; 70 internal error.
+Output: gate lines indented `  | `, then `NOP …`, `POLARITY <focused|regression>.<i> <FAIL|PASS>-ON-<BASELINE|REFERENCE> OK|BAD|INFO|NOVERDICT got=… cmd=…`, `SELFCHECK nop|polarity|oracle PASS|FAIL|SKIPPED|NOVERDICT`, `SELFCHECK RESULT PASS|FAIL|NOVERDICT`. Exit 0 only on RESULT PASS; 1 FAIL; 66 missing input; 69 NOVERDICT (some command could not run — no verdict either way); 70 internal error.
 
-`taskfmt run` runs selfcheck (nop+polarity) on the freshly built workspace before lint and refuses to dispatch on FAIL (`runs/<ID>/selfcheck.log`; `--skip-selfcheck` overrides). It executes the fixture's own toolchain on the host. TASK-001's nop is vacuous by construction — the empty repo has no toolchain, so its focused commands fail for the wrong reason — run `taskfmt selfcheck` inside the run image for a meaningful verdict on that task.
+Dispatch precondition — **opt-in**: `taskfmt run --selfcheck` / `taskfmt experiment --selfcheck` run nop+polarity on the freshly built workspace after lint (lint always runs first) and refuse to dispatch on FAIL (`runs/<ID>/selfcheck.log`). Default is off; there is no `--skip-selfcheck`. `manifest.json` records `selfcheck: not-run | pass | fail | noverdict`. The host-side check executes the fixture's own toolchain on the host, so postgres-backed focused tests (TASK-004+) and TASK-001 (empty repo, no toolchain) yield NOVERDICT rather than a verdict. The container-mode selfcheck (run inside the run image during the prereq stage, after postgres is up) is pending — backlog, findings §7; once it exists the precondition becomes default-on.
 
 ### Status (`taskfmt status <RUN> [--wait] [--kill-after MIN]`)
 
-One JSON line from three signals in order of trust: the transcript `goal_status` verdict (claude), the `GOAL_RESULT` line in `<run>/out/tui.log`, herdr's agent status (`idle`/`done` settled, `blocked` dialog, target gone = agent exited). Fields: `state`, `herdr_status`, `goal_reason`, `goal_result_line`, `report_status` (the `status=` token of that line — `DONE|BLOCKED|NEEDS_REPLAN|INCOMPLETE`, null otherwise; a label, never load-bearing), `goal_verdicts` (real evaluator verdicts; `null` for codex — the rollout JSONL is not parsed), `transcript` (claude session path, or `n/a (rollout jsonl not parsed)`), `base_sha` (the recorded trusted commit) and `base_tag_ok` (live `baseline` tag == `base_sha`; `null` when the run workspace is absent). `--kill-after` sends `/goal clear` and reports `KILLED_TIMEOUT`. The last rendered screen lands in `<run>/out/screen.txt`. The trusted verdict remains the host `taskfmt gate`.
+One JSON line from three signals in order of trust: the transcript `goal_status` verdict (claude), the `GOAL_RESULT` line in `<run>/out/tui.log`, herdr's agent status (`idle`/`done` settled, `blocked` dialog, target gone = agent exited). Fields: `state`, `herdr_status`, `goal_reason`, `goal_result_line`, `report_status` (the `status=` token of that line — `DONE|BLOCKED|NEEDS_REPLAN|INCOMPLETE`, null otherwise; a label, never load-bearing), `goal_verdicts` (real evaluator verdicts; `null` for codex — the rollout JSONL is not parsed), `transcript` (claude session path, or `n/a (rollout jsonl not parsed)`), `base_sha` (the recorded trusted commit) and `base_tag_ok` (diagnostic only — live `baseline` tag == `base_sha`; `false` when the tag moved or was deleted; `null` when the run workspace is absent or git could not answer, e.g. an index lock, which is not drift). The gate never reads the tag. `--kill-after` sends `/goal clear` and reports `KILLED_TIMEOUT`. The last rendered screen lands in `<run>/out/screen.txt`. The trusted verdict remains the host `taskfmt gate`.
 
 ### Codex (headed, native `/goal`)
 
@@ -100,7 +103,7 @@ One JSON line from three signals in order of trust: the transcript `goal_status`
 - No duplicate `P-*`/`R-*`/`D-*` definitions or `AC-*` rows (ERROR).
 - Every `P-*` line carries a backticked command (ERROR). Every `AC-*` row has an evidence command and an expected result (ERROR); each AC command appears verbatim in `verify.toml` (WARN when absent).
 - Checklist (ERROR): one block; IDs unique and contiguous; depth matches indentation (0/4/8/12 spaces = 1-4 components); max depth 4; 5-20 leaves; every leaf has `evidence:` naming a backticked command or an "exits 0" claim (gate leaf exempt); no two items with identical evidence text; no single-child parent; every `AC-*` cited on a leaf or on a parent that carries its own `evidence:`; last leaf is the `taskfmt verify` gate.
-- Every `R-*` is cited by an AC row or a checklist item (a parent's citation covers its leaves; ranges `R-002..R-004` expand) (ERROR); policy requirements (no new deps, final design) belong on the diff-review leaf.
+- Every `R-*` is cited by an AC row or a checklist item (a parent's citation covers its leaves; ranges `R-002..R-004` expand) (ERROR). Behavioral `R-*` are cited on the item whose evidence proves them; policy `R-*` (no new deps, final design) on the diff-review leaf. Citing everything on the gate leaf satisfies the lint and is an anti-pattern — it proves nothing per requirement.
 - For `kind: feature`/`bugfix`, `AC-001` is the Goal path end-to-end and the Baseline command is the AC-001 command; the first implementation item's evidence is that command. Lint: fenced Baseline command must equal some AC evidence command (WARN otherwise).
 - `cargo test` with two or more positional filters needs ` -- ` (WARN).
 - "Read before editing" hints never reference `/task/` — binding docs are not hints (ERROR).
@@ -108,7 +111,7 @@ One JSON line from three signals in order of trust: the transcript `goal_status`
 - Out of scope names at least one real adjacent behavior considered and refused.
 - `D-*` are imported from ADRs/spec/operator rulings, never invented to fill the table; `decisions.md`, when shipped, is one file per fixture and task packages copy its sections verbatim.
 - `expected_paths` (scope whitelist) covers what the solution may change or create and equals `allowed_globs`; no other path list exists. `verify.toml` parses and has at least one `focused` command (ERROR).
-- Gate must fail on the untouched pre-task state and pass on a correct implementation (proven by the experiment itself; the empty `main` start makes TASK-001's negative proof vacuous-by-construction).
+- Gate must fail on the untouched pre-task state and pass on a correct implementation. Prove it with `taskfmt selfcheck <task> <workspace>` before dispatch (nop + focused polarity; oracle once a reference exists) — or `run --selfcheck`; TASK-001's negative proof is NOVERDICT on the host by construction (empty `main`, no toolchain).
 - A task with a completed run is immutable (its `progress.md` diffs against it); promote discoveries via `FOLLOW_UP` -> ADR/CONTEXT in a separate change and re-lint undispatched packages.
 - `README.md` ≤ 10,000 bytes (WARN above).
 

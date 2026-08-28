@@ -1,6 +1,8 @@
 //! Lint corpus: the v4 example must pass, broken variants must not, the template must not.
 //! Every rule C1–C9 has one negative case built by mutating the example text, plus the positive
-//! twins (an AC cited on an evidence-bearing parent; `<...>` inside a code span).
+//! twins (an AC cited on an evidence-bearing parent; `<...>` inside a code span; a gate row and
+//! an order-shuffled `cargo test` for C6; kind scoping, filter tolerance and suite suppression
+//! for C9).
 
 use std::path::{Path, PathBuf};
 
@@ -26,6 +28,19 @@ fn example_text() -> (String, PathBuf) {
     let readme = example().join("README.md");
     let text = std::fs::read_to_string(&readme).unwrap();
     (text, readme)
+}
+
+/// Lint `readme` next to a custom `verify.toml` (the corpus one otherwise) in a scratch dir.
+fn lint_with_verify(readme: &str, verify_toml: &str) -> Vec<Finding> {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("verify.toml"), verify_toml).unwrap();
+    let path = dir.path().join("README.md");
+    std::fs::write(&path, readme).unwrap();
+    lint_text(readme, &path)
+}
+
+fn example_verify_toml() -> String {
+    std::fs::read_to_string(example().join("verify.toml")).unwrap()
 }
 
 fn errors(findings: &[Finding]) -> Vec<&Finding> {
@@ -68,7 +83,7 @@ fn example_package_passes_clean() {
             &report.findings,
             Severity::Warn,
             "acceptance",
-            "AC-003 evidence command does not appear verbatim in verify.toml"
+            "AC-003 evidence command is not run by verify.toml"
         ),
         "{}",
         report.render()
@@ -462,7 +477,7 @@ fn c6_ac_command_absent_from_verify_toml_warns() {
             &findings,
             Severity::Warn,
             "acceptance",
-            "AC-003 evidence command does not appear verbatim in verify.toml: ! grep -rn legacy_expiry_check src tests"
+            "AC-003 evidence command is not run by verify.toml (no focused/regression/lint command matches): ! grep -rn legacy_expiry_check src tests"
         ),
         "{findings:?}"
     );
@@ -476,6 +491,7 @@ fn c6_ac_command_absent_from_verify_toml_warns() {
         "{findings:?}"
     );
 
+    // negative: a genuinely missing cargo test command (different filter) still warns
     let renamed = text.replace(
         "cargo test -p auth valid_refresh_rotation",
         "cargo test -p auth valid_rotation_path",
@@ -486,11 +502,85 @@ fn c6_ac_command_absent_from_verify_toml_warns() {
             &findings,
             Severity::Warn,
             "acceptance",
-            "AC-002 evidence command does not appear verbatim in verify.toml: cargo test -p auth valid_rotation_path"
+            "AC-002 evidence command is not run by verify.toml (no focused/regression/lint command matches): cargo test -p auth valid_rotation_path"
         ),
         "{findings:?}"
     );
     assert!(errors(&findings).is_empty(), "{findings:?}");
+}
+
+#[test]
+fn c6_gate_row_is_exempt() {
+    let (text, readme) = example_text();
+    // the gate cannot list itself: an AC row running `taskfmt verify` never warns
+    let gate_row = mutate(
+        &text,
+        "| `! grep -rn legacy_expiry_check src tests` |",
+        "| `taskfmt verify` |",
+    );
+    let findings = lint_text(&gate_row, &readme);
+    assert!(errors(&findings).is_empty(), "{findings:?}");
+    assert!(
+        !findings.iter().any(|f| f.rule == "acceptance"),
+        "{findings:?}"
+    );
+}
+
+#[test]
+fn c6_cargo_test_matches_by_target_set_not_token_order() {
+    let (text, _) = example_text();
+    let row = "| `cargo test -p auth valid_refresh_rotation` |";
+    let verify = example_verify_toml().replace(
+        "\"cargo test -p auth valid_refresh_rotation\",",
+        "\"cargo test -p auth --test rotation --test expiry -- valid\",",
+    );
+
+    // positive: same package, same targets, same trailing args, every token shuffled
+    let shuffled = mutate(
+        &text,
+        row,
+        "| `cargo test --test expiry --package auth --test rotation -- valid` |",
+    );
+    let findings = lint_with_verify(&shuffled, &verify);
+    assert!(errors(&findings).is_empty(), "{findings:?}");
+    assert!(
+        !has(&findings, Severity::Warn, "acceptance", "AC-002"),
+        "{findings:?}"
+    );
+
+    // negative: a target the config never runs
+    let extra = mutate(
+        &text,
+        row,
+        "| `cargo test -p auth --test rotation --test expiry --test other -- valid` |",
+    );
+    let findings = lint_with_verify(&extra, &verify);
+    assert!(
+        has(
+            &findings,
+            Severity::Warn,
+            "acceptance",
+            "AC-002 evidence command is not run by verify.toml"
+        ),
+        "{findings:?}"
+    );
+
+    // negative: same targets, different trailing args
+    let other_filter = mutate(
+        &text,
+        row,
+        "| `cargo test -p auth --test rotation --test expiry -- other` |",
+    );
+    let findings = lint_with_verify(&other_filter, &verify);
+    assert!(
+        has(
+            &findings,
+            Severity::Warn,
+            "acceptance",
+            "AC-002 evidence command is not run by verify.toml"
+        ),
+        "{findings:?}"
+    );
 }
 
 // ---------- C7: cargo test multi-filter ----------
@@ -576,9 +666,12 @@ fn c8_read_before_editing_must_not_reference_task_dir() {
     );
 }
 
-// ---------- C9: baseline command equals an AC command ----------
+// ---------- C9: baseline command is AC-001 (or a gate suite) for feature/bugfix ----------
+const BASELINE_FENCE: &str = "```sh\ncargo test -p auth expired_refresh_token\n```";
+const BASELINE_MISMATCH: &str = "Baseline command does not match the AC-001 command or any verify.toml focused/regression command: ";
+
 #[test]
-fn c9_baseline_command_must_match_an_ac_command() {
+fn c9_baseline_command_must_match_ac_001() {
     let (text, readme) = example_text();
     let findings = lint_text(&text, &readme);
     assert!(
@@ -586,10 +679,11 @@ fn c9_baseline_command_must_match_an_ac_command() {
         "{findings:?}"
     );
 
+    // negative: a suite neither AC-001 nor verify.toml runs
     let other = mutate(
         &text,
-        "```sh\ncargo test -p auth expired_refresh_token\n```",
-        "```sh\ncargo test -p auth\n```",
+        BASELINE_FENCE,
+        "```sh\ncargo test -p auth --test nope\n```",
     );
     let findings = lint_text(&other, &readme);
     assert!(
@@ -597,16 +691,25 @@ fn c9_baseline_command_must_match_an_ac_command() {
             &findings,
             Severity::Warn,
             "baseline",
-            "Baseline command is not identical to any AC evidence command: cargo test -p auth"
+            &format!("{BASELINE_MISMATCH}cargo test -p auth --test nope")
         ),
         "{findings:?}"
     );
 
-    let none = mutate(
+    // negative: the same package with a different filter is a different suite
+    let other_filter = mutate(
         &text,
-        "```sh\ncargo test -p auth expired_refresh_token\n```\n",
-        "",
+        BASELINE_FENCE,
+        "```sh\ncargo test -p auth some_other_test\n```",
     );
+    let findings = lint_text(&other_filter, &readme);
+    assert!(
+        has(&findings, Severity::Warn, "baseline", BASELINE_MISMATCH),
+        "{findings:?}"
+    );
+
+    // the structural warning survives regardless of kind
+    let none = mutate(&text, &format!("{BASELINE_FENCE}\n"), "");
     let findings = lint_text(&none, &readme);
     assert!(
         has(
@@ -617,6 +720,188 @@ fn c9_baseline_command_must_match_an_ac_command() {
         ),
         "{findings:?}"
     );
+    let none_refactor = mutate(&none, "kind: bugfix", "kind: refactor");
+    let findings = lint_text(&none_refactor, &readme);
+    assert!(
+        has(
+            &findings,
+            Severity::Warn,
+            "baseline",
+            "no fenced command found after \"Baseline\""
+        ),
+        "{findings:?}"
+    );
+}
+
+#[test]
+fn c9_applies_to_feature_and_bugfix_only() {
+    let (text, readme) = example_text();
+    let other = mutate(
+        &text,
+        BASELINE_FENCE,
+        "```sh\ncargo test -p auth --test nope\n```",
+    );
+    for kind in ["refactor", "removal", "migration", "test", "docs"] {
+        let scoped = mutate(&other, "kind: bugfix", &format!("kind: {kind}"));
+        let findings = lint_text(&scoped, &readme);
+        assert!(errors(&findings).is_empty(), "{kind}: {findings:?}");
+        assert!(
+            !findings.iter().any(|f| f.rule == "baseline"),
+            "{kind}: {findings:?}"
+        );
+    }
+    let feature = mutate(&other, "kind: bugfix", "kind: feature");
+    let findings = lint_text(&feature, &readme);
+    assert!(
+        has(&findings, Severity::Warn, "baseline", BASELINE_MISMATCH),
+        "{findings:?}"
+    );
+}
+
+#[test]
+fn c9_tolerates_a_narrower_or_broader_filter_on_the_ac_001_suite() {
+    let (text, _) = example_text();
+    // a verify.toml that runs neither the broad nor the narrowed baseline, so only the AC-001
+    // tolerance can clear it
+    let verify = example_verify_toml().replace(
+        "\"cargo test -p auth\",",
+        "\"cargo test -p auth --test integration\",",
+    );
+
+    // broader: AC-001 without its filter
+    let broad = mutate(&text, BASELINE_FENCE, "```sh\ncargo test -p auth\n```");
+    let findings = lint_with_verify(&broad, &verify);
+    assert!(
+        !findings.iter().any(|f| f.rule == "baseline"),
+        "{findings:?}"
+    );
+
+    // narrower: AC-001 plus trailing harness args
+    let narrow = mutate(
+        &text,
+        BASELINE_FENCE,
+        "```sh\ncargo test -p auth expired_refresh_token -- --nocapture\n```",
+    );
+    let findings = lint_with_verify(&narrow, &verify);
+    assert!(
+        !findings.iter().any(|f| f.rule == "baseline"),
+        "{findings:?}"
+    );
+
+    // `--test` subset of a multi-target AC-001 (tokens shuffled)
+    let multi = text
+        .replacen(
+            "| `cargo test -p auth expired_refresh_token` |",
+            "| `cargo test -p auth --test expiry --test rotation` |",
+            1,
+        )
+        .replacen(
+            BASELINE_FENCE,
+            "```sh\ncargo test --test expiry --package auth\n```",
+            1,
+        );
+    let findings = lint_with_verify(&multi, &verify);
+    assert!(
+        !findings.iter().any(|f| f.rule == "baseline"),
+        "{findings:?}"
+    );
+
+    // a different package is never tolerated
+    let other_pkg = mutate(
+        &text,
+        BASELINE_FENCE,
+        "```sh\ncargo test -p other expired_refresh_token\n```",
+    );
+    let findings = lint_with_verify(&other_pkg, &verify);
+    assert!(
+        has(&findings, Severity::Warn, "baseline", BASELINE_MISMATCH),
+        "{findings:?}"
+    );
+}
+
+#[test]
+fn c9_baseline_matching_a_gate_suite_is_not_a_warning() {
+    let (text, readme) = example_text();
+    // `expired_error_code` is a focused command; it is not AC-001 and no filter subset of it
+    let focused = mutate(
+        &text,
+        BASELINE_FENCE,
+        "```sh\ncargo test --package auth expired_error_code\n```",
+    );
+    let findings = lint_text(&focused, &readme);
+    assert!(
+        !findings.iter().any(|f| f.rule == "baseline"),
+        "{findings:?}"
+    );
+
+    // the regression suite (TASK-001 shape): AC-001 is `cargo build`, the baseline is the
+    // regression command
+    let regression = mutate(
+        &mutate(
+            &text,
+            BASELINE_FENCE,
+            "```sh\ncargo test --package auth\n```",
+        ),
+        "| `cargo test -p auth expired_refresh_token` |",
+        "| `cargo build -p auth --all-targets` |",
+    );
+    let findings = lint_text(&regression, &readme);
+    assert!(
+        !findings.iter().any(|f| f.rule == "baseline"),
+        "{findings:?}"
+    );
+
+    // without that regression entry the same baseline is a mismatch
+    let verify = example_verify_toml().replace(
+        "\"cargo test -p auth\",",
+        "\"cargo test -p auth --test integration\",",
+    );
+    let findings = lint_with_verify(&regression, &verify);
+    assert!(
+        has(&findings, Severity::Warn, "baseline", BASELINE_MISMATCH),
+        "{findings:?}"
+    );
+}
+
+// ---------- placeholders: the template must exist ----------
+#[test]
+fn missing_reference_template_is_an_error() {
+    // the env var is process-global, so the check runs in a child process: the CLI with
+    // TASK_TEMPLATE_README pointing nowhere must fail lint on the clean corpus
+    let missing = tempfile::tempdir().unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_taskfmt"))
+        .arg("--config")
+        .arg(repo_root().join("experiment.toml"))
+        .arg("lint")
+        .arg(example())
+        .env(lint::TEMPLATE_ENV, missing.path().join("nope/README.md"))
+        .current_dir(missing.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(1), "{stdout}");
+    assert!(
+        stdout.contains(
+            "ERROR placeholders: reference template not found (set TASK_TEMPLATE_README)"
+        ),
+        "{stdout}"
+    );
+    assert!(stdout.contains("LINT FAIL"), "{stdout}");
+
+    // and the same binary from the same scratch cwd with the env var unset resolves the
+    // compile-time checkout and passes
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_taskfmt"))
+        .arg("--config")
+        .arg(repo_root().join("experiment.toml"))
+        .arg("lint")
+        .arg(example())
+        .env_remove(lint::TEMPLATE_ENV)
+        .current_dir(missing.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(0), "{stdout}");
+    assert!(stdout.contains("LINT PASS"), "{stdout}");
 }
 
 #[test]

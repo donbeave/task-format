@@ -331,6 +331,7 @@ mod tests {
             pane: String::new(),
             agent_name: "task".into(),
             start: String::new(),
+            selfcheck: crate::runstate::SELFCHECK_NOT_RUN.into(),
             experiment: None,
             gate: None,
             result_sha: None,

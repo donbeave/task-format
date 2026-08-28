@@ -61,15 +61,21 @@ pub struct GateOutput {
 pub struct CheckResult {
     pub name: String,
     pub pass: bool,
+    /// Return code of the check: 0 on PASS; for command checks the shell's status (126 not
+    /// executable, 127 not found — also used when the shell could not be spawned); 1 for a
+    /// failing built-in check.
+    pub rc: i32,
 }
 
 impl GateOutput {
     /// Verdict of one check by name; `None` when it never ran.
     pub fn check(&self, name: &str) -> Option<bool> {
-        self.checks
-            .iter()
-            .find(|check| check.name == name)
-            .map(|check| check.pass)
+        self.check_result(name).map(|check| check.pass)
+    }
+
+    /// The full result of one check by name; `None` when it never ran.
+    pub fn check_result(&self, name: &str) -> Option<&CheckResult> {
+        self.checks.iter().find(|check| check.name == name)
     }
 }
 
@@ -135,6 +141,7 @@ impl Session {
         self.checks.push(CheckResult {
             name: name.to_string(),
             pass: rc == 0,
+            rc,
         });
         if rc == 0 {
             self.lines.push(format!("CHECK {name} PASS"));
@@ -241,6 +248,7 @@ fn run_inner(opts: GateOpts) -> anyhow::Result<GateOutput> {
             checks: vec![CheckResult {
                 name: "config".to_string(),
                 pass: false,
+                rc: EXIT_FAIL,
             }],
             text,
         });
@@ -252,6 +260,7 @@ fn run_inner(opts: GateOpts) -> anyhow::Result<GateOutput> {
     session.checks.push(CheckResult {
         name: "config".to_string(),
         pass: true,
+        rc: 0,
     });
 
     // ---------- scope ----------

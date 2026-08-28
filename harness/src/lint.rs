@@ -11,16 +11,25 @@
 //! - `sections`      every required H2 present, in template order
 //! - `placeholders`  no template placeholders left. The `<...>` set is derived from the template
 //!   README (`TASK_TEMPLATE_README`, else `reference/task-template/README.md` under the nearest
-//!   ancestor of the cwd or the compile-time repo root, else the copy embedded at build time); a
-//!   span counts only when it is bare prose or the entire content of an inline-code span —
-//!   `<...>` inside a longer code span (`pgtui --db <path>`, `Vec<TableRef>`) is literal.
-//!   TASK-000 / P-NNN / AC-NNN stay hand-listed. Bare spans with a space outside the set warn.
+//!   ancestor of the cwd, else under the compile-time repo root); when none of those exists the
+//!   rule is an ERROR (`reference template not found`) — there is no embedded copy, so a stale
+//!   binary can never lint against a stale template. A span counts only when it is bare prose or
+//!   the entire content of an inline-code span — `<...>` inside a longer code span
+//!   (`pgtui --db <path>`, `Vec<TableRef>`) is literal. TASK-000 / P-NNN / AC-NNN stay
+//!   hand-listed. Bare spans with a space outside the set warn.
 //! - `ids`           no duplicate P-/R-/D- definition or AC- row
 //! - `context`       "Read before editing" list never references /task/ (binding docs are not hints)
-//! - `baseline`      fenced Baseline command equals some AC evidence command (warning)
+//! - `baseline`      a fenced command follows the Baseline paragraph (warning). For `kind` feature
+//!   or bugfix it must also be the AC-001 command — `cargo test` compared by target set, a
+//!   narrower/broader filter or `--test` subset tolerated — or match a verify.toml `[focused]` /
+//!   `[regression]` command by target set (warning). Other kinds skip the comparison.
 //! - `preconditions` every P-NNN line carries a backticked command
 //! - `acceptance`    every AC-NNN row has an evidence command and an expected result; each AC
-//!   command appears verbatim in verify.toml (warning)
+//!   command is run by verify.toml (warning): the gate command itself is exempt (the gate cannot
+//!   list itself); `cargo test` commands match a `[focused]`/`[regression]`/`[lint]` command by
+//!   parsed target set — package, `--test`/`--bin`/`--example`/`--bench` targets, positional
+//!   filter, args after ` -- `, remaining flags — order-insensitive; any other command must
+//!   appear verbatim
 //! - `requirements`  every R-NNN defined in Requirements is cited by an AC row or a checklist
 //!   item; a citation on a parent covers every leaf below it; ranges (R-002..R-004) expand
 //! - `checklist`     one block; line grammar; IDs contiguous; depth = ID components; max depth 4;
@@ -48,9 +57,8 @@ pub const DEFAULT_GATE: &str = "taskfmt verify";
 pub const TEMPLATE_ENV: &str = "TASK_TEMPLATE_README";
 /// Relative location of the template README inside a checkout.
 const TEMPLATE_REL: &str = "reference/task-template/README.md";
-/// The template README compiled into the binary: the fallback when no checkout is around (the
-/// binary baked into the container image) so the placeholder set is never missing.
-const EMBEDDED_TEMPLATE: &str = include_str!("../../reference/task-template/README.md");
+/// Baseline-rule scope: only these kinds start from a failing AC-001 command.
+const BASELINE_KINDS: &[&str] = &["feature", "bugfix"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
@@ -407,7 +415,8 @@ pub fn lint_text(text: &str, readme: &Path) -> Vec<Finding> {
     // ---------- requirements: every R-NNN cited by an AC row or a checklist item ----------
     requirement_findings(&mut findings, &tf, &items, &leaves);
 
-    // ---------- baseline: fenced command equals an AC evidence command ----------
+    // ---------- baseline: fenced command; for feature/bugfix it is AC-001 or a gate suite ----------
+    let verify = read_verify_toml(&dir);
     match baseline_command(text) {
         None => findings.push(Finding {
             severity: Severity::Warn,
@@ -415,14 +424,32 @@ pub fn lint_text(text: &str, readme: &Path) -> Vec<Finding> {
             message: "no fenced command found after \"Baseline\"".to_string(),
         }),
         Some(cmd) => {
-            if !ac_cmds.iter().any(|(_, ac)| *ac == cmd) {
-                findings.push(Finding {
-                    severity: Severity::Warn,
-                    rule: "baseline",
-                    message: format!(
-                        "Baseline command is not identical to any AC evidence command: {cmd}"
-                    ),
-                });
+            if BASELINE_KINDS.contains(&fm.kind.as_str()) {
+                let ac_001 = ac_cmds
+                    .iter()
+                    .find(|(id, _)| id == "AC-001")
+                    .map(|(_, cmd)| cmd.as_str());
+                let suites: Vec<&str> = match &verify {
+                    VerifyToml::Parsed { cfg, .. } => cfg
+                        .focused
+                        .commands
+                        .iter()
+                        .chain(&cfg.regression.commands)
+                        .map(String::as_str)
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                let matches_ac = ac_001.is_some_and(|ac| baseline_matches_ac(&cmd, ac));
+                let matches_suite = suites.iter().any(|suite| commands_equal(&cmd, suite));
+                if !matches_ac && !matches_suite {
+                    findings.push(Finding {
+                        severity: Severity::Warn,
+                        rule: "baseline",
+                        message: format!(
+                            "Baseline command does not match the AC-001 command or any {FILE_NAME} focused/regression command: {cmd}"
+                        ),
+                    });
+                }
             }
         }
     }
@@ -463,7 +490,7 @@ pub fn lint_text(text: &str, readme: &Path) -> Vec<Finding> {
     }
 
     // ---------- verify.toml ----------
-    verify_config_findings(&mut findings, &dir, fm, &ac_cmds);
+    verify_config_findings(&mut findings, &verify, fm, &ac_cmds);
 
     // ---------- size ----------
     let bytes = text.len();
@@ -502,16 +529,16 @@ fn finding(findings: &mut Vec<Finding>, rule: &'static str, message: String) {
 // ---------------------------------------------------------------------------------------------
 
 /// The template README text and where it came from: `TASK_TEMPLATE_README` (must exist), else
-/// `reference/task-template/README.md` under the nearest ancestor of the cwd or the compile-time
-/// repo root, else the copy embedded at build time.
-fn template_readme() -> Result<(String, String), String> {
+/// `reference/task-template/README.md` under the nearest ancestor of the cwd, else under the
+/// compile-time repo root. No embedded fallback: a missing template is an error.
+pub fn template_readme() -> Result<(String, String), String> {
     if let Some(path) = std::env::var_os(TEMPLATE_ENV).filter(|v| !v.is_empty()) {
         let path = PathBuf::from(path);
         return std::fs::read_to_string(&path)
             .map(|text| (text, path.display().to_string()))
             .map_err(|_| {
                 format!(
-                    "template README not found at {} (set {TEMPLATE_ENV}); cannot derive the placeholder set",
+                    "reference template not found (set {TEMPLATE_ENV}): {} is not readable",
                     path.display()
                 )
             });
@@ -530,10 +557,7 @@ fn template_readme() -> Result<(String, String), String> {
             return Ok((text, candidate.display().to_string()));
         }
     }
-    Ok((
-        EMBEDDED_TEMPLATE.to_string(),
-        format!("<embedded {TEMPLATE_REL}>"),
-    ))
+    Err(format!("reference template not found (set {TEMPLATE_ENV})"))
 }
 
 /// Every `<...>` span of the template (HTML comments excluded), plus each span with its inline
@@ -865,6 +889,127 @@ pub fn cargo_multi_filter(command: &str) -> bool {
     positional >= 2
 }
 
+/// Shell operators: a command carrying one is a compound command, not a plain `cargo test`.
+const SHELL_OPERATORS: &[&str] = &[
+    "|", "||", "&&", ";", ">", ">>", "<", "2>", "2>&1", "1>", "&",
+];
+
+/// `cargo test` flags whose value names a test target.
+const CARGO_TARGET_FLAGS: &[&str] = &["--test", "--bin", "--example", "--bench"];
+
+/// A plain `cargo test` command reduced to what it runs, order-insensitive: `cargo test -p a
+/// --test x --test y` equals `cargo test --test y --test x -p a`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CargoTestSpec {
+    /// `-p`/`--package` values.
+    pub packages: BTreeSet<String>,
+    /// `--test`/`--bin`/`--example`/`--bench` targets, as `--flag=name`.
+    pub targets: BTreeSet<String>,
+    /// Positional filter words before ` -- `.
+    pub filters: BTreeSet<String>,
+    /// Arguments after ` -- ` (test-harness args: filters, `--nocapture`, ...).
+    pub trailing: BTreeSet<String>,
+    /// Every other flag, value-carrying ones as `--flag=value`.
+    pub flags: BTreeSet<String>,
+}
+
+impl CargoTestSpec {
+    /// `self` runs a subset of what `other` runs: the same package(s) and build flags, a subset
+    /// of its targets (no `--test` at all means every target), at least its filter words, and
+    /// trailing args nested one way or the other.
+    pub fn narrower_than(&self, other: &CargoTestSpec) -> bool {
+        let targets = other.targets.is_empty()
+            || (!self.targets.is_empty() && self.targets.is_subset(&other.targets));
+        self.packages == other.packages
+            && self.flags == other.flags
+            && targets
+            && other.filters.is_subset(&self.filters)
+            && (self.trailing.is_subset(&other.trailing)
+                || other.trailing.is_subset(&self.trailing))
+    }
+
+    /// Same suite, narrower or broader on every axis at once: `cargo test --test suite` vs
+    /// `cargo test --test suite -- x`, `cargo test -p a` vs `cargo test -p a some_test`. Mixed
+    /// directions (one `--test` target the other never runs, plus a dropped filter) do not match.
+    pub fn same_suite(&self, other: &CargoTestSpec) -> bool {
+        self == other || self.narrower_than(other) || other.narrower_than(self)
+    }
+}
+
+/// Parse a plain `cargo [+toolchain] test ...` command. `None` for anything else, including a
+/// compound command (`cargo test x && ...`): those compare verbatim.
+pub fn parse_cargo_test(command: &str) -> Option<CargoTestSpec> {
+    let mut tokens = command.split_whitespace().peekable();
+    if tokens.next()? != "cargo" {
+        return None;
+    }
+    if tokens.peek().is_some_and(|tok| tok.starts_with('+')) {
+        tokens.next();
+    }
+    if tokens.next()? != "test" {
+        return None;
+    }
+    let mut spec = CargoTestSpec::default();
+    let mut after_dashes = false;
+    while let Some(tok) = tokens.next() {
+        if SHELL_OPERATORS.contains(&tok) {
+            return None;
+        }
+        if after_dashes {
+            spec.trailing.insert(tok.to_string());
+            continue;
+        }
+        if tok == "--" {
+            after_dashes = true;
+            continue;
+        }
+        if !tok.starts_with('-') {
+            spec.filters.insert(tok.to_string());
+            continue;
+        }
+        // `--flag=value` or `--flag value`
+        let (name, inline_value) = match tok.split_once('=') {
+            Some((name, value)) if name.starts_with("--") => (name, Some(value.to_string())),
+            _ => (tok, None),
+        };
+        let takes_value = CARGO_VALUE_FLAGS.contains(&name) || CARGO_TARGET_FLAGS.contains(&name);
+        let value = match inline_value {
+            Some(value) => Some(value),
+            None if takes_value => Some(tokens.next()?.to_string()),
+            None => None,
+        };
+        let entry = match &value {
+            Some(value) => format!("{name}={value}"),
+            None => name.to_string(),
+        };
+        if matches!(name, "-p" | "--package") {
+            spec.packages.insert(value.unwrap_or_default());
+        } else if CARGO_TARGET_FLAGS.contains(&name) {
+            spec.targets.insert(entry);
+        } else {
+            spec.flags.insert(entry);
+        }
+    }
+    Some(spec)
+}
+
+/// Two commands run the same thing: `cargo test` by target set, anything else byte-for-byte.
+pub fn commands_equal(a: &str, b: &str) -> bool {
+    match (parse_cargo_test(a), parse_cargo_test(b)) {
+        (Some(a), Some(b)) => a == b,
+        _ => a.trim() == b.trim(),
+    }
+}
+
+/// The baseline command names the AC-001 suite: equal, or the same `cargo test` suite with a
+/// narrower/broader filter or `--test` subset.
+fn baseline_matches_ac(baseline: &str, ac: &str) -> bool {
+    match (parse_cargo_test(baseline), parse_cargo_test(ac)) {
+        (Some(baseline), Some(ac)) => baseline.same_suite(&ac),
+        _ => baseline.trim() == ac.trim(),
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // checklist
 // ---------------------------------------------------------------------------------------------
@@ -1078,26 +1223,61 @@ fn expected_id(prev: &CheckItem, depth: usize) -> Result<String, ()> {
 // verify.toml
 // ---------------------------------------------------------------------------------------------
 
+/// `verify.toml` next to the README, read once and shared by the `baseline` and `config` rules.
+enum VerifyToml {
+    Missing,
+    Unreadable(String),
+    Invalid(Vec<String>),
+    Parsed {
+        /// Non-comment lines of the file: the haystack for verbatim command matching.
+        code: String,
+        cfg: Box<verifycfg::VerifyConfig>,
+    },
+}
+
+fn read_verify_toml(dir: &Path) -> VerifyToml {
+    let path = dir.join(FILE_NAME);
+    if !path.is_file() {
+        return VerifyToml::Missing;
+    }
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) => return VerifyToml::Unreadable(err.to_string()),
+    };
+    match verifycfg::VerifyConfig::parse(&text) {
+        Ok(cfg) => {
+            let code: String = text
+                .lines()
+                .filter(|line| !line.trim_start().starts_with('#'))
+                .collect::<Vec<_>>()
+                .join("\n");
+            VerifyToml::Parsed {
+                code,
+                cfg: Box::new(cfg),
+            }
+        }
+        Err(err) => VerifyToml::Invalid(format!("{err:#}").lines().map(str::to_string).collect()),
+    }
+}
+
 /// `verify.toml` ↔ frontmatter consistency (the sourced `verify.config` checks, ported to toml),
 /// plus the "every AC command is run by the gate" warning.
 fn verify_config_findings(
     findings: &mut Vec<Finding>,
-    dir: &Path,
+    verify: &VerifyToml,
     fm: &taskfile::Frontmatter,
     ac_cmds: &[(String, String)],
 ) {
-    let path = dir.join(FILE_NAME);
-    if !path.is_file() {
-        findings.push(Finding {
-            severity: Severity::Warn,
-            rule: "config",
-            message: format!("no {FILE_NAME} next to README.md"),
-        });
-        return;
-    }
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(err) => {
+    let (code, cfg) = match verify {
+        VerifyToml::Missing => {
+            findings.push(Finding {
+                severity: Severity::Warn,
+                rule: "config",
+                message: format!("no {FILE_NAME} next to README.md"),
+            });
+            return;
+        }
+        VerifyToml::Unreadable(err) => {
             finding(
                 findings,
                 "config",
@@ -1105,18 +1285,15 @@ fn verify_config_findings(
             );
             return;
         }
-    };
-    let cfg = match verifycfg::VerifyConfig::parse(&text) {
-        Ok(cfg) => cfg,
-        Err(err) => {
-            let detail: Vec<String> = format!("{err:#}").lines().map(str::to_string).collect();
+        VerifyToml::Invalid(detail) => {
             finding(
                 findings,
                 "config",
-                format!("{FILE_NAME} does not parse:\n{}", indent(&detail, "    ")),
+                format!("{FILE_NAME} does not parse:\n{}", indent(detail, "    ")),
             );
             return;
         }
+        VerifyToml::Parsed { code, cfg } => (code, cfg),
     };
 
     if cfg.base_ref.as_deref() == Some("") {
@@ -1156,14 +1333,9 @@ fn verify_config_findings(
         );
     }
 
-    let code: String = text
-        .lines()
-        .filter(|line| !line.trim_start().starts_with('#'))
-        .collect::<Vec<_>>()
-        .join("\n");
     let placeholder = Regex::new(r#"<[^<>"]+>"#).expect("static regex");
     let mut found: Vec<String> = placeholder
-        .find_iter(&code)
+        .find_iter(code)
         .map(|m| m.as_str().to_string())
         .collect();
     found.sort();
@@ -1178,14 +1350,38 @@ fn verify_config_findings(
             ),
         );
     }
-    // every AC evidence command should be run by the gate: verbatim substring of the config text
+    // every AC evidence command should be run by the gate. The gate row is exempt (the gate
+    // cannot list itself); `cargo test` matches a config command by target set, order-insensitive;
+    // anything else must be a verbatim substring of the non-comment config text.
+    let gate = if fm.verify.is_empty() {
+        DEFAULT_GATE
+    } else {
+        fm.verify.as_str()
+    };
+    let config_cmds: Vec<&str> = cfg
+        .focused
+        .commands
+        .iter()
+        .chain(&cfg.regression.commands)
+        .chain(&cfg.lint.commands)
+        .map(String::as_str)
+        .collect();
     for (id, cmd) in ac_cmds {
-        if !code.contains(cmd.as_str()) {
+        if cmd == gate || cmd == DEFAULT_GATE {
+            continue;
+        }
+        let run_by_gate = match parse_cargo_test(cmd) {
+            Some(spec) => config_cmds
+                .iter()
+                .any(|config_cmd| parse_cargo_test(config_cmd).as_ref() == Some(&spec)),
+            None => code.contains(cmd.as_str()),
+        };
+        if !run_by_gate {
             findings.push(Finding {
                 severity: Severity::Warn,
                 rule: "acceptance",
                 message: format!(
-                    "{id} evidence command does not appear verbatim in {FILE_NAME}: {cmd}"
+                    "{id} evidence command is not run by {FILE_NAME} (no focused/regression/lint command matches): {cmd}"
                 ),
             });
         }
@@ -1229,8 +1425,10 @@ mod tests {
     }
 
     #[test]
-    fn placeholder_set_is_derived_from_the_embedded_template() {
-        let set = template_placeholder_set(EMBEDDED_TEMPLATE);
+    fn placeholder_set_is_derived_from_the_checkout_template() {
+        let (template, source) = template_readme().expect("template in the checkout");
+        assert!(source.ends_with(TEMPLATE_REL), "{source}");
+        let set = template_placeholder_set(&template);
         assert!(set.contains("<command>"));
         assert!(set.contains("<area>"));
         // the code-stripped twin of `<Coherent unit satisfying `R-001`>`
@@ -1263,6 +1461,54 @@ mod tests {
         assert!(!cargo_multi_filter("cargo build a b"));
         assert!(cargo_multi_filter("cargo +nightly test a b | tee log"));
         assert!(!cargo_multi_filter("cargo test a | grep b"));
+    }
+
+    #[test]
+    fn cargo_test_spec_is_order_insensitive_and_plain_only() {
+        let a =
+            parse_cargo_test("cargo test -p auth --test x --test y -- foo --nocapture").unwrap();
+        let b = parse_cargo_test(
+            "cargo +stable test --test y --package=auth --test x -- --nocapture foo",
+        )
+        .unwrap();
+        assert_eq!(a, b);
+        assert_eq!(a.packages.iter().collect::<Vec<_>>(), vec!["auth"]);
+        assert_eq!(a.targets.len(), 2);
+        assert_eq!(a.trailing.len(), 2);
+        assert_ne!(
+            a,
+            parse_cargo_test("cargo test -p auth --test x -- foo").unwrap()
+        );
+        assert_ne!(
+            parse_cargo_test("cargo test -p auth").unwrap(),
+            parse_cargo_test("cargo test -p auth --release").unwrap()
+        );
+        assert!(parse_cargo_test("cargo build -p auth").is_none());
+        assert!(parse_cargo_test("cargo test -p auth && true").is_none());
+        assert!(parse_cargo_test("cargo test -p auth | tee log").is_none());
+        assert!(parse_cargo_test("cargo test -p").is_none()); // dangling value flag
+        assert!(commands_equal(
+            "cargo test --test b --test a",
+            "cargo test --test a --test b"
+        ));
+        assert!(!commands_equal("pytest -q a", "pytest -q b"));
+    }
+
+    #[test]
+    fn same_suite_tolerates_one_direction_only() {
+        let spec = |cmd: &str| parse_cargo_test(cmd).unwrap();
+        let ac = spec("cargo test -p auth expired_refresh_token");
+        assert!(spec("cargo test -p auth").same_suite(&ac));
+        assert!(spec("cargo test -p auth expired_refresh_token -- --nocapture").same_suite(&ac));
+        assert!(!spec("cargo test -p auth other_test").same_suite(&ac));
+        assert!(!spec("cargo test -p auth --test nope").same_suite(&ac));
+        assert!(!spec("cargo test -p other").same_suite(&ac));
+        let multi = spec("cargo test -p auth --test a --test b");
+        assert!(spec("cargo test -p auth --test a").same_suite(&multi));
+        assert!(spec("cargo test -p auth --test a -- x").same_suite(&multi));
+        assert!(!spec("cargo test -p auth --test c").same_suite(&multi));
+        assert!(!spec("cargo test -p auth").narrower_than(&multi));
+        assert!(multi.narrower_than(&spec("cargo test -p auth")));
     }
 
     #[test]
