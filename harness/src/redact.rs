@@ -138,8 +138,9 @@ mod tests {
 
     #[test]
     fn short_values_are_not_registered() {
-        let before = registered();
+        // the registry is global and other tests add to it concurrently, so assert about this
+        // value only — a length delta would race with them
         register("abc");
-        assert_eq!(registered().len(), before.len());
+        assert!(!registered().contains(&"abc".to_string()));
     }
 }

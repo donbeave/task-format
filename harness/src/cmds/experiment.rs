@@ -19,8 +19,10 @@ pub fn run(
     let profile_name = agent
         .unwrap_or_else(|| resolved.cfg.default_profile())
         .to_string();
-    let repo_url = crate::cmds::repo::ensure_repo(ctx, &resolved, repo)?;
 
+    // The experiment state comes first: a resume is pinned to the recorded repo, so the state must
+    // be known before any repo is created. Creating first is how a resumed experiment once ended up
+    // on a brand-new repo whose `main` had none of the earlier tasks' commits.
     let experiment_id = match resume {
         Some(id) => {
             let path = resolved.experiment_file(id);
@@ -36,8 +38,11 @@ pub fn run(
         None => format!("exp-{}", crate::config::timestamp_compact()),
     };
     let state_file = resolved.experiment_file(&experiment_id);
-    let mut state = ExperimentState::load(&state_file)?
-        .unwrap_or_else(|| ExperimentState::new(&experiment_id, &repo_url));
+    let existing = ExperimentState::load(&state_file)?;
+    let repo_url = resolve_repo_url(existing.as_ref(), repo, |provided| {
+        crate::cmds::repo::ensure_repo(ctx, &resolved, provided)
+    })?;
+    let mut state = existing.unwrap_or_else(|| ExperimentState::new(&experiment_id, &repo_url));
 
     let selection =
         crate::selection::resolve(tasks, &resolved.tasks_dir()).context("resolving --tasks")?;
@@ -167,4 +172,35 @@ pub fn run(
         state_file.display()
     ));
     Ok(if failed == 0 { 0 } else { 1 })
+}
+
+/// The repository an experiment run works against. Recorded state pins it (`resume_repo_url`);
+/// without state, the `create` fallback decides — in `run` that is `repo::ensure_repo`, which uses
+/// `--repo` when given and otherwise confirms and mints a disposable repo.
+pub fn resolve_repo_url(
+    state: Option<&ExperimentState>,
+    repo_arg: Option<&str>,
+    create: impl FnOnce(Option<&str>) -> anyhow::Result<String>,
+) -> anyhow::Result<String> {
+    match state {
+        Some(state) => resume_repo_url(state, repo_arg),
+        None => create(repo_arg),
+    }
+}
+
+/// The repository a resumed experiment continues on: the recorded `repo_url`, always. Each task
+/// builds on the previous task's pushed chain, so a resume on any other repo — let alone a freshly
+/// created empty one — would fork the experiment. A `--repo` that matches the record is accepted;
+/// one that does not is an error naming both.
+pub fn resume_repo_url(state: &ExperimentState, repo_arg: Option<&str>) -> anyhow::Result<String> {
+    match repo_arg {
+        None => Ok(state.repo_url.clone()),
+        Some(arg) if arg == state.repo_url => Ok(state.repo_url.clone()),
+        Some(arg) => bail!(
+            "--repo {arg} does not match experiment {} ({reco}); a resume always continues on the \
+             recorded repo — start a new experiment to use a different one",
+            state.id,
+            reco = state.repo_url,
+        ),
+    }
 }

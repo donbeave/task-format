@@ -51,7 +51,18 @@ pub fn run(
     let profile_name = agent
         .unwrap_or_else(|| resolved.cfg.default_profile())
         .to_string();
-    let repo_url = crate::cmds::repo::ensure_repo(ctx, &resolved, repo)?;
+
+    // A run tagged onto an existing experiment is pinned to that experiment's recorded repo, the
+    // same rule `experiment --resume` follows. A repo is minted only when the experiment has no
+    // state yet (first run under a fresh `--exp` id).
+    let existing = match exp {
+        Some(id) => crate::runstate::ExperimentState::load(&resolved.experiment_file(id))?,
+        None => None,
+    };
+    let repo_url =
+        crate::cmds::experiment::resolve_repo_url(existing.as_ref(), repo, |provided| {
+            crate::cmds::repo::ensure_repo(ctx, &resolved, provided)
+        })?;
 
     let outcome = dispatch_one(
         &resolved,
