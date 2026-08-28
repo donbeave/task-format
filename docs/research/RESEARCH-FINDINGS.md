@@ -104,13 +104,23 @@ Completion (host gate, only source of truth): `verify.sh` exit 0 AND last stdout
 
 ---
 
-## 5. Container harness (plan; from notes/container-harness.md — build next)
+## 5. Container harness — HEADED mode with herdr (decided; from notes/headed-herdr-harness.md)
 
-- Images: `node:22-bookworm`, non-root `agent`, pinned CLI version, `DISABLE_AUTOUPDATER=1`, telemetry off, `init-firewall.sh` API-only allowlist (`api.anthropic.com` / `api.openai.com`) with `NET_MODE=all` switch; fixture toolchains baked into per-fixture images.
-- `run.sh <claude|codex> <TASK-ID> [--model] [--net] [--max-turns] [--budget]`: copy fixture → `runs/<ts>-<agent>-<task>/workspace`, `git init && commit && tag baseline`; snapshot task dir (pristine, never mounted rw); hash protected before; launch agent (`claude -p "/goal ..."` / `codex exec ...`) with `/task:ro`, `/work`, `/progress`, `/agent-home` (`CLAUDE_CONFIG_DIR`/`CODEX_HOME`), `/out`; after exit: copy transcript, `git diff baseline`, `git status --porcelain`, hashes after, run trusted `verify.sh` in a `--network none` container, write `metrics.json`.
-- Open items to test on first run: `/goal` without `--bare` when fixture has no `.claude/`; Codex rollout path under `CODEX_HOME`; firewall DNS ordering; macOS Docker file-mount semantics.
+Decision (operator mandate): agents run **headed** (interactive TUI) under **herdr** (https://herdr.dev/) in a **persistent** container (no `--rm`). The operator re-attaches later to watch the live session, scroll back, and inspect state with the agent still alive. tmux/zellij/screen are never used. The headless design in notes/container-harness.md is superseded except for image base, auth, mounts, network, and the host gate.
 
----
+Verified (herdr 0.8.2, Apache-2.0, static Linux binary; tested in `debian:bookworm-slim` as non-root `agent`):
+
+- Server: `herdr server` in the entrypoint (backgrounded; does not daemonize), `docker run -d` without `-t`. Socket `~/.config/herdr/sessions/<name>/herdr.sock`; control via `docker exec -u agent -e HERDR_SESSION=agent <c> herdr …`.
+- Launch: `herdr workspace create --cwd /work --no-focus` → pane id; `herdr pane run <pane> "<cmd>"` where cmd = `HERDR_AGENT=claude script -qfec '<claude …>' /out/tui.log` (herdr has no pipe-to-file; `script` captures the raw stream; `HERDR_AGENT` makes herdr detect the agent behind the wrapper).
+- Prompt injection: `herdr agent prompt task "<text>"` (bracketed-paste aware, presses Enter; refuses with `agent_blocked` if a dialog is open). Readiness: `herdr agent wait task --until idle`.
+- Attach: `docker exec -it -u agent <c> herdr` (or `herdr agent attach task`); detach `ctrl+b q`. Read: `herdr pane read --source visible|detection`, `herdr pane wait-output --regex`. Quirk: `--source recent*` returned empty on headless Linux — avoid.
+- Completion detection (`status.sh`): authoritative = transcript jsonl `attachment.type=="goal_status"` (`met`, `reason`, `sentinel`); then `GOAL_RESULT` in `/out/tui.log`; then `herdr agent wait --until idle|done|blocked`.
+- Claude Code pre-seed to skip dialogs: `settings.json` `{skipDangerousModePermissionPrompt:true, tui:"default", theme, env:{CLAUDE_CODE_GOAL_CHECKIN_MINUTES:"0"}}`; `.claude.json` `hasCompletedOnboarding`, `projects["/work"].hasTrustDialogAccepted`; env `CLAUDE_CONFIG_DIR=/agent-home`, **`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1`** (else output lives on the alt screen, invisible to scrollback).
+- `/goal` interactive = same Stop-hook evaluator; no `--max-turns`/budget caps headed → the turn bound in the condition text is the only cap. Goal survives `--resume`; bypass flag does not (pass again).
+- Lifecycle: `docker stop` kills server + panes; entrypoint traps SIGTERM for graceful `herdr server stop`; restart relaunches `claude --resume <session-id> --dangerously-skip-permissions --add-dir …`; herdr `resume_agents_on_restore` disabled.
+- Sketches in the note: Dockerfile deltas, entrypoint, `run-headed.sh`, `attach.sh`, `status.sh` (`--wait`, `--kill-after`), post-run inspection table, Codex TUI equivalents (`--no-alt-screen`, `trust_level="trusted"`).
+
+Unchanged from the headless plan: `node:22-bookworm` base, non-root user, pinned CLI, telemetry off, API-only firewall with `NET_MODE=all` switch, mounts `/task` ro / `/work` rw / `/progress` rw / `/agent-home` / `/out`, fixture copy + `baseline` tag, protected hashes before/after, host re-run of trusted `verify.sh`, `metrics.json`.
 
 ## 6. Metrics per run (harness-computed, never from agent claims)
 
@@ -136,7 +146,7 @@ Minimum design: ≥3 task kinds (bugfix, feature, removal) × ≥5 seeds × vari
 
 ## 8. Open / UNVERIFIED
 
-- `/goal` under `--bare`; `SessionStart compact` injection reliability; Codex goal semantics in `exec`; Docker file-mount semantics on macOS; OpenAI harness-engineering quotes read via mirrors (primary 403).
+- herdr: `docker exec -it … herdr` attach UX, `/goal …` via `agent prompt` (Enter vs slash popup), `customApiKeyResponses` format, Codex goal events. `/goal` under `--bare`; `SessionStart compact` injection reliability; Codex goal semantics in `exec`; Docker file-mount semantics on macOS; OpenAI harness-engineering quotes read via mirrors (primary 403).
 - `check_progress` validates terminal state only; a `--partial` mid-run lint is a follow-up.
 - Model dependence: Anthropic notes newer models may need less decomposition [A2]; task size is a tunable.
 

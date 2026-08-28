@@ -15,7 +15,7 @@ precondition fails, stop with STATUS: BLOCKED; if the task needs a scope, decisi
 or checklist change, stop with STATUS: NEEDS_REPLAN. Stop after 40 turns.
 ```
 
-Headless:
+Headless (reference only; runs are headed under herdr — see `docs/research/notes/headed-herdr-harness.md`):
 
 ```sh
 claude -p "/goal <condition above>" \
