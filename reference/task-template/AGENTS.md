@@ -9,9 +9,11 @@ Your goal is to fully implement this task: `/task/README.md`.
 | Path | Access | Purpose |
 | --- | --- | --- |
 | `/task/README.md` | read-only | The contract: goal, requirements, acceptance criteria, decisions, checklist. |
-| `/task/verify.sh` | read-only | The completion gate. Run it; never edit it. |
+| `/task/verify.toml` | read-only | Gate inputs: commands, patterns, scope whitelist. Data only; never edit. |
 | `/progress/progress.md` | read-write | The only file you maintain for state. Checklist copy + log + handoff. |
 | `/work/` | read-write | The repository. All code changes happen here. |
+
+The completion gate is the `taskfmt verify` command (binary baked into the container image, read-only). Run it from `/work`; never modify or bypass it.
 
 ## Protocol
 
@@ -22,7 +24,7 @@ Your goal is to fully implement this task: `/task/README.md`.
 5. Work the checklist leaves one at a time, in ID order unless `README.md` states a different dependency order. Before starting a leaf set `CURRENT: <id>` in `progress.md`.
 6. Mark a leaf `[x]` only after running its evidence command and seeing the stated result. Append one log line with the command and observed result. If later work invalidates it, set it back to `[ ]` and log `REOPENED`.
 7. Mark a parent `[x]` only when every child is `[x]`. Parents are never `CURRENT`.
-8. When all leaves except the gate leaf are done, run `/task/verify.sh` from `/work`. Fix failures it reports; rerun until it exits 0 with last line `DONE`. Then set `STATE: DONE`, `CURRENT: NONE`, mark the remaining leaves, and emit the final report.
+8. When all leaves except the gate leaf are done, run `taskfmt verify` from `/work`. Fix failures it reports; rerun until it exits 0 with last line `DONE`. Then set `STATE: DONE`, `CURRENT: NONE`, mark the remaining leaves, and emit the final report.
 
 ## progress.md grammar
 
@@ -53,12 +55,12 @@ Rules: never change checklist text, IDs, order, or indentation — only the thre
 
 ## Prohibited
 
-- Editing anything under `/task/`.
+- Editing anything under `/task/`, or modifying/replacing the `taskfmt` binary.
 - Deleting, skipping, weakening, or rewriting a failing test or check to make it pass.
 - Special-casing known fixtures or verifier inputs.
 - Suppressing errors, warnings, lint rules, type checks, or exit codes.
 - Changing any file outside `expected_paths` (the scope whitelist in `/task/README.md`); the gate rejects every other path.
-- Claiming `DONE` without a `/task/verify.sh` run in this session whose output is in the transcript.
+- Claiming `DONE` without a `taskfmt verify` run in this session whose output is in the transcript.
 
 ## Stop conditions
 
@@ -85,7 +87,7 @@ SUMMARY: <what changed, or why execution stopped>
 ACCEPTANCE:
 - AC-001: PASS | FAIL | NOT_RUN — <command and observed result>
 - AC-002: ...
-VERIFY: command=/task/verify.sh exit=<n|NOT_RUN> last_line=<DONE|other|NOT_RUN>
+VERIFY: command=taskfmt verify exit=<n|NOT_RUN> last_line=<DONE|other|NOT_RUN>
 CHANGED:
 - <path> — <reason>
 DEVIATIONS: none | <list>

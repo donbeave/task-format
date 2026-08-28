@@ -1,0 +1,64 @@
+# experiment.toml — the experiment manifest (schema experiment/v1).
+# Read by every `taskfmt` command that touches the repo layout, images, or agent profiles.
+# Secrets appear here only as 1Password references (`op://…`); they are resolved at dispatch time
+# and never written to any committed artifact.
+
+schema = "experiment/v1"
+
+[github]
+owner = "donbeave"
+repo_prefix = "taskfmt-experiment"
+
+[paths]
+tasks_dir = "experiments/tasks"
+runs_dir = "experiments/runs"
+seed_dir = "experiments/fixtures/seed"
+template_dir = "reference/task-template"
+goal_prompt = "harness/goal-prompt.md"
+
+[images]
+taskfmt = "harness-taskfmt:latest"
+base = "harness-base:latest"
+claude = "harness-claude:latest"
+codex = "harness-codex:latest"
+
+[runtime]
+memory = "4g"
+cpus = 2
+pids_limit = 2048
+prereq_timeout_s = 180
+kill_after_min = 90
+
+[prereq]
+image = "postgres:16-alpine"
+user = "pgtui"
+password = "pgtui"
+db = "pgtui"
+port = 5432
+
+[agents.default]
+profile = "zai-flash"
+
+[agents.profiles.zai-flash]
+kind = "claude"
+model = "glm-5.3-flash"
+effort = "low"
+image = "harness-claude:latest"
+
+[agents.profiles.zai-flash.env_static]
+ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic"
+ANTHROPIC_DEFAULT_OPUS_MODEL = "glm-5.3-flash"
+ANTHROPIC_DEFAULT_SONNET_MODEL = "glm-5.3-flash"
+ANTHROPIC_DEFAULT_HAIKU_MODEL = "glm-5.3-flash"
+API_TIMEOUT_MS = "3000000"
+CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
+
+[agents.profiles.zai-flash.env_secret]
+# 1Password reference for the Z.ai API key (as used by the operator's claude-zai-flash-yolo).
+ANTHROPIC_AUTH_TOKEN = "op://7sv67vb2ie6oponnetzhbf7yjy/usdqt4fotde4umcryzrlisaoku/API keys/otz5ln65imhmip4m7jkflkasxm"
+
+[agents.profiles.codex-default]
+kind = "codex"
+model = ""
+effort = "high"
+image = "harness-codex:latest"

@@ -1,0 +1,81 @@
+# verify.toml — declarative inputs for the gate (`taskfmt verify`). Data only.
+# Paths are relative to the repository root (the working directory of the gate).
+# The scope base is the per-run trusted commit: TASKFMT_BASE env, --base flag, else "baseline".
+
+schema = "verify/v1"
+
+# Trusted overlay files: shipped on the run base commit, never authored by the executor.
+# Semantics required: "not created and not modified by this run", not "absent from the tree".
+forbidden_paths = [
+  "crates/pgtui/src/render.rs",
+  "crates/pgtui/src/fonts",
+]
+
+required_paths = [
+  "crates/pgtui/src/ui/custom_sql.rs",
+]
+
+allowed_globs = [
+  "crates/pgtui/src/app.rs",
+  "crates/pgtui/src/keys.rs",
+  "crates/pgtui/src/runtime.rs",
+  "crates/pgtui/src/db/mod.rs",
+  "crates/pgtui/src/db/postgres.rs",
+  "crates/pgtui/src/ui/mod.rs",
+  "crates/pgtui/src/ui/custom_sql.rs",
+  "crates/pgtui/src/ui/grid.rs",
+]
+
+[focused]
+commands = [
+  "cargo test -p pgtui --test app_custom_sql_test",
+  "cargo test -p pgtui --test pg_custom_sql_test",
+  "cargo test -p pgtui --test screen_custom_sql_test",
+]
+
+[regression]
+commands = [
+  "cargo test -p pgtui --test skeleton_test --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test --test app_create_form_test --test runtime_create_test --test screen_create_form_test --test pg_connect_test --test pg_runtime_connect_test --test app_browser_test --test screen_browser_test --test grid_sort_test --test pg_preview_test --test app_preview_test --test screen_preview_test --test app_custom_sql_test --test pg_custom_sql_test --test screen_custom_sql_test",
+]
+
+[lint]
+commands = [
+  "cargo fmt --all --check",
+  "cargo clippy --workspace --all-targets -- -D warnings",
+]
+
+[[forbidden_patterns]]
+regex = 'todo!\(|unimplemented!\('
+paths = [
+  "crates/pgtui/src",
+]
+
+[[forbidden_patterns]]
+regex = 'dbg!\('
+paths = [
+  "crates/pgtui/src",
+]
+
+[[forbidden_patterns]]
+regex = '#\[allow\((clippy|dead_code|unused)'
+paths = [
+  "crates/pgtui/src",
+]
+
+[[forbidden_patterns]]
+regex = '#\[ignore\]'
+paths = [
+  "crates/pgtui/tests",
+]
+
+[[forbidden_patterns]]
+regex = 'query_one|query_raw|\.prepare\('
+paths = [
+  "crates/pgtui/src/db",
+]
+
+[[forbidden_patterns]]
+regex = 'sort_unstable'
+paths = [
+  "crates/pgtui/src",
+]

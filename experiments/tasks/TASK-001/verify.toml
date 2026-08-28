@@ -1,0 +1,81 @@
+# verify.toml — declarative inputs for the gate (`taskfmt verify`). Data only.
+# Paths are relative to the repository root (the working directory of the gate).
+# The scope base is the per-run trusted commit: TASKFMT_BASE env, --base flag, else "baseline".
+
+schema = "verify/v1"
+
+# Trusted overlay files: shipped on the run base commit, never authored by the executor.
+# Semantics required: "not created and not modified by this run", not "absent from the tree".
+forbidden_paths = [
+  "crates/pgtui/src/render.rs",
+  "crates/pgtui/src/fonts",
+]
+
+required_paths = [
+  "Cargo.toml",
+  "Cargo.lock",
+  "rust-toolchain.toml",
+  "rustfmt.toml",
+  ".gitignore",
+  ".cargo/config.toml",
+  "crates/pgtui/Cargo.toml",
+  "crates/pgtui/src/lib.rs",
+  "crates/pgtui/src/main.rs",
+  "crates/pgtui/src/bin/gallery.rs",
+]
+
+allowed_globs = [
+  "Cargo.toml",
+  "Cargo.lock",
+  "rust-toolchain.toml",
+  "rustfmt.toml",
+  ".gitignore",
+  ".cargo/config.toml",
+  "crates/pgtui/Cargo.toml",
+  "crates/pgtui/src/lib.rs",
+  "crates/pgtui/src/main.rs",
+  "crates/pgtui/src/bin/gallery.rs",
+]
+
+[focused]
+commands = [
+  "cargo build --workspace --all-targets",
+  "cargo test -p pgtui --test skeleton_test -- stub",
+  "cargo test -p pgtui --test skeleton_test -- trims pipeline",
+  "git diff --exit-code -- crates/pgtui/src/render.rs crates/pgtui/src/fonts",
+]
+
+[regression]
+commands = [
+  "cargo test -p pgtui --test skeleton_test",
+]
+
+[lint]
+commands = [
+  "cargo fmt --all --check",
+  "cargo clippy --workspace --all-targets -- -D warnings",
+]
+
+[[forbidden_patterns]]
+regex = 'todo!\(|unimplemented!\('
+paths = [
+  "crates/pgtui/src",
+]
+
+[[forbidden_patterns]]
+regex = 'dbg!\('
+paths = [
+  "crates/pgtui/src",
+]
+
+[[forbidden_patterns]]
+regex = '#\[allow\((clippy|dead_code|unused)'
+paths = [
+  "crates/pgtui/src",
+]
+
+[[forbidden_patterns]]
+regex = '#\[ignore\]'
+paths = [
+  "crates/pgtui/tests",
+]

@@ -2,3 +2,4 @@
 experiments/runs/
 progress.md
 harness/images/preload/*.tar
+harness/target/

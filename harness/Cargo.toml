@@ -1,0 +1,32 @@
+[package]
+name = "taskfmt"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "task-format harness: task lint, progress init, completion gate, container dispatch"
+license = "MIT"
+
+[lib]
+name = "taskfmt"
+path = "src/lib.rs"
+
+[[bin]]
+name = "taskfmt"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+clap = { version = "4.5", features = ["derive"] }
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+signal-hook = "0.3"
+tempfile = "3"
+toml = "0.9"
+uuid = { version = "1", features = ["v4"] }
+walkdir = "2"
+
+[profile.release]
+strip = true
+lto = "thin"

@@ -1,9 +1,9 @@
 ---
-schema: task/v3
+schema: task/v4
 id: TASK-042
 title: "Reject expired refresh tokens before session rotation"
 kind: bugfix
-verify: "/task/verify.sh"
+verify: "taskfmt verify"
 expected_paths:
   - "src/auth/session/*"
   - "tests/auth/*"
@@ -107,5 +107,5 @@ Static plan. IDs `N`…`N.N.N.N`, max depth 4, four spaces per level. State live
     - [ ] **3.3** `AC-003` — evidence: `grep -rn legacy_expiry_check src tests` → no output.
 - [ ] **4** Gate passes.
     - [ ] **4.1** Diff reviewed: only `src/auth/session/*` and `tests/auth/*` changed — evidence: `git status --porcelain` shows only those paths.
-    - [ ] **4.2** `/task/verify.sh` exits 0 with last line `DONE` — evidence: full output in the transcript.
+    - [ ] **4.2** `taskfmt verify` exits 0 with last line `DONE` — evidence: full output in the transcript.
 <!-- checklist:end -->

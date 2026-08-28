@@ -1,0 +1,47 @@
+# verify.toml — declarative inputs for the gate (`taskfmt verify`). Data only.
+# Paths are relative to the repository root (the working directory of the gate).
+# The scope base is the per-run trusted commit: TASKFMT_BASE env, --base flag, else "baseline".
+
+schema = "verify/v1"
+
+# Must NOT be created or modified by this run — i.e. the path must not appear in the
+# changed-file set vs the base commit. (Trusted material shipped by earlier tasks exists
+# on the base commit; editing it fails here AND the scope whitelist.)
+forbidden_paths = ["src/legacy/file.rs"]
+
+# Must exist after the task.
+required_paths = ["tests/new_test.rs"]
+
+# Scope whitelist: every changed file (vs the base commit, plus staged and untracked)
+# must match one glob; anything else fails the gate. Bash-style globs; '*' and '**' cross '/'.
+allowed_globs = [
+  "src/<area>/*",
+  "tests/<area>/*",
+]
+
+# Commands run from the repo root. Each must exit 0.
+[focused]
+commands = [
+  "<focused test command for AC-001>",
+  "<focused test command for AC-002>",
+]
+
+[regression]
+commands = [
+  "<relevant regression suite>",
+]
+
+[lint]
+commands = [
+  "<fmt --check>",
+  "<lint>",
+]
+
+# regex must NOT match anywhere under `paths` (default: the whole tree).
+[[forbidden_patterns]]
+regex = '<legacy_symbol>'
+paths = ["src", "tests"]
+
+[[forbidden_patterns]]
+regex = '#\[ignore\]'
+paths = ["tests"]

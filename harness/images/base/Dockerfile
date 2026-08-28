@@ -1,11 +1,15 @@
 # images/base/Dockerfile — harness-base: shared prerequisites layer for headed agent containers.
 #
 #   docker build -f images/base/Dockerfile --build-arg TARGETARCH=arm64 -t harness-base:latest .
-#   (build context = harness/ — scripts/configs are COPYed from images/common/; build.sh wires this)
+#   (build context = harness/; `taskfmt build-images` wires the order and the TARGETARCH arg)
 #
 # debian slim + tools + docker.io (inner daemon, DinD) + postgresql-client-16 (pgdg, matches the
-# postgres:16-alpine prereq server) + node 22 (nodesource) + rustup (user `agent`, pinned toolchain)
-# + herdr (static release binary) + entrypoint/prereqs/agent-launch scripts.
+# postgres:16-alpine prereq server) + node 22 (nodesource) + rustup (user `agent`, pinned
+# toolchain) + herdr (static release binary) + the `taskfmt` binary.
+#
+# The container-side tooling is `taskfmt` only: container-entrypoint (PID 1: inner dockerd →
+# prereqs → agent), prereqs (postgres + seeds) and agent-launch (herdr supervisor). No shell
+# scripts ship in the image.
 FROM debian:bookworm-slim
 
 ARG TARGETARCH
@@ -53,6 +57,10 @@ RUN case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
  && chmod 755 /usr/local/bin/herdr \
  && herdr --version
 
+# --- taskfmt, built by images/taskfmt/Dockerfile (`taskfmt build-images` builds it first) ---
+COPY --from=harness-taskfmt:latest /usr/local/bin/taskfmt /usr/local/bin/taskfmt
+RUN /usr/local/bin/taskfmt --version
+
 # --- unprivileged agent user + pinned rust toolchain (minimal profile, owned by `agent`) ---
 RUN useradd -m -s /bin/bash agent
 RUN curl -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh \
@@ -64,17 +72,14 @@ ENV RUSTUP_HOME=/home/agent/.rustup \
     CARGO_HOME=/home/agent/.cargo \
     PATH=/home/agent/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-# --- run dirs + herdr config + scripts ---
+# --- run dirs + herdr config + the baked codex config (copied into $CODEX_HOME at boot) ---
 RUN mkdir -p /home/agent/.config/herdr /work /out /agent-home /opt/preload \
  && chown agent:agent /home/agent/.config/herdr /work /out /agent-home /opt/preload
 COPY --chown=agent:agent images/common/herdr-config.toml /home/agent/.config/herdr/config.toml
-COPY images/common/entrypoint.sh images/common/prereqs.sh images/common/agent-launch.sh \
-     images/common/init-firewall.sh /usr/local/bin/
-# baked by harness/preload.sh (gitignored tar; digest-pinned, regenerate on demand) so the inner
-# dockerd never needs the registry at run time — prereqs.sh docker-loads it from /opt/preload
+COPY images/codex/codex-config.toml /etc/codex-config.toml
+# baked by `taskfmt preload` (gitignored tar; digest-pinned, regenerate on demand) so the inner
+# dockerd never needs the registry at run time — `taskfmt prereqs` docker-loads it from /opt/preload
 COPY images/preload/postgres.tar /opt/preload/postgres.tar
-RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/prereqs.sh \
-              /usr/local/bin/agent-launch.sh /usr/local/bin/init-firewall.sh
 
 # --- env: terminal + telemetry hygiene + herdr named session (notes §3.1/§4) ---
 ENV TERM=xterm-256color \
@@ -91,4 +96,4 @@ ENV TERM=xterm-256color \
     HERDR_SESSION=agent
 
 WORKDIR /work
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+ENTRYPOINT ["/usr/local/bin/taskfmt", "container-entrypoint"]

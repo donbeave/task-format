@@ -1,9 +1,9 @@
 ---
-schema: task/v3
+schema: task/v4
 id: TASK-000
 title: "<imperative title: one observable outcome>"
 kind: bugfix            # bugfix | feature | refactor | removal | migration | test | docs
-verify: "/task/verify.sh"
+verify: "taskfmt verify"
 expected_paths:         # scope whitelist: the only paths that may change (bash globs; '*' and '**' cross '/')
   - "src/<area>/*"
   - "tests/<area>/*"
@@ -73,7 +73,7 @@ Out of scope:
 
 ## Acceptance criteria
 
-Each row is observable behavior with the exact evidence command. `verify.sh` runs these; the harness re-runs them.
+Each row is observable behavior with the exact evidence command. The gate (`taskfmt verify`) runs these; the harness re-runs them.
 
 | ID | Given / When / Then | Evidence command | Expected |
 | --- | --- | --- | --- |
@@ -109,5 +109,5 @@ Static plan. Hierarchical IDs `N`, `N.N`, `N.N.N`, `N.N.N.N` (max depth 4, four 
     - [ ] **3.3** `AC-003` — evidence: `<AC-003 command>` → `<expected>`.
 - [ ] **4** Gate passes.
     - [ ] **4.1** Diff reviewed: only `expected_paths` changed, nothing temporary or unrelated — evidence: `git status --porcelain` and `git diff --stat` show only in-scope files.
-    - [ ] **4.2** `/task/verify.sh` exits 0 with last line `DONE` — evidence: full verifier output shown in the transcript.
+    - [ ] **4.2** `taskfmt verify` exits 0 with last line `DONE` — evidence: full verifier output shown in the transcript.
 <!-- checklist:end -->

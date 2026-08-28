@@ -1,0 +1,6 @@
+# keep the build context small: the crate plus the image assets only
+target/
+images/preload/postgres.tar
+experiments/
+docs/
+reference/
