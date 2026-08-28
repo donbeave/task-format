@@ -46,10 +46,10 @@ The single most important distinction in this plan.
 |---|---|---|
 | Location | `experiments/tasks/TASK-001..007` | `selfhost/tasks/TASK-1NN` |
 | Subject | a disposable GitHub repo that becomes `pgtui` | **this** repository |
-| Executor | Claude Code, `zai-flash` profile, **in a Docker container** | **Opus / high** subagent, on the host, in its own **git worktree** |
-| Dispatcher | `taskfmt run` (one task at a time) | the orchestrator's `Agent` tool with `isolation: "worktree"` |
+| Executor | Claude Code, `zai-flash` profile, **in a Docker container** | **Opus / high** subagent, on the host, in the `main` checkout |
+| Dispatcher | `taskfmt run` (one task at a time) | the orchestrator's `Agent` tool, **serialized — one implementer at a time** |
 | Gate | in-container `taskfmt verify`, then host `taskfmt gate` | `cargo run -q --manifest-path harness/Cargo.toml -- verify` |
-| Independent verifier | fresh Opus, clones the pushed SHA | fresh Opus, clones the implementer's branch SHA |
+| Independent verifier | fresh Opus, clones the pushed SHA | fresh Opus, clones `main` at the implementer's commit |
 | Source of truth? | **YES** | **NO** |
 
 Meta-task IDs are `TASK-1NN`, not `SELF-0NN`. Three independent places hard-code `^TASK-[0-9]+$` — `lint.rs:190`, `lint.rs:275`, and `gate.rs:589-590` — so a `SELF-` id fails lint, blocks `progress-init` (which refuses on any lint ERROR), and can never satisfy the gate's progress check. Relaxing that regex would edit **the gate**, which by §9 costs a full green-field replay, paid to rename scaffolding — and it is exactly the failure mode §16 names. The plan changes; the linter does not.
@@ -356,9 +356,9 @@ Long commands (cold Rust builds, 102-test testcontainers suites, `status --wait`
 
 ### 10.3 Meta-tasks get a verifier too
 
-v1's implementer authored the fix, could author its own `verify.toml`, and declared itself done — reinstating exactly the self-verification the project exists to eliminate, on the path that carries every harness fix and every fenced repair. The **meta-verifier** has the same rules: fresh context, clones this repo at the implementer's branch SHA, runs `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`, `taskfmt selftest`, the meta-task's ACs, and `diff-check`. Its verdict — not the implementer's — writes `meta_tasks[].verified`.
+v1's implementer authored the fix, could author its own `verify.toml`, and declared itself done — reinstating exactly the self-verification the project exists to eliminate, on the path that carries every harness fix and every fenced repair. The **meta-verifier** has the same rules: fresh context, clones this repo at the commit the implementer pushed to `main`, runs `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`, `taskfmt selftest`, the meta-task's ACs, and `diff-check`. Its verdict — not the implementer's — writes `meta_tasks[].verified`.
 
-Additionally, a meta-task's gate must be run by a `taskfmt` built from the **pre-fix** SHA in a worktree of the pushed branch, never by the binary the implementer just rebuilt in the live tree.
+Additionally, a meta-task's gate must be run by a `taskfmt` built from the **pre-fix** SHA in the meta-verifier's own clone, never by the binary the implementer just rebuilt in the working checkout.
 
 ### 10.4 Calibration against known-bad trees
 
@@ -404,7 +404,7 @@ Instead:
 
 | Template clause | Host replacement |
 |---|---|
-| `/task` ro, `/work` rw, `/progress` rw | the package dir, the **assigned git worktree**, `selfhost/state/runs/<cycle>/TASK-1NN/progress.md` |
+| `/task` ro, `/work` rw, `/progress` rw | the package dir, the **`main` checkout**, `selfhost/state/runs/<cycle>/TASK-1NN/progress.md` |
 | `/task` read-only *by mount* | no mount exists. **The package lists its own directory in `forbidden_paths`**, so any edit to it fails the gate. The package protects itself |
 | gate is the baked-in binary | `harness/` is the artifact under edit. Gate is `cargo run -q --manifest-path harness/Cargo.toml -- verify`, never the `PATH` binary |
 | `$TASKFMT_BASE` | the spawner exports four vars so the gate behaves as in a container: `TASKFMT_ROOT`, `TASKFMT_TASK_DIR`, `PROGRESS_FILE`, `TASKFMT_BASE` (the branch tip when the implementer was spawned; never a SHA in `base_ref`, which goes stale and lints clean) |
@@ -415,7 +415,7 @@ Instead:
 | `NEEDS_REPLAN` triggers | add: the fix requires editing a fenced path and this package carries no `AUTHORIZED-REPAIR:` line for it |
 | protocol steps 1–8, progress grammar, prohibitions, stop conditions, turn signal, final report | **unchanged, verbatim** — identical transcript grammar is what makes the substrates comparable at all |
 
-**One task = one fresh worktree.** Host subagents sharing a checkout break the project's own "one task = one fresh container = one fresh clone" rule *and* break the gate mechanically, because the changed-file set includes untracked files and the orchestrator writes continuously.
+**One implementer at a time, in the `main` checkout.** The repository works on `main` only (root `AGENTS.md`), so meta-tasks do not get the fresh-clone isolation that experiment tasks get — a deliberate, stated exception to "one task = one fresh container = one fresh clone", and part of why §0 records that the meta substrate is not evidence about the research question. Two consequences follow and both are load-bearing. **Implementers are strictly serialized**: the orchestrator's one-subagent-per-turn rule (§4.2) is what enforces it, and a second concurrent implementer would put another agent's edits into the first one's changed-file set. **`selfhost/state/` and `selfhost/reports/` must be gitignored** (§5), because the gate's changed-file set includes untracked files and the orchestrator writes there continuously — otherwise every meta-task fails `scope` on artifacts its implementer never touched.
 
 **Selfcheck is mandatory on this substrate.** `taskfmt selfcheck <pkg> --workspace <fresh clone at base> --base <sha>` must PASS before an implementer is spawned, and the report goes in the ledger. Otherwise nothing enforces a red baseline: selfcheck is opt-in at dispatch and the `baseline` lint rule is a WARN restricted to `kind: feature|bugfix`, so a meta-task with a green baseline lints clean, gates clean, and is unfalsifiable.
 
@@ -484,7 +484,7 @@ Ordered by what breaks first. Items 1–5 are **operator work, done and merged b
 
 ## 15. Operator preconditions
 
-Docker running · `gh auth refresh -s delete_repo` · 1Password service-account token exported · this repo clean on a working branch · **workspace trusted** (`/goal` is gated by the same trust rule as hooks) · disk headroom asserted · `caffeinate -dimsu` around the session · `taskfmt selfhost supervise` started **before** the session.
+Docker running · `gh auth refresh -s delete_repo` · 1Password service-account token exported · this repo clean and on `main` · **workspace trusted** (`/goal` is gated by the same trust rule as hooks) · disk headroom asserted · `caffeinate -dimsu` around the session · `taskfmt selfhost supervise` started **before** the session.
 
 Launch: `claude --agent selfhost-orchestrator --permission-mode bypassPermissions`, then paste §4.5.
 

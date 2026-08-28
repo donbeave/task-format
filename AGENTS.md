@@ -15,3 +15,4 @@ Research project: which markdown task structure gives coding agents the most pre
 - Agent instruction files are named `AGENTS.md`; every `AGENTS.md` has a sibling `CLAUDE.md` that is a relative symlink to it (`ln -s AGENTS.md CLAUDE.md`). Never a real `CLAUDE.md`, never the reverse direction. `taskfmt selftest` checks this repo-wide.
 - Provider credentials come from 1Password via `op read` of the `op://` reference in `experiment.toml` (profile `zai-flash`: Z.ai endpoint, GLM-5.3-Flash, effort low). Secret values never appear in argv, logs, transcripts, or committed artifacts.
 - Commits use DCO signoff (`git commit -s`).
+- **All work happens directly on `main`.** No feature branches, no pull requests, no worktrees: commit to `main` with `git commit -s` and push. This includes the self-host meta-tasks in `selfhost/` — they are worked in the `main` checkout, one at a time, and committed to `main` like everything else.
