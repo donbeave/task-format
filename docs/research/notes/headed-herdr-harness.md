@@ -1,3 +1,5 @@
+> Superseded in part by D23 (2026-08-28): `lib/hash-protected.sh`, `protected.sha256`, the manifest step described below no longer exist — scope is the `expected_paths` whitelist alone (`RESEARCH-FINDINGS.md` §3 D23, D26). Body left as written; D24–D32 changes are in `synthesis-2026-08-28.md`.
+
 # Headed harness — agent TUI inside Docker under herdr
 
 Status: research note, 2026-08-28. Complements `container-harness.md` (headless
