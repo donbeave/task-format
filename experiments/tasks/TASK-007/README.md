@@ -5,6 +5,9 @@ title: "Disconnect, exit codes and the screen gallery"
 kind: feature
 verify: "taskfmt verify"
 expected_paths:
+  - "Cargo.toml"
+  - "Cargo.lock"
+  - "crates/pgtui/Cargo.toml"
   - "crates/pgtui/src/app.rs"
   - "crates/pgtui/src/keys.rs"
   - "crates/pgtui/src/runtime.rs"
@@ -33,7 +36,7 @@ Current behavior:
 
 Desired behavior:
 
-- Disconnect per D-033/D-024: `d` in the browser emits `Effect::Disconnect`, the runtime drops the session and awaits the connection task so `pg_stat_activity` shows no `pgtui` backend, then `Msg::Disconnected` resets session, grids and SQL input while keeping the list and cursor. Exit codes per D-040/D-012. Gallery per D-080.
+- Disconnect (D-033/D-024), exit codes (D-040/D-012) and gallery (D-080) behave exactly as R-001..R-004 state and AC-001..AC-004 prove.
 
 Read before editing (in order):
 
@@ -81,7 +84,7 @@ Out of scope:
 - **R-004 (MUST):** Gallery per D-080: `--out <dir>` defaulting to `docs/screens`, the ten fixed names, SVG plus PNG per name, deterministic bytes, exit 0 on success, 2 on bad arguments or unwritable output, 1 on render failure, no rendering code of its own, nothing `#[path]`-included from `tests/`.
 - **R-005 (MUST):** `docs/screens/` holds one committed run with the default `--out`, and `README.md` gets a `## Screens` section listing the ten names with their `docs/screens/<name>.png` paths (D-005: this is the only task creating `README.md`).
 - **R-006 (MUST):** Final design directly; no compatibility layer, dual path, deprecated alias, feature flag, or legacy fallback.
-- **R-007 (MUST NOT):** Add, remove, or bump a dependency; use `sort_unstable`; touch `render.rs`, `fonts/`, or anything under `crates/pgtui/tests/`; change any frozen behaviour; create `justfile`.
+- **R-007 (MUST NOT):** Remove or bump a D-001 pin, or depend on anything outside the D-001 pin list (adding a listed pin is required where trusted tests need it); use `sort_unstable`; touch `render.rs`, `fonts/`, or anything under `crates/pgtui/tests/`; change any frozen behaviour; create `justfile`.
 
 ## Acceptance criteria
 

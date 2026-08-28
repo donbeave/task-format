@@ -22,6 +22,9 @@ required_paths = [
 ]
 
 allowed_globs = [
+  "Cargo.toml",
+  "Cargo.lock",
+  "crates/pgtui/Cargo.toml",
   "crates/pgtui/src/lib.rs",
   "crates/pgtui/src/main.rs",
   "crates/pgtui/src/app.rs",

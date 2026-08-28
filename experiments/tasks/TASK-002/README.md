@@ -5,6 +5,9 @@ title: "Connection store, connection list screen and CLI skeleton"
 kind: feature
 verify: "taskfmt verify"
 expected_paths:
+  - "Cargo.toml"
+  - "Cargo.lock"
+  - "crates/pgtui/Cargo.toml"
   - "crates/pgtui/src/lib.rs"
   - "crates/pgtui/src/main.rs"
   - "crates/pgtui/src/app.rs"
@@ -81,7 +84,7 @@ Out of scope:
 - **R-004 (MUST):** Rendering per D-060/D-061: 100x30 buffer, list block ` pgtui - connections `, rows `<name>  <display_dsn>`, highlight `> `, empty-list hint, help line, status line per D-013.
 - **R-005 (MUST):** `main.rs` per D-012/D-040: `--db <path>`, store open failure exits 2 with `error: ...` on stderr, `q`/`Ctrl+C` exits 0 after restoring the terminal; stub behaviour (`error: not implemented`, exit 2) is gone.
 - **R-006 (MUST):** Final design directly; no compatibility layer, dual path, deprecated alias, feature flag, or legacy fallback.
-- **R-007 (MUST NOT):** Add, remove, or bump a dependency; touch `render.rs`, `fonts/`, or anything under `crates/pgtui/tests/`; introduce `tokio_postgres` in `crates/pgtui/src/`; create `db/`, `grid.rs`, `justfile`, or `README.md`.
+- **R-007 (MUST NOT):** Remove or bump a D-001 pin, or depend on anything outside the D-001 pin list (adding a listed pin is required where trusted tests need it); touch `render.rs`, `fonts/`, or anything under `crates/pgtui/tests/`; introduce `tokio_postgres` in `crates/pgtui/src/`; create `db/`, `grid.rs`, `justfile`, or `README.md`.
 
 ## Acceptance criteria
 

@@ -5,6 +5,9 @@ title: "Create-connection form and the save flow"
 kind: feature
 verify: "taskfmt verify"
 expected_paths:
+  - "Cargo.toml"
+  - "Cargo.lock"
+  - "crates/pgtui/Cargo.toml"
   - "crates/pgtui/src/app.rs"
   - "crates/pgtui/src/keys.rs"
   - "crates/pgtui/src/runtime.rs"
@@ -76,7 +79,7 @@ Out of scope:
 - **R-004 (MUST):** On `Msg::Saved(Ok)`: reload the list, return to `Screen::ConnectionList`, put the cursor on the new row (D-032, D-011).
 - **R-005 (MUST):** Rendering per D-060: block title ` New connection `, lines `  <Label>: <value>`, `> ` on the focused line, password masked as `*` per char, help `Tab next  Enter save  Esc cancel`; the password never reaches the rendered buffer.
 - **R-006 (MUST):** Final design directly; no compatibility layer, dual path, deprecated alias, feature flag, or legacy fallback.
-- **R-007 (MUST NOT):** Add, remove, or bump a dependency; touch `render.rs`, `fonts/`, or anything under `crates/pgtui/tests/`; change the store schema or API; wire `Enter` on the connection list; create `db/`, `grid.rs`, `justfile`, or `README.md`.
+- **R-007 (MUST NOT):** Remove or bump a D-001 pin, or depend on anything outside the D-001 pin list (adding a listed pin is required where trusted tests need it); touch `render.rs`, `fonts/`, or anything under `crates/pgtui/tests/`; change the store schema or API; wire `Enter` on the connection list; create `db/`, `grid.rs`, `justfile`, or `README.md`.
 
 ## Acceptance criteria
 

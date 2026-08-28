@@ -5,6 +5,9 @@ title: "Preview grid with client-side sort"
 kind: feature
 verify: "taskfmt verify"
 expected_paths:
+  - "Cargo.toml"
+  - "Cargo.lock"
+  - "crates/pgtui/Cargo.toml"
   - "crates/pgtui/src/lib.rs"
   - "crates/pgtui/src/app.rs"
   - "crates/pgtui/src/keys.rs"
@@ -82,7 +85,7 @@ Out of scope:
 - **R-004 (MUST):** Preview SQL is exactly `SELECT * FROM "<schema>"."<table>" LIMIT 500` built with `quote_ident` (D-025); `PgSession::query` returns `Result<QueryOutcome, DbError>` through `simple_query`.
 - **R-005 (MUST):** App per D-011/D-033: `QueryDone(Ok(Rows))` builds the grid, focuses `Focus::Grid`, resets cursors; `QueryDone(Err)` keeps the previous grid and sets `Status::Error`; grid keys `h`/`l` and `j`/`k` clamp; `Tab` toggles only when a grid is loaded.
 - **R-006 (MUST):** Rendering per D-060: header row, `[cursor column]`, ` ^`/` v` sort suffix, column width `clamp(max(len(header)+4, max cell len), 4, 24)`, `> ` on the cursor row, `Cell::Null` as `NULL`, main block title ` <schema.table>  <rows> rows  limit 500 `.
-- **R-007 (MUST NOT):** Add, remove, or bump a dependency; use `sort_unstable`; touch `render.rs`, `fonts/`, or anything under `crates/pgtui/tests/`; implement custom SQL, `x`, `d`, or the gallery; create `custom_sql.rs`, `justfile`, or `README.md`.
+- **R-007 (MUST NOT):** Remove or bump a D-001 pin, or depend on anything outside the D-001 pin list (adding a listed pin is required where trusted tests need it); use `sort_unstable`; touch `render.rs`, `fonts/`, or anything under `crates/pgtui/tests/`; implement custom SQL, `x`, `d`, or the gallery; create `custom_sql.rs`, `justfile`, or `README.md`.
 
 ## Acceptance criteria
 

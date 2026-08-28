@@ -5,6 +5,9 @@ title: "Custom SQL screen"
 kind: feature
 verify: "taskfmt verify"
 expected_paths:
+  - "Cargo.toml"
+  - "Cargo.lock"
+  - "crates/pgtui/Cargo.toml"
   - "crates/pgtui/src/app.rs"
   - "crates/pgtui/src/keys.rs"
   - "crates/pgtui/src/runtime.rs"
@@ -80,7 +83,7 @@ Out of scope:
 - **R-004 (MUST):** `sql_grid` reuses `Grid` with `sort == None` and `col_cursor == 0`; `Up`/`Down` move the row cursor only; `s` and `h`/`l` type into the input instead (D-034).
 - **R-005 (MUST):** Rendering per D-060: input block ` SQL ` with `> <sql_input>`, results block ` Results ` plus `Type a query and press Enter` while empty, ` Results  <rows> rows ` after a result, help `Enter run  Up/Down rows  Esc back  Ctrl+C quit`, and no `[ ]`/sort markers on the custom grid.
 - **R-006 (MUST):** Final design directly; no compatibility layer, dual path, deprecated alias, feature flag, or legacy fallback.
-- **R-007 (MUST NOT):** Add, remove, or bump a dependency; use `sort_unstable`; touch `render.rs`, `fonts/`, or anything under `crates/pgtui/tests/`; change preview or store behaviour; implement `d`, the gallery, or `README.md`.
+- **R-007 (MUST NOT):** Remove or bump a D-001 pin, or depend on anything outside the D-001 pin list (adding a listed pin is required where trusted tests need it); use `sort_unstable`; touch `render.rs`, `fonts/`, or anything under `crates/pgtui/tests/`; change preview or store behaviour; implement `d`, the gallery, or `README.md`.
 
 ## Acceptance criteria
 

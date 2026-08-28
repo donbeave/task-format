@@ -5,6 +5,9 @@ title: "Connect to PostgreSQL and list its tables"
 kind: feature
 verify: "taskfmt verify"
 expected_paths:
+  - "Cargo.toml"
+  - "Cargo.lock"
+  - "crates/pgtui/Cargo.toml"
   - "crates/pgtui/src/lib.rs"
   - "crates/pgtui/src/app.rs"
   - "crates/pgtui/src/keys.rs"
@@ -80,7 +83,7 @@ Out of scope:
 - **R-004 (MUST):** Table listing uses the exact D-025 SQL; result order is `table_schema, table_name`.
 - **R-005 (MUST):** Browser per D-033/D-060: `Tab` toggles focus only when a grid exists, sidebar `j`/`k`/`Up`/`Down` clamp, `Enter` on an empty sidebar is a no-op, sidebar block ` Tables (<n>) ` with `> ` marker and `*` on the focused pane, main block titled with the connection name while no grid is loaded.
 - **R-006 (MUST):** Final design directly; no compatibility layer, dual path, deprecated alias, feature flag, or legacy fallback.
-- **R-007 (MUST NOT):** Add, remove, or bump a dependency; touch `render.rs`, `fonts/`, or anything under `crates/pgtui/tests/`; implement preview, custom SQL, sort, disconnect, or the gallery; create `grid.rs`, `custom_sql.rs`, `justfile`, or `README.md`.
+- **R-007 (MUST NOT):** Remove or bump a D-001 pin, or depend on anything outside the D-001 pin list (adding a listed pin is required where trusted tests need it); touch `render.rs`, `fonts/`, or anything under `crates/pgtui/tests/`; implement preview, custom SQL, sort, disconnect, or the gallery; create `grid.rs`, `custom_sql.rs`, `justfile`, or `README.md`.
 
 ## Acceptance criteria
 
