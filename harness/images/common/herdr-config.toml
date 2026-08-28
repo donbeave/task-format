@@ -1,0 +1,15 @@
+# herdr config baked into the image — notes §3.2 (headed-herdr-harness.md).
+# No update/manifest polling (egress hygiene), large headless terminal + scrollback,
+# no automatic agent resume on restore (the harness resumes sessions explicitly).
+[update]
+version_check = false
+manifest_check = false
+[server]
+headless_cols = 200
+headless_rows = 60
+[session]
+resume_agents_on_restore = false   # harness does explicit resume (§8)
+[experimental]
+pane_history = true                # replay recent screen after a server restart
+[advanced]
+scrollback_limit_bytes = 200000000

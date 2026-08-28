@@ -1,3 +1,4 @@
 .DS_Store
 experiments/runs/
 progress.md
+harness/images/preload/*.tar

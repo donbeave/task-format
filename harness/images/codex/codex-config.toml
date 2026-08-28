@@ -1,0 +1,13 @@
+# codex config baked into the image — notes §3.3 (headed-herdr-harness.md).
+# Copied to $CODEX_HOME/config.toml by entrypoint.sh on a fresh run.
+approval_policy = "never"
+sandbox_mode    = "danger-full-access"   # Docker is the sandbox
+[features]
+goals = true
+[projects."/work"]
+trust_level = "trusted"
+[notice]
+hide_full_access_warning = true
+[tui]
+show_tooltips = false
+animations = false
