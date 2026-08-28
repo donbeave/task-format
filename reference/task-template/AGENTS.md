@@ -1,20 +1,21 @@
 # Execution protocol
 
-You are implementing exactly one task: `/task/README.md`. This protocol is the same for every task. Read it once.
+Your goal is to fully implement this task: `/task/README.md`.
+
+`/task/` is read-only: it holds only the task you are working on (`README.md`, this protocol, `verify.sh`) and nothing of yours. Keep your state in `/progress/progress.md`. Do all work in `/work/`.
 
 ## Files
 
 | Path | Access | Purpose |
 | --- | --- | --- |
 | `/task/README.md` | read-only | The contract: goal, requirements, acceptance criteria, decisions, checklist. |
-| `/task/AGENTS.md` | read-only | This protocol. `/task/CLAUDE.md` is a symlink to it. |
 | `/task/verify.sh` | read-only | The completion gate. Run it; never edit it. |
 | `/progress/progress.md` | read-write | The only file you maintain for state. Checklist copy + log + handoff. |
 | `/work/` | read-write | The repository. All code changes happen here. |
 
 ## Protocol
 
-1. Read `/task/README.md` fully, then the repository instructions (`AGENTS.md`; `CLAUDE.md` is a symlink to it), then the files listed under "Read before editing".
+1. Read `/task/README.md` fully, then the files listed under "Read before editing".
 2. If `/progress/progress.md` has `STATE: IN_PROGRESS` you are resuming: read it, run `git status` and `git diff --stat`, and continue from `CURRENT:`. Do not reconstruct state from memory.
 3. State in the transcript: task ID, the one-sentence goal, the acceptance-criterion IDs, and the first leaf you will work on.
 4. Run every precondition command. If one fails, write `STATE: BLOCKED` and the failing command to `progress.md`, then emit the final report with `STATUS: BLOCKED`. Do not work around a failed precondition.
@@ -26,10 +27,12 @@ You are implementing exactly one task: `/task/README.md`. This protocol is the s
 ## progress.md grammar
 
 ```text
+---
 TASK: TASK-000
 STATE: IN_PROGRESS            # IN_PROGRESS | DONE | BLOCKED | NEEDS_REPLAN
 CURRENT: 2.1.1                # one unchecked leaf ID, or NONE
 BASELINE: <command> -> <observed result>
+---
 
 <!-- checklist:start -->
 <verbatim copy of the README.md checklist; only the [ ]/[x] tokens change>
@@ -50,11 +53,11 @@ Rules: never change checklist text, IDs, order, or indentation — only the thre
 
 ## Prohibited
 
-- Editing anything under `/task/` or any `protected_paths` file. The gate hashes them.
+- Editing anything under `/task/`.
 - Deleting, skipping, weakening, or rewriting a failing test or check to make it pass.
 - Special-casing known fixtures or verifier inputs.
 - Suppressing errors, warnings, lint rules, type checks, or exit codes.
-- Changing files outside `expected_paths` without a task-specific reason stated in the log.
+- Changing any file outside `expected_paths` (the scope whitelist in `/task/README.md`); the gate rejects every other path.
 - Claiming `DONE` without a `/task/verify.sh` run in this session whose output is in the transcript.
 
 ## Stop conditions

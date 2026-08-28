@@ -135,4 +135,4 @@ Snapshot files: `tests/snapshots/<file>__<name>.snap` and `<file>__<name>__svg.s
 
 ## Readiness proof (README step 5)
 
-Before dispatch, for each task N in 101..103: `verify.sh` must FAIL on `pgtui-N` at `baseline` and PASS with `ref/N` applied. Record both outputs next to the fixture as `pgtui-N/.gate-proof/{baseline,ref}.log` (outside the tree the agent sees). `protected.sha256` is generated from the fixture root with `harness/manifest.sh gen -o experiments/tasks/TASK-N/protected.sha256 <protected paths>`.
+Before dispatch, for each task N in 101..103: `verify.sh` must FAIL on `pgtui-N` at `baseline` and PASS with `ref/N` applied. Record both outputs next to the fixture as `pgtui-N/.gate-proof/{baseline,ref}.log` (outside the tree the agent sees). Scope protection is the `expected_paths` whitelist only (D23): every changed file outside it fails the gate's scope check.

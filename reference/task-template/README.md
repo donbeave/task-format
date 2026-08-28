@@ -4,11 +4,9 @@ id: TASK-000
 title: "<imperative title: one observable outcome>"
 kind: bugfix            # bugfix | feature | refactor | removal | migration | test | docs
 verify: "/task/verify.sh"
-expected_paths:         # orientation for the agent; scope metric for the harness (bash globs)
+expected_paths:         # scope whitelist: the only paths that may change (bash globs; '*' and '**' cross '/')
   - "src/<area>/*"
   - "tests/<area>/*"
-protected_paths:        # hashed at dispatch; any change fails the gate
-  - "tests/fixtures/<file>"
 ---
 
 # TASK-000 — <imperative title>

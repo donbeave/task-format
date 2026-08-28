@@ -9,8 +9,9 @@ Keep the `/goal` condition under 4,000 characters; the evaluator (Haiku Stop hoo
 Done when: /task/verify.sh has been run from /work in this session, exited 0, and
 printed DONE as its last line, with that full output shown in the transcript;
 /progress/progress.md has STATE: DONE with every checklist item [x]; and the final
-report ending in a GOAL_RESULT line has been printed. Nothing under /task/ and no
-protected_paths file may change. Do not weaken, skip, or delete checks. If a
+report ending in a GOAL_RESULT line has been printed. Nothing under /task/ may change
+and no file outside the expected_paths whitelist of /task/README.md may change. Do not
+weaken, skip, or delete checks. If a
 precondition fails, stop with STATUS: BLOCKED; if the task needs a scope, decision,
 or checklist change, stop with STATUS: NEEDS_REPLAN. Stop after 40 turns.
 ```

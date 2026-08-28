@@ -11,7 +11,7 @@ docs/research/raw/        verbatim research inputs (chronological; later files s
 docs/research/notes/      sub-agent research and critique notes
 docs/research/RESEARCH-FINDINGS.md   single source of truth (consolidated, deduplicated)
 reference/task-template/  the task package — pure template (README.md, AGENTS.md, verify.sh, verify.config); nothing else
-harness/                  scripts and files required to author, dispatch and gate a task (task-lint.sh, progress-init.sh, manifest.sh, selftest.sh, goal-prompt.md, testdata/example/)
+harness/                  scripts and files required to author, dispatch and gate a task (task-lint.sh, progress-init.sh, selftest.sh, goal-prompt.md, testdata/example/, images/ + build.sh/preload.sh, run-headed.sh/attach.sh/status.sh)
 experiments/              fixture repos, task packages, run outputs — data only
 ```
 
@@ -20,4 +20,4 @@ experiments/              fixture repos, task packages, run outputs — data onl
 - v3 reference package written and gate-tested: `reference/task-template/` (pure task files), dispatch tooling in `harness/` (incl. `goal-prompt.md` and the `testdata/example/` lint corpus). `harness/selftest.sh` proves lint, progress generation and the gate.
 - `progress.md` is never stored: `harness/progress-init.sh` derives it from `README.md` per run.
 - Decisions + evidence: `docs/research/RESEARCH-FINDINGS.md`.
-- Next: build the container harness (`harness/`), run v3 on Claude Code, then Codex.
+- Prereq container harness built (`harness/images/` + `build.sh`/`preload.sh`, per-run `run-headed.sh`/`attach.sh`/`status.sh`): DinD per run + standing seeded `prereq-postgres` (D19-D20). Next: first headed agent runs on Claude Code, then Codex.

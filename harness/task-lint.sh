@@ -15,8 +15,8 @@
 #   checklist     one block; line grammar; IDs contiguous; depth = ID components; max depth 4;
 #                 5-20 leaves; every leaf has "evidence:"; no single-child parent; every AC-* referenced;
 #                 last leaf is the verify.sh gate
-#   verify.config (if present next to README.md) BASE_REF set; ALLOWED_GLOBS == expected_paths;
-#                 every protected_path matches a DENIED_GLOB; at least one FOCUSED_CMD; no template placeholders
+#   verify.config (if present next to README.md) BASE_REF set; ALLOWED_GLOBS == expected_paths
+#                 (scope whitelist — no blacklist); at least one FOCUSED_CMD; no template placeholders
 #   size          README.md over 10,000 bytes (~2,500 tokens) is a warning
 set -Eeuo pipefail
 
@@ -48,8 +48,7 @@ schema="$(fm_val schema)"; id="$(fm_val id)"; kind="$(fm_val kind)"; verify="$(f
 case "$kind" in bugfix|feature|refactor|removal|migration|test|docs) ;; *) err frontmatter "kind is '${kind:-<missing>}'";; esac
 [[ -n "$verify" ]] || err frontmatter "verify missing"
 mapfile -t EXPECTED  < <(fm_list expected_paths)
-mapfile -t PROTECTED < <(fm_list protected_paths)
-[[ ${#EXPECTED[@]} -gt 0 ]] || err frontmatter "expected_paths empty"
+[[ ${#EXPECTED[@]} -gt 0 ]] || err frontmatter "expected_paths empty (scope whitelist)"
 
 # ---------- sections ----------
 want_sections=("Goal" "Context" "Preconditions" "Scope" "Requirements" "Acceptance criteria" "Fixed decisions" "Checklist")
@@ -132,24 +131,17 @@ fi
 # ---------- verify.config ----------
 if [[ -f "$CONFIG" ]]; then
   cfg_dump="$(bash -c '
-    set -e; BASE_REF=""; FOCUSED_CMDS=(); ALLOWED_GLOBS=(); DENIED_GLOBS=()
+    set -e; BASE_REF=""; FOCUSED_CMDS=(); ALLOWED_GLOBS=()
     source "$1" >/dev/null 2>&1
     printf "BASE_REF=%s\n" "$BASE_REF"
     printf "FOCUSED=%s\n" "${#FOCUSED_CMDS[@]}"
-    for g in "${ALLOWED_GLOBS[@]}"; do printf "A %s\n" "$g"; done
-    for g in "${DENIED_GLOBS[@]}";  do printf "D %s\n" "$g"; done' _ "$CONFIG" 2>&1)" || { err config "verify.config does not source cleanly:"$'\n'"$cfg_dump"; cfg_dump=""; }
+    for g in "${ALLOWED_GLOBS[@]}"; do printf "A %s\n" "$g"; done' _ "$CONFIG" 2>&1)" || { err config "verify.config does not source cleanly:"$'\n'"$cfg_dump"; cfg_dump=""; }
   if [[ -n "$cfg_dump" ]]; then
     base="$(printf '%s\n' "$cfg_dump" | sed -n 's/^BASE_REF=//p')"; [[ -n "$base" ]] || err config "BASE_REF empty"
     nfoc="$(printf '%s\n' "$cfg_dump" | sed -n 's/^FOCUSED=//p')"; [[ "${nfoc:-0}" -gt 0 ]] || err config "FOCUSED_CMDS empty"
     mapfile -t ALLOWED < <(printf '%s\n' "$cfg_dump" | sed -n 's/^A //p')
-    mapfile -t DENIED  < <(printf '%s\n' "$cfg_dump" | sed -n 's/^D //p')
     a_sorted="$(printf '%s\n' "${ALLOWED[@]}" | sort -u)"; e_sorted="$(printf '%s\n' "${EXPECTED[@]}" | sort -u)"
     [[ "$a_sorted" == "$e_sorted" ]] || err config "ALLOWED_GLOBS != expected_paths:"$'\n'"$(diff <(echo "$e_sorted") <(echo "$a_sorted") | sed 's/^/    /' || true)"
-    # shellcheck disable=SC2053  # glob match against DENIED_GLOBS is intended
-    for p in "${PROTECTED[@]}"; do
-      hit=0; for d in "${DENIED[@]}"; do [[ "$p" == $d ]] && hit=1; done
-      [[ $hit -eq 1 ]] || err config "protected path '$p' matches no DENIED_GLOBS entry"
-    done
     cfg_code="$(grep -vE '^[[:space:]]*#' "$CONFIG")"
     grep -qE '<[a-z_ -]+>' <<<"$cfg_code" && err config "template placeholders left in verify.config: $(grep -oE '<[a-z_ -]+>' <<<"$cfg_code" | sort -u | tr '\n' ' ')"
     grep -q '"ERE|' "$CONFIG" && warn config "stale comment: FORBIDDEN_PATTERNS separator is ' @@ ', not '|'"

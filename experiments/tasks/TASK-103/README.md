@@ -12,17 +12,6 @@ expected_paths:
   - "crates/pgtui/src/ui/browser.rs"
   - "crates/pgtui/src/ui/mod.rs"
   - "crates/pgtui/src/lib.rs"
-protected_paths:
-  - "crates/pgtui/tests/*"
-  - "crates/pgtui/src/render.rs"
-  - "crates/pgtui/src/fonts/*"
-  - "crates/pgtui/src/store/*"
-  - "Cargo.toml"
-  - "Cargo.lock"
-  - "crates/pgtui/Cargo.toml"
-  - "justfile"
-  - "rust-toolchain.toml"
-  - "AGENTS.md"
 ---
 
 # TASK-103 — Connect to PostgreSQL from a saved connection and list its tables in a sidebar

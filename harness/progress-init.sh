@@ -4,8 +4,9 @@
 #   progress-init.sh <task-dir | README.md> [-o progress.md]
 #
 # progress.md is never stored in the repository: it is derived from README.md at dispatch
-# (header + verbatim checklist block + empty Log + Handoff) and mounted read-write at
-# /progress/progress.md. verify.sh later diffs its checklist block against README.md.
+# (fenced header + verbatim checklist block + empty Log + Handoff) and mounted read-write at
+# /progress/progress.md. The header sits between --- fences so markdown viewers render it.
+# verify.sh later diffs its checklist block against README.md.
 # The README.md is linted first; an invalid contract never yields a progress file.
 set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -27,10 +28,12 @@ first_leaf="$(printf '%s\n' "$checklist" | awk '
   END { for (i=1;i<=cnt;i++) if (i==cnt || d[i+1]<=d[i]) { print ids[i]; exit } }')"
 
 body="$(cat <<EOT
+---
 TASK: $id
 STATE: IN_PROGRESS
 CURRENT: $first_leaf
 BASELINE: <not run>
+---
 
 <!-- checklist:start -->
 $checklist

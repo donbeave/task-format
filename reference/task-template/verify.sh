@@ -11,7 +11,7 @@
 #
 # Env (all optional):
 #   VERIFY_ROOT       repo root (default: git toplevel of cwd, else cwd)
-#   VERIFY_TASK_DIR   dir holding README.md, verify.config, protected.sha256 (default: dir of this script)
+#   VERIFY_TASK_DIR   dir holding README.md, verify.config (default: dir of this script)
 #   PROGRESS_FILE     progress file (default: /progress/progress.md); empty string disables the check
 #   VERIFY_LOG_DIR    per-check logs (default: mktemp -d)
 #   VERIFY_FAIL_FAST  1 = stop at first failing check
@@ -21,7 +21,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VERIFY_ROOT="${VERIFY_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 VERIFY_TASK_DIR="${VERIFY_TASK_DIR:-$SCRIPT_DIR}"
 VERIFY_CONFIG="$VERIFY_TASK_DIR/verify.config"
-VERIFY_MANIFEST="$VERIFY_TASK_DIR/protected.sha256"
 TASK_FILE="$VERIFY_TASK_DIR/README.md"
 PROGRESS_FILE="${PROGRESS_FILE-/progress/progress.md}"
 VERIFY_LOG_DIR="${VERIFY_LOG_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/verify.XXXXXX")}"
@@ -36,7 +35,7 @@ trap 'rc=$?; printf "RESULT FAIL internal-error line=%s rc=%s\n" "$LINENO" "$rc"
 BASE_REF="${BASE_REF:-}"
 FOCUSED_CMDS=(); REGRESSION_CMDS=(); LINT_CMDS=()
 FORBIDDEN_PATTERNS=(); FORBIDDEN_PATHS=(); REQUIRED_PATHS=()
-ALLOWED_GLOBS=(); DENIED_GLOBS=(); EXTRA_CHECKS=()
+ALLOWED_GLOBS=(); EXTRA_CHECKS=()
 
 if [[ -f "$VERIFY_CONFIG" ]]; then
   # shellcheck disable=SC1090
@@ -48,7 +47,6 @@ printf 'CHECK config PASS %s\n' "$VERIFY_CONFIG"
 
 # ---------- helpers ----------
 FAILS=0; PASSES=0
-sha256_cmd() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
 
 run_check() {  # run_check NAME CMD...
   local name="$1"; shift
@@ -73,19 +71,6 @@ finish() {
 }
 
 # ---------- built-in checks ----------
-check_protected_manifest() {
-  [[ -f "$VERIFY_MANIFEST" ]] || { echo "manifest missing: $VERIFY_MANIFEST"; return 1; }
-  local rc=0 line want path have
-  while IFS= read -r line; do
-    [[ -z "$line" || "$line" == \#* ]] && continue
-    want="${line%% *}"; path="${line#* }"; path="${path# }"
-    if [[ ! -f "$path" ]]; then echo "MISSING $path"; rc=1; continue; fi
-    have="$(sha256_cmd "$path" | awk '{print $1}')"
-    if [[ "$have" != "$want" ]]; then echo "MODIFIED $path"; rc=1; else echo "ok $path"; fi
-  done <"$VERIFY_MANIFEST"
-  return $rc
-}
-
 changed_files() {
   { git diff --name-only "$BASE_REF" --; git diff --name-only --cached --; git ls-files --others --exclude-standard; } \
     | sed '/^$/d' | sort -u
@@ -98,7 +83,6 @@ check_scope() {
   local rc=0 f
   while IFS= read -r f; do
     [[ -z "$f" ]] && continue
-    if [[ ${#DENIED_GLOBS[@]} -gt 0 ]] && matches_any "$f" DENIED_GLOBS; then echo "DENIED  $f"; rc=1; continue; fi
     if matches_any "$f" ALLOWED_GLOBS; then echo "ok      $f"; else echo "OUTSIDE $f"; rc=1; fi
   done < <(changed_files)
   return $rc
@@ -163,7 +147,6 @@ check_progress() {
 }
 
 # ---------- run ----------
-run_check protected_manifest  check_protected_manifest
 run_check scope               check_scope
 run_check required_paths      check_required_paths
 run_check forbidden_paths     check_forbidden_paths

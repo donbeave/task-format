@@ -10,17 +10,6 @@ expected_paths:
   - "crates/pgtui/src/runtime.rs"
   - "crates/pgtui/src/ui/create_form.rs"
   - "crates/pgtui/src/ui/mod.rs"
-protected_paths:
-  - "crates/pgtui/tests/*"
-  - "crates/pgtui/src/render.rs"
-  - "crates/pgtui/src/fonts/*"
-  - "crates/pgtui/src/store/*"
-  - "Cargo.toml"
-  - "Cargo.lock"
-  - "crates/pgtui/Cargo.toml"
-  - "justfile"
-  - "rust-toolchain.toml"
-  - "AGENTS.md"
 ---
 
 # TASK-102 — Create a new connection from the TUI and show it selected in the list

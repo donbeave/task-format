@@ -13,18 +13,6 @@ expected_paths:
   - "crates/pgtui/src/bin/gallery.rs"
   - "docs/screens/*"
   - "README.md"
-protected_paths:
-  - "crates/pgtui/tests/*"
-  - "crates/pgtui/src/store/*"
-  - "crates/pgtui/src/grid.rs"
-  - "crates/pgtui/src/render.rs"
-  - "crates/pgtui/src/fonts/*"
-  - "Cargo.toml"
-  - "Cargo.lock"
-  - "crates/pgtui/Cargo.toml"
-  - "justfile"
-  - "rust-toolchain.toml"
-  - "AGENTS.md"
 ---
 
 # TASK-106 — Disconnect returns to the list, exit restores the terminal, gallery renders every screen

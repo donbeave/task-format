@@ -6,16 +6,6 @@ kind: feature
 verify: "/task/verify.sh"
 expected_paths:
   - "crates/pgtui/src/*"
-protected_paths:
-  - "crates/pgtui/tests/*"
-  - "crates/pgtui/src/render.rs"
-  - "crates/pgtui/src/fonts/*"
-  - "Cargo.toml"
-  - "Cargo.lock"
-  - "crates/pgtui/Cargo.toml"
-  - "justfile"
-  - "rust-toolchain.toml"
-  - "AGENTS.md"
 ---
 
 # TASK-101 — List saved PostgreSQL connections from a Turso store in a ratatui shell

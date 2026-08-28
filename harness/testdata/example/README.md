@@ -8,9 +8,6 @@ expected_paths:
   - "src/auth/session/*"
   - "tests/auth/*"
   - "Cargo.lock"
-protected_paths:
-  - "tests/fixtures/refresh-token-contract.json"
-  - "tests/auth/valid_refresh_rotation.rs"
 ---
 
 # TASK-042 — Reject expired refresh tokens before session rotation

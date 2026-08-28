@@ -14,17 +14,6 @@ expected_paths:
   - "crates/pgtui/src/ui/grid.rs"
   - "crates/pgtui/src/ui/mod.rs"
   - "crates/pgtui/src/lib.rs"
-protected_paths:
-  - "crates/pgtui/tests/*"
-  - "crates/pgtui/src/store/*"
-  - "crates/pgtui/src/render.rs"
-  - "crates/pgtui/src/fonts/*"
-  - "Cargo.toml"
-  - "Cargo.lock"
-  - "crates/pgtui/Cargo.toml"
-  - "justfile"
-  - "rust-toolchain.toml"
-  - "AGENTS.md"
 ---
 
 # TASK-104 — Preview a selected table in a sortable grid

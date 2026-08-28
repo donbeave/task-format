@@ -12,18 +12,6 @@ expected_paths:
   - "crates/pgtui/src/ui/custom_sql.rs"
   - "crates/pgtui/src/ui/grid.rs"
   - "crates/pgtui/src/ui/mod.rs"
-protected_paths:
-  - "crates/pgtui/tests/*"
-  - "crates/pgtui/src/store/*"
-  - "crates/pgtui/src/grid.rs"
-  - "crates/pgtui/src/render.rs"
-  - "crates/pgtui/src/fonts/*"
-  - "Cargo.toml"
-  - "Cargo.lock"
-  - "crates/pgtui/Cargo.toml"
-  - "justfile"
-  - "rust-toolchain.toml"
-  - "AGENTS.md"
 ---
 
 # TASK-105 — Run custom SQL from a dedicated screen into a plain grid

@@ -38,18 +38,19 @@ expect "lint: H1/id mismatch"            1 "$T/task-lint.sh" "$TMP/bad"
 # ---- workspace: git repo tagged baseline, task dir with empty manifest ----
 W="$TMP/work"; TD="$TMP/task"; mkdir -p "$W" "$TD"
 ( cd "$W" && git init -q && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m baseline && git tag baseline )
-cp "$EX/README.md" "$TEMPLATE/verify.sh" "$TD/"; : > "$TD/protected.sha256"
+cp "$EX/README.md" "$TEMPLATE/verify.sh" "$TD/"
 cat > "$TD/verify.config" <<'CFG'
 BASE_REF="baseline"
 FOCUSED_CMDS=(); REGRESSION_CMDS=(); LINT_CMDS=()
 FORBIDDEN_PATTERNS=(); FORBIDDEN_PATHS=(); REQUIRED_PATHS=()
-ALLOWED_GLOBS=("*"); DENIED_GLOBS=(); EXTRA_CHECKS=()
+ALLOWED_GLOBS=("*"); EXTRA_CHECKS=()
 CFG
 P="$TMP/progress.md"
 "$T/progress-init.sh" "$EX" -o "$P" 2>/dev/null
 gate() { VERIFY_ROOT="$W" VERIFY_TASK_DIR="$TD" PROGRESS_FILE="$1" VERIFY_LOG_DIR="$TMP/logs" "$TD/verify.sh"; }
 gate_done() { local out; out="$(gate "$1")" || { printf '%s\n' "$out"; return 1; }; [[ "$(printf '%s\n' "$out" | tail -n1)" == "DONE" ]] || { printf '%s\n' "$out"; return 1; }; }
 
+expect "progress-init: fenced header"  0 bash -c '[[ "$(sed -n 1p "$1")" == --- && "$(grep -c -- "^---$" "$1")" -eq 2 ]]' _ "$P"
 expect "progress-init: header shape"   0 grep -qxE 'TASK: TASK-042|STATE: IN_PROGRESS|CURRENT: 1\.1|BASELINE: <not run>' "$P"
 expect "progress-init: checklist verbatim" 0 diff <(awk '/checklist:start/{f=1;next} /checklist:end/{f=0} f' "$EX/README.md") <(awk '/checklist:start/{f=1;next} /checklist:end/{f=0} f' "$P")
 expect "gate: fresh progress fails"    1 gate "$P"
