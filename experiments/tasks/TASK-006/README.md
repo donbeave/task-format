@@ -35,7 +35,7 @@ Current behavior:
 
 Desired behavior:
 
-- CustomSql per D-034: printable chars and `Backspace` edit `sql_input`, `Enter` emits `Effect::Query { kind: Custom, sql }` (empty input is a no-op), `Esc` returns to the browser retaining the input. D-025 custom-SQL semantics: trim one trailing `;`, one statement only, `QueryOutcome::Rows` capped at 500 with the decided info, `QueryOutcome::Affected` reported as `ok: <n> rows affected`. D-060 CustomSql layout with the unsortable grid.
+- Custom SQL (D-034), its D-025 semantics and the D-060 layout with the unsortable grid behave exactly as R-001..R-005 state and AC-001..AC-004 prove.
 
 Read before editing (orientation only, non-normative, in order):
 

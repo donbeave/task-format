@@ -37,7 +37,7 @@ Current behavior:
 
 Desired behavior:
 
-- `grid.rs` implements D-050..D-053 (model, comparison, null placement, client-side sort); `PgSession::query` returns `QueryOutcome` for the D-025 preview SQL; `app.rs` handles `Effect::Query`/`Msg::QueryDone` for `Preview`; `ui/grid.rs` renders the D-060 grid. Custom SQL and `x` stay inert (TASK-006); `d` stays inert (TASK-007).
+- Preview grid and client-side sort (D-050..D-053, D-025, D-060) behave exactly as R-001..R-006 state and AC-001..AC-005 prove. Custom SQL and `x` stay inert (TASK-006); `d` stays inert (TASK-007).
 
 Read before editing (orientation only, non-normative, in order):
 
