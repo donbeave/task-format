@@ -1,6 +1,6 @@
 # Research findings — task structure for coding agents (source of truth)
 
-Status: 2026-08-28. Consolidates `raw/01`, `raw/02` (chronological inputs; later supersedes earlier) and `notes/*` (sub-agent research: external evidence, adversarial critique, container harness, progress/verifier design). Where inputs disagree, the decision and its reason are recorded here. This file wins over every other document in the repo.
+Status: 2026-08-28. Consolidates `raw/01`, `raw/02`, `raw/03` (chronological inputs; later supersedes earlier) and `notes/*` (sub-agent research: external evidence, adversarial critique, container harness, progress/verifier design, AIHero spec/tickets delta). Where inputs disagree, the decision and its reason are recorded here. This file wins over every other document in the repo. `raw/03` (AIHero `/to-spec`, `/to-tickets` comparison) is hypothesis-only: nothing from it is adopted into v3; its delta lives in `notes/aihero-spec-tickets.md` and feeds §7/§8.
 
 Project goal: find the task-package structure that gives the most predictable output from one coding agent (Claude Code `/goal` first, Codex second) handed one bounded task in a fresh isolated Docker container. Method: one structure at a time, run, analyze, iterate; every run triggered manually.
 
@@ -172,6 +172,8 @@ Minimum design: ≥3 task kinds (bugfix, feature, removal) × ≥5 seeds × vari
 7. Fresh reviewer pass (second `-p` with README.md + diff + verifier output → PASS/FAIL per R/AC).
 8. Hooks: `PreToolUse` deny on `/task/*`, `SessionStart compact` re-injection — measure effect on `task_tamper` attempts and post-compaction resume.
 9. ~~Task linter implementing the author checklist.~~ Done: `harness/task-lint.sh` (all six pgtui packages and the example pass; the six READMEs exceed the ~2,500-token target by 2–22%, reported as warnings — trim or accept as a measured variable).
+10. AIHero-derived template ablations (notes/aihero-spec-tickets.md §3.1, §4; candidate `task/v3.1`, one variable each vs v3): **A3 per-AC class + baseline/final polarity first** (six-column AC table `delta|invariant|removal`; harness runs every `AC-*` evidence command on baseline and reference and rejects a mismatch at dispatch — extends D13 from whole-gate to per-criterion); then A4 decision provenance + binding-sources/orientation-hints split; A1 demo path + independent value; A2 primary/supporting verification seam; A5 all. Extra metrics: demo-path execution, lower-seam test substitution, per-AC baseline mismatch caught, false `NEEDS_REPLAN` rate. Adopt only on `gate_pass`/review gain without material context/turn/replan cost.
+11. Decomposition experiment (planner side, notes/aihero-spec-tickets.md §4): same settled spec → several fresh planner contexts under current authoring / tracer-bullet rule / + demo path / + blocking edges / full author gate + graph lint; blind-score verticality, AC ownership, blocker precision/recall, context fit, over-decomposition, transition closure, compiled token size.
 
 ---
 
@@ -181,6 +183,7 @@ Minimum design: ≥3 task kinds (bugfix, feature, removal) × ≥5 seeds × vari
 - Instruction-file naming: `AGENTS.md` is the real file everywhere (repo root, task package, fixture); `CLAUDE.md` is always a symlink to it, so Claude Code and Codex read one file. Whether Claude Code auto-loads `/task/CLAUDE.md` via `--add-dir` in the headed run is UNVERIFIED (docs say added directories contribute their CLAUDE.md); Codex reads `AGENTS.md` only on the git-root→cwd chain, i.e. `/work`, so the launch prompt keeps naming `/task/AGENTS.md` explicitly.
 - `check_progress` validates terminal state only; a `--partial` mid-run lint is a follow-up.
 - Model dependence: Anthropic notes newer models may need less decomposition [A2]; task size is a tunable.
+- Upstream of the package (notes/aihero-spec-tickets.md §3.2–3.4, from [H1][H2]; all UNVERIFIED, nothing built): planner/harness-owned `task-graph.yaml` (`blocked_by`, `shape`, demo path, primary seam, requirement ownership, author-gate status; never mounted into `/task`, D11 stands) + `graph-lint.sh`; operator author gate before `task-lint.sh` judging the slice (decision provenance, verticality, seams, per-AC falsifiability, transition closure); `decisions.md` contract in the reference template (pgtui packages ship it undefined, no provenance); `shape` frontmatter and a bounded expand→migrate→contract exception to `R-004` closed at graph level; lifecycle spec→ticket→package with only leaf packages agent-dispatchable; post-run promotion of durable learnings to ADR/CONTEXT instead of editing finished tasks. Known ambiguity in HEAD: "Read before editing" is labelled non-normative while TASK-101 and the lint example list binding decision records there.
 
 ---
 
@@ -211,6 +214,8 @@ Minimum design: ≥3 task kinds (bugfix, feature, removal) × ≥5 seeds × vari
 - [V2] https://docs.devin.ai/essential-guidelines/instructing-devin-effectively
 - [V3] https://ampcode.com/docs/prompting
 - [G1] https://github.github.com/gfm/ §5.3
+- [H1] https://www.aihero.dev/skills-to-spec (`mattpocock/skills` `to-spec/SKILL.md` `3f52599`) — raw/03
+- [H2] https://www.aihero.dev/skills-to-tickets (`to-tickets/SKILL.md` `e868c83`) — raw/03
 - Ralph Wiggum: https://github.com/ghuntley/how-to-ralph-wiggum , https://github.com/anthropics/claude-code/blob/main/plugins/ralph-wiggum/README.md
 - Beads: https://github.com/steveyegge/beads
 - aider JSON study: https://aider.chat/2024/08/14/code-in-json.html
