@@ -7,7 +7,7 @@ Planned layout:
 ```text
 images/{claude,codex}/Dockerfile   images/common/{init-firewall.sh,entrypoint.sh}
 fixtures/<name>/                    small repos the tasks act on
-tasks/<TASK-ID>/                    task.md AGENT.md verify.sh verify.config protected.sha256 fixture prompt.txt
+tasks/<TASK-ID>/                    README.md AGENT.md verify.sh verify.config protected.sha256 fixture prompt.txt
 run-headed.sh                       run-headed.sh <claude|codex> <TASK-ID> [--model M] [--net api|all]  (persistent container, herdr)
 attach.sh / status.sh               re-attach to the live agent; detect completion
 lib/                                hash-protected.sh, gate.sh

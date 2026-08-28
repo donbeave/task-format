@@ -64,7 +64,7 @@ Edition `2024`, `rust-version = "1.88"` (ratatui 0.30 MSRV; sqlx's 1.94 floor no
 
 ## `CLAUDE.md` content (fixture, protected)
 
-Commands only, no architecture (architecture lives in `task.md`/`decisions.md`):
+Commands only, no architecture (architecture lives in `README.md`/`decisions.md`):
 
 - build: `cargo build --workspace --all-targets`
 - unit: `cargo test -p pgtui --lib`

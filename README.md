@@ -10,7 +10,7 @@ Method: prototype one structure at a time, run it in a clean container against a
 docs/research/raw/        verbatim research inputs (chronological; later files supersede earlier)
 docs/research/notes/      sub-agent research and critique notes
 docs/research/RESEARCH-FINDINGS.md   single source of truth (consolidated, deduplicated)
-reference/task-template/  current recommended task package (task.md, progress.md, verify.sh, ...)
+reference/task-template/  current recommended task package (README.md, progress.md, verify.sh, ...)
 reference/goal-prompt.md  the prompt used to start the agent
 experiments/              fixture repos, run outputs, harness scripts
 ```

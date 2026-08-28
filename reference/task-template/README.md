@@ -1,43 +1,115 @@
-# Task package (schema task/v3)
+---
+schema: task/v3
+id: TASK-000
+title: "<imperative title: one observable outcome>"
+kind: bugfix            # bugfix | feature | refactor | removal | migration | test | docs
+verify: "/task/verify.sh"
+expected_paths:         # orientation for the agent; scope metric for the harness (bash globs)
+  - "src/<area>/*"
+  - "tests/<area>/*"
+protected_paths:        # hashed at dispatch; any change fails the gate
+  - "tests/fixtures/<file>"
+---
 
-One bounded task handed to one fresh coding agent in one isolated container.
+# TASK-000 — <imperative title>
 
-```text
-<task-dir>/                 mounted read-only at /task
-  task.md                   contract: goal, context, preconditions, scope, R-*, AC table, D-*, static checklist
-  AGENT.md                  execution protocol (same for every task); progress grammar; final report
-  verify.sh                 generic gate; reads verify.config + protected.sha256 next to it
-  verify.config             project-specific commands, globs, patterns
-  protected.sha256          generated at dispatch by manifest.sh; workspace-relative paths
-  manifest.sh               dispatch tool (not needed by the agent)
-progress.md                 mounted read-write at /progress/progress.md; generated from task.md checklist
-```
+Execution protocol, progress file grammar, and final report format are in `/task/AGENT.md`. This file is read-only. It defines WHAT must become true; it does not change during execution.
 
-Container mounts: `/task` (ro), `/work` (rw, fresh copy of the fixture repo with a `baseline` tag), `/progress` (rw).
+## Goal
 
-## Dispatch
+<One sentence. A state that must become true, not a list of actions.>
 
-1. Write `task.md` from the template. Fill the checklist; every leaf has an evidence command.
-2. Write `verify.config`. `BASE_REF="baseline"`.
-3. Generate `progress.md`: header (`TASK`, `STATE: IN_PROGRESS`, `CURRENT: <first leaf>`, `BASELINE: <not run>`) + verbatim copy of the checklist block + empty Log + Handoff.
-4. From the fixture repo root: `manifest.sh gen -o <task-dir>/protected.sha256 <protected paths...>`.
-5. Prove the gate: `verify.sh` must FAIL on the untouched fixture and PASS with a reference solution applied. A gate that cannot distinguish the two is not a gate.
-6. Launch with `reference/goal-prompt.md`.
+## Context
 
-## Gate (host, after the container exits)
+Current behavior:
+
+- <Concrete fact about the current implementation or failure.>
+- <Concrete consequence.>
+
+Desired behavior:
+
+- <Concrete post-change behavior, observable by a command, request, artifact, or test.>
+
+Read before editing (non-normative hints, in order):
+
+1. `<path>` — <why>.
+2. `<path>` — <what to understand>.
+3. `<path>` — <pattern or contract to follow; already decided, do not reopen>.
+
+Code flow: <2-5 sentences on how the named files interact. Define non-obvious terms. A fresh agent must not need any prior chat.>
+
+Baseline (run from repo root, before any edit):
 
 ```sh
-VERIFY_ROOT=<run>/workspace VERIFY_TASK_DIR=<run>/task-snapshot PROGRESS_FILE=<run>/progress.md \
-  <run>/task-snapshot/verify.sh
+<exact command>
 ```
 
-Exit 0 and last line `DONE` is the only pass signal. The agent's own report is never load-bearing.
+Expected before this change: `<concise failing result>`
 
-## Author checklist (to become a linter)
+## Preconditions
 
-- One outcome, one repo, one subsystem, no open decisions, no dependency on prior chat.
-- Every `P-*` has a command. Every `AC-*` row has an evidence command and expected result.
-- Checklist: IDs unique and contiguous; depth matches indentation (0/4/8/12 spaces = 1-4 components); max depth 4; 5-20 leaves; every leaf has evidence; no single-child levels added just for depth.
-- `expected_paths` covers what the solution touches; `protected_paths` covers tests/fixtures the agent must not weaken.
-- `verify.sh` fails on baseline, passes on the reference solution.
-- `task.md` under ~2,500 tokens after placeholders are replaced.
+Each precondition has a command. If a command fails, stop and report `BLOCKED` (see AGENT.md). Do not work around it.
+
+- **P-001:** <state> — `<command that exits 0 when true>`
+- **P-002:** <state> — `<command>`
+
+## Scope
+
+In scope:
+
+- <One coherent behavior or vertical slice.>
+- <Tests directly proving it.>
+- <Removal of the superseded implementation.>
+
+Out of scope:
+
+- <Adjacent feature or independent improvement.>
+- <Unrelated cleanup, dependency upgrades, formatting sweeps, speculative abstractions.>
+
+## Requirements
+
+- **R-001 (MUST):** <required behavior or interface>.
+- **R-002 (MUST):** <required error handling, edge case, or invariant>.
+- **R-003 (MUST NOT):** <forbidden behavior or shortcut>.
+- **R-004 (MUST):** Implement the final design directly. No compatibility layer, dual path, deprecated alias, feature flag, or legacy fallback unless a requirement above demands one.
+
+## Acceptance criteria
+
+Each row is observable behavior with the exact evidence command. `verify.sh` runs these; the harness re-runs them.
+
+| ID | Given / When / Then | Evidence command | Expected |
+| --- | --- | --- | --- |
+| AC-001 | Given <state>, when <action>, then <observable result>. | `<command>` | `<exit 0 / output>` |
+| AC-002 | Given <state>, when <edge or failure>, then <error or preserved invariant>. | `<command>` | `<expected>` |
+| AC-003 | Given <old path>, when <changed path exercised>, then <preserved behavior or old path absent>. | `<command>` | `<expected>` |
+
+## Fixed decisions
+
+Already decided. Implement; do not reopen. Anything not listed here that changes public behavior, architecture, data, or security posture is `NEEDS_REPLAN`, not executor discretion.
+
+- **D-001:** <architecture / API / library / data model>.
+- **D-002:** <compatibility or migration policy>.
+- **D-003:** <required interface, signature, file location, naming>.
+
+## Checklist
+
+Static plan. Hierarchical IDs `N`, `N.N`, `N.N.N`, `N.N.N.N` (max depth 4, four spaces per level). Every leaf names what becomes true and the evidence that permits checking it. State is tracked in `progress.md`, never here.
+
+<!-- checklist:start -->
+- [ ] **1** Baseline is reproduced.
+    - [ ] **1.1** Preconditions `P-001..P-NNN` pass — evidence: each listed command exits 0.
+    - [ ] **1.2** Baseline command run and its failing result recorded in `progress.md` `BASELINE:` — evidence: `<baseline command>` output matches the expected pre-change result.
+- [ ] **2** Required behavior is implemented.
+    - [ ] **2.1** <Coherent unit satisfying `R-001`> — evidence: `<focused command>` exits 0.
+        - [ ] **2.1.1** <Sub-step when the unit genuinely decomposes> (`R-001`) — evidence: `<command>` → `<result>`.
+        - [ ] **2.1.2** <Sub-step> (`R-001`, `AC-001`) — evidence: `<command>` → `<result>`.
+    - [ ] **2.2** <Coherent unit satisfying `R-002`> — evidence: `<command>` exits 0.
+    - [ ] **2.3** Superseded path removed (`R-003`, `R-004`) — evidence: `<grep command>` prints nothing and regressions pass.
+- [ ] **3** Acceptance criteria are proven.
+    - [ ] **3.1** `AC-001` — evidence: `<AC-001 command>` → `<expected>`.
+    - [ ] **3.2** `AC-002` — evidence: `<AC-002 command>` → `<expected>`.
+    - [ ] **3.3** `AC-003` — evidence: `<AC-003 command>` → `<expected>`.
+- [ ] **4** Gate passes.
+    - [ ] **4.1** Diff reviewed: only `expected_paths` changed, nothing temporary or unrelated — evidence: `git status --porcelain` and `git diff --stat` show only in-scope files.
+    - [ ] **4.2** `/task/verify.sh` exits 0 with last line `DONE` — evidence: full verifier output shown in the transcript.
+<!-- checklist:end -->

@@ -1,12 +1,12 @@
 # Execution protocol
 
-You are implementing exactly one task: `/task/task.md`. This protocol is the same for every task. Read it once.
+You are implementing exactly one task: `/task/README.md`. This protocol is the same for every task. Read it once.
 
 ## Files
 
 | Path | Access | Purpose |
 | --- | --- | --- |
-| `/task/task.md` | read-only | The contract: goal, requirements, acceptance criteria, decisions, checklist. |
+| `/task/README.md` | read-only | The contract: goal, requirements, acceptance criteria, decisions, checklist. |
 | `/task/AGENT.md` | read-only | This protocol. |
 | `/task/verify.sh` | read-only | The completion gate. Run it; never edit it. |
 | `/progress/progress.md` | read-write | The only file you maintain for state. Checklist copy + log + handoff. |
@@ -14,11 +14,11 @@ You are implementing exactly one task: `/task/task.md`. This protocol is the sam
 
 ## Protocol
 
-1. Read `/task/task.md` fully, then the repository instructions (`CLAUDE.md` / `AGENTS.md`), then the files listed under "Read before editing".
+1. Read `/task/README.md` fully, then the repository instructions (`CLAUDE.md` / `AGENTS.md`), then the files listed under "Read before editing".
 2. If `/progress/progress.md` has `STATE: IN_PROGRESS` you are resuming: read it, run `git status` and `git diff --stat`, and continue from `CURRENT:`. Do not reconstruct state from memory.
 3. State in the transcript: task ID, the one-sentence goal, the acceptance-criterion IDs, and the first leaf you will work on.
 4. Run every precondition command. If one fails, write `STATE: BLOCKED` and the failing command to `progress.md`, then emit the final report with `STATUS: BLOCKED`. Do not work around a failed precondition.
-5. Work the checklist leaves one at a time, in ID order unless `task.md` states a different dependency order. Before starting a leaf set `CURRENT: <id>` in `progress.md`.
+5. Work the checklist leaves one at a time, in ID order unless `README.md` states a different dependency order. Before starting a leaf set `CURRENT: <id>` in `progress.md`.
 6. Mark a leaf `[x]` only after running its evidence command and seeing the stated result. Append one log line with the command and observed result. If later work invalidates it, set it back to `[ ]` and log `REOPENED`.
 7. Mark a parent `[x]` only when every child is `[x]`. Parents are never `CURRENT`.
 8. When all leaves except the gate leaf are done, run `/task/verify.sh` from `/work`. Fix failures it reports; rerun until it exits 0 with last line `DONE`. Then set `STATE: DONE`, `CURRENT: NONE`, mark the remaining leaves, and emit the final report.
@@ -32,7 +32,7 @@ CURRENT: 2.1.1                # one unchecked leaf ID, or NONE
 BASELINE: <command> -> <observed result>
 
 <!-- checklist:start -->
-<verbatim copy of the task.md checklist; only the [ ]/[x] tokens change>
+<verbatim copy of the README.md checklist; only the [ ]/[x] tokens change>
 <!-- checklist:end -->
 
 ## Log

@@ -11,7 +11,7 @@
 #
 # Env (all optional):
 #   VERIFY_ROOT       repo root (default: git toplevel of cwd, else cwd)
-#   VERIFY_TASK_DIR   dir holding task.md, verify.config, protected.sha256 (default: dir of this script)
+#   VERIFY_TASK_DIR   dir holding README.md, verify.config, protected.sha256 (default: dir of this script)
 #   PROGRESS_FILE     progress file (default: /progress/progress.md); empty string disables the check
 #   VERIFY_LOG_DIR    per-check logs (default: mktemp -d)
 #   VERIFY_FAIL_FAST  1 = stop at first failing check
@@ -22,7 +22,7 @@ VERIFY_ROOT="${VERIFY_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}
 VERIFY_TASK_DIR="${VERIFY_TASK_DIR:-$SCRIPT_DIR}"
 VERIFY_CONFIG="$VERIFY_TASK_DIR/verify.config"
 VERIFY_MANIFEST="$VERIFY_TASK_DIR/protected.sha256"
-TASK_FILE="$VERIFY_TASK_DIR/task.md"
+TASK_FILE="$VERIFY_TASK_DIR/README.md"
 PROGRESS_FILE="${PROGRESS_FILE-/progress/progress.md}"
 VERIFY_LOG_DIR="${VERIFY_LOG_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/verify.XXXXXX")}"
 VERIFY_FAIL_FAST="${VERIFY_FAIL_FAST:-0}"
@@ -116,7 +116,7 @@ check_forbidden_patterns() {
 check_forbidden_paths() { local rc=0 p; for p in "${FORBIDDEN_PATHS[@]}"; do if [[ -e "$p" ]]; then echo "EXISTS $p"; rc=1; else echo "ok absent $p"; fi; done; return $rc; }
 check_required_paths()  { local rc=0 p; for p in "${REQUIRED_PATHS[@]}";  do if [[ -e "$p" ]]; then echo "ok $p"; else echo "MISSING $p"; rc=1; fi; done; return $rc; }
 
-# progress.md: checklist == task.md checklist modulo [ ]/[x]; all leaves checked;
+# progress.md: checklist == README.md checklist modulo [ ]/[x]; all leaves checked;
 # parent checked <=> all children checked; STATE=DONE; CURRENT=NONE.
 checklist_lines() { awk '/<!-- checklist:start -->/{f=1;next} /<!-- checklist:end -->/{f=0} f' "$1"; }
 check_progress() {
@@ -126,7 +126,7 @@ check_progress() {
   t="$(checklist_lines "$TASK_FILE"     | sed -E 's/^( *)- \[[ x]\] /\1- [ ] /')"
   p="$(checklist_lines "$PROGRESS_FILE" | sed -E 's/^( *)- \[[ x]\] /\1- [ ] /')"
   [[ -n "$t" ]] || { echo "no checklist block in $TASK_FILE"; return 1; }
-  if [[ "$t" != "$p" ]]; then echo "checklist text/structure differs from task.md:"; diff <(echo "$t") <(echo "$p") || true; return 1; fi
+  if [[ "$t" != "$p" ]]; then echo "checklist text/structure differs from README.md:"; diff <(echo "$t") <(echo "$p") || true; return 1; fi
   checklist_lines "$PROGRESS_FILE" | awk '
     function depth(s,  n){ n=match(s,/[^ ]/); return (n-1)/4 }
     {
