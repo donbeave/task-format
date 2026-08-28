@@ -8,7 +8,7 @@ Kept unchanged: the default seed dir mounted `/seed:ro` in every run (`pgtui-see
 
 ## Trusted overlay model
 
-For each run the harness clones the target repository, copies the task's `trusted/` tree over it, and commits the result as the **run base commit** (never pushed to `main`). The gate then scopes and verifies against that base:
+For each run the harness clones the target repository, copies the task's `trusted/` tree over it, and commits the result as the **run base commit** (pushed to `main` ahead of the agent's commit, D25). The gate then scopes and verifies against that base:
 
 - `trusted/crates/pgtui/src/render.rs` and `trusted/crates/pgtui/src/fonts/DejaVuSansMono.ttf` — planner-owned renderer (Buffer → text/SVG/PNG via `resvg` 0.48.1 with the bundled font). Exposes `buffer_to_text`, `buffer_to_svg`, `svg_to_png` (+ the `png_dimensions` IHDR helper). Present in **every** task, never in `expected_paths`/`allowed_globs`, listed in `forbidden_paths`.
 - `trusted/crates/pgtui/tests/` — cumulative trusted tests for tasks 1..N, plus `tests/support/mod.rs` (and from TASK-004 `tests/support/fake_data.rs`, `tests/fixtures/seed.sql`). Read-only for the executor.

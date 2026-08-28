@@ -43,7 +43,7 @@ Read before editing (orientation only, non-normative, in order):
 1. `crates/pgtui/tests/app_disconnect_test.rs` and `crates/pgtui/tests/pg_disconnect_test.rs` — the disconnect oracles (state reset, backend actually closed).
 2. `crates/pgtui/tests/cli_exit_test.rs` and `crates/pgtui/tests/gallery_test.rs` — pty exit codes and the ten-screen contract.
 
-Code flow: `keys.rs` routes `d` in the browser to `Effect::Disconnect`; `runtime::execute` removes the `PgSession`, drops the `Client`, awaits the spawned connection's `JoinHandle`, and replies `Msg::Disconnected`. `main.rs` keeps the D-012 loop, with `Ctrl+C` emitting `Disconnect` before `Quit` (D-030). `src/bin/gallery.rs` builds the ten D-080 states locally, renders through `pgtui::render`, and writes `<name>.svg`/`<name>.png`; the repository `README.md` and the committed `docs/screens/` are produced by running it with the default `--out`.
+Code flow: `keys.rs` routes `d` in the browser to `Effect::Disconnect`; `runtime::execute` removes the `PgSession`, drops the `Client`, awaits the spawned connection's `JoinHandle`, and replies `Msg::Disconnected`. `main.rs` keeps the D-012 loop, with `Ctrl+C` emitting `Disconnect` before `Quit` (D-030). `src/bin/gallery.rs` builds the ten D-080 states locally, renders through `pgtui::render`, and writes `<name>.svg`/`<name>.png`.
 
 Baseline, from the repo root:
 
