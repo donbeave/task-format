@@ -37,11 +37,10 @@ Desired behavior:
 
 - CustomSql per D-034: printable chars and `Backspace` edit `sql_input`, `Enter` emits `Effect::Query { kind: Custom, sql }` (empty input is a no-op), `Esc` returns to the browser retaining the input. D-025 custom-SQL semantics: trim one trailing `;`, one statement only, `QueryOutcome::Rows` capped at 500 with the decided info, `QueryOutcome::Affected` reported as `ok: <n> rows affected`. D-060 CustomSql layout with the unsortable grid.
 
-Read before editing (in order):
+Read before editing (orientation only, non-normative, in order):
 
-1. `/task/decisions.md` — D-034 (screen keys) and the custom-SQL bullet of D-025 are the contract for this task.
-2. `crates/pgtui/tests/pg_custom_sql_test.rs` — the live-server oracle: `SELECT`, `CommandComplete` affected counts, cap, multi-statement rejection, syntax errors.
-3. `crates/pgtui/tests/app_custom_sql_test.rs` and `crates/pgtui/tests/screen_custom_sql_test.rs` — state and rendering oracles.
+1. `crates/pgtui/tests/pg_custom_sql_test.rs` — the live-server oracle: `SELECT`, `CommandComplete` affected counts, cap, multi-statement rejection, syntax errors.
+2. `crates/pgtui/tests/app_custom_sql_test.rs` and `crates/pgtui/tests/screen_custom_sql_test.rs` — state and rendering oracles.
 
 Code flow: `keys.rs` routes editing keys while `screen == CustomSql`; `Enter` trims the input and emits the effect. `runtime::execute` calls `PgSession::query(sql)`, which runs `simple_query`, maps multiple row descriptions to `DbError::MultiStatement`, counts `CommandComplete` rows for `Affected`, and caps rows client-side at `PREVIEW_LIMIT`. `app.rs` stores row results in `sql_grid` (sort stays `None`, `col_cursor` stays `0`) and sets the decided `Status::Info` strings; `ui/custom_sql.rs` draws the input and results blocks.
 
@@ -99,7 +98,8 @@ Observable behaviour plus the exact evidence command. The gate runs these; the h
 
 ## Fixed decisions
 
-Implement; do not reopen. Verbatim text in `/task/decisions.md`. Anything not decided there that changes public behaviour, architecture, data or security posture is `NEEDS_REPLAN`, not executor discretion.
+Full text: `/task/decisions.md` (binding, read-only).
+Implement; do not reopen. Anything not decided there that changes public behaviour, architecture, data or security posture is `NEEDS_REPLAN`, not executor discretion.
 
 - **D-034:** CustomSql keys, entry via `x`, retention on `Esc`.
 - **D-025:** custom-SQL trimming, single-statement rule, cap and status strings.
@@ -118,7 +118,7 @@ Static plan. Hierarchical IDs, four spaces per level, max depth 4. Every leaf na
     - [ ] **1.2** Baseline failure recorded in `progress.md` `BASELINE:` — evidence: `cargo test -p pgtui --test pg_custom_sql_test` fails to compile or reports `CustomSql` unreachable.
 - [ ] **2** Screen state is implemented.
     - [ ] **2.1** `x` opens CustomSql and editing keys behave per D-034 (`R-001`, `AC-001`) — evidence: `cargo test -p pgtui --test app_custom_sql_test` prints `9 passed`.
-    - [ ] **2.2** `sql_grid` uses the frozen D-050 model with no sort and no column cursor (`R-004`) — evidence: `grep -q 'sql_grid' crates/pgtui/src/app.rs && ! grep -q 'sort_unstable' crates/pgtui/src` exits 0.
+    - [ ] **2.2** `sql_grid` uses the frozen D-050 model with no sort and no column cursor (`R-004`, `R-007`) — evidence: `grep -q 'sql_grid' crates/pgtui/src/app.rs && ! grep -q 'sort_unstable' crates/pgtui/src` exits 0.
 - [ ] **3** Query semantics are implemented.
     - [ ] **3.1** D-025 custom-SQL handling in `db/postgres.rs` (`R-002`, `R-003`, `AC-002`) — evidence: `cargo test -p pgtui --test pg_custom_sql_test` prints `5 passed`.
     - [ ] **3.2** Cap and affected-row status strings match D-025 exactly (`R-003`) — evidence: `grep -q 'showing first 500 rows' crates/pgtui/src && grep -q 'rows affected' crates/pgtui/src` exits 0.
@@ -126,6 +126,7 @@ Static plan. Hierarchical IDs, four spaces per level, max depth 4. Every leaf na
     - [ ] **4.1** `ui/custom_sql.rs` per D-060 (`R-005`, `AC-003`) — evidence: `cargo test -p pgtui --test screen_custom_sql_test` prints `3 passed`.
     - [ ] **4.2** Lint is clean (`D-004`) — evidence: `cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings` exits 0.
 - [ ] **5** Gate passes.
-    - [ ] **5.1** Regression `AC-004` holds and only `expected_paths` changed — evidence: the combined `cargo test -p pgtui --test ...` command of `AC-004` prints `90 passed`, and `git status --porcelain` lists only in-scope files.
-    - [ ] **5.2** Gate green (`AC-005`) — evidence: `taskfmt verify` exits 0 with last line `DONE`.
+    - [ ] **5.1** Regression `AC-004` holds — evidence: the combined `cargo test -p pgtui --test ...` command of `AC-004` prints `90 passed`.
+    - [ ] **5.2** Diff reviewed: only `expected_paths` changed, nothing temporary or unrelated (`R-006`, `R-007`) — evidence: `git status --porcelain` and `git diff --no-renames --stat $TASKFMT_BASE` show only in-scope files.
+    - [ ] **5.3** `taskfmt verify` exits 0 with last line `DONE` (`AC-005`) — evidence: final full run (with progress check), full output shown in the transcript.
 <!-- checklist:end -->

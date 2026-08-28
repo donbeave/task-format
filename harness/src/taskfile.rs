@@ -287,6 +287,23 @@ pub fn parse_checklist(lines: &[String]) -> Vec<CheckItem> {
         .collect()
 }
 
+/// Content of the first inline-code span in `text` (`` `cargo test` `` → `cargo test`).
+pub fn first_code_span(text: &str) -> Option<&str> {
+    let start = text.find('`')?;
+    let rest = &text[start + 1..];
+    let end = rest.find('`')?;
+    let span = &rest[..end];
+    if span.is_empty() { None } else { Some(span) }
+}
+
+/// Evidence text of a checklist item: everything after the first `evidence:`, trimmed, without a
+/// trailing period. `None` when the item states no evidence.
+pub fn leaf_evidence(item: &CheckItem) -> Option<String> {
+    let (_, after) = item.text.split_once("evidence:")?;
+    let trimmed = after.trim();
+    Some(trimmed.strip_suffix('.').unwrap_or(trimmed).to_string())
+}
+
 /// Leaf flag: an item is a leaf when the next item is not deeper.
 pub fn leaf_flags(items: &[CheckItem]) -> Vec<bool> {
     items
@@ -450,6 +467,27 @@ Do the thing.
     fn flags_malformed_checklist_lines() {
         let items = parse_checklist(&["    - [ ] **3.2X** broken".to_string()]);
         assert!(!items[0].well_formed);
+    }
+
+    #[test]
+    fn first_code_span_and_leaf_evidence() {
+        assert_eq!(
+            first_code_span("run `cargo test -p auth` then `x`"),
+            Some("cargo test -p auth")
+        );
+        assert_eq!(first_code_span("no span"), None);
+        assert_eq!(first_code_span("empty `` span"), None);
+        let items = parse_checklist(&[
+            "    - [ ] **2.1** Unit — evidence: `cargo test` exits 0.".to_string(),
+            "    - [ ] **2.2** Unit without evidence".to_string(),
+            "    - [ ] **2.3** Empty — evidence: ".to_string(),
+        ]);
+        assert_eq!(
+            leaf_evidence(&items[0]).as_deref(),
+            Some("`cargo test` exits 0")
+        );
+        assert_eq!(leaf_evidence(&items[1]), None);
+        assert_eq!(leaf_evidence(&items[2]).as_deref(), Some(""));
     }
 
     #[test]

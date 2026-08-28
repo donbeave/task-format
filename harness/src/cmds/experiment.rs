@@ -13,6 +13,7 @@ pub fn run(
     repo: Option<&str>,
     agent: Option<&str>,
     resume: Option<&str>,
+    skip_selfcheck: bool,
 ) -> anyhow::Result<i32> {
     let resolved = ctx.load()?;
     let profile_name = agent
@@ -90,6 +91,7 @@ pub fn run(
             task_id,
             &repo_url,
             Some(&experiment_id),
+            skip_selfcheck,
         ) {
             Ok(outcome) => outcome,
             Err(err) => {

@@ -14,6 +14,7 @@ pub mod progress;
 pub mod redact;
 pub mod runstate;
 pub mod selection;
+pub mod selfcheck;
 pub mod selftest;
 pub mod taskfile;
 pub mod verifycfg;

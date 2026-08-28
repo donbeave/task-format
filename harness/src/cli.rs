@@ -78,6 +78,9 @@ pub enum Command {
         /// Progress file. Empty string disables the progress check.
         #[arg(long)]
         progress: Option<String>,
+        /// Disable the progress check (same as --progress "").
+        #[arg(long, conflicts_with = "progress")]
+        no_progress: bool,
         /// Scope base ref. Order: --base > TASKFMT_BASE > base_ref in verify.toml > "baseline".
         #[arg(long)]
         base: Option<String>,
@@ -87,6 +90,26 @@ pub enum Command {
         /// Stop at the first failing check.
         #[arg(long)]
         fail_fast: bool,
+    },
+
+    /// Prove a task package's gate: RED on the untouched baseline, GREEN on the reference (D13).
+    /// Exit 0 only on SELFCHECK RESULT PASS; 1 FAIL; 66 missing input; 70 internal error.
+    Selfcheck {
+        /// Task package dir holding verify.toml (+ README.md).
+        task: PathBuf,
+        /// Git repository checked out at the trusted base commit (never mutated: phases run in a
+        /// scratch copy under TMPDIR).
+        workspace: PathBuf,
+        /// Scope base ref. Order: --base > TASKFMT_BASE > base_ref in verify.toml > "baseline".
+        #[arg(long)]
+        base: Option<String>,
+        /// Reference solution: a directory mirrored over the tree, or a .patch/.diff file.
+        /// Absent: the oracle phase is SKIPPED.
+        #[arg(long)]
+        reference: Option<PathBuf>,
+        /// Retain the scratch copy (its path is printed).
+        #[arg(long)]
+        keep: bool,
     },
 
     /// Build the harness container images.
@@ -134,6 +157,9 @@ pub enum Command {
         /// Record the run under experiments/runs/<ID>/ for an experiment.
         #[arg(long)]
         exp: Option<String>,
+        /// Dispatch even when the D13 gate selfcheck (nop + polarity) FAILS on the built workspace.
+        #[arg(long)]
+        skip_selfcheck: bool,
     },
 
     /// Host gate for one run: re-run verify on the workspace with trusted copies.
@@ -175,6 +201,9 @@ pub enum Command {
         /// Resume an interrupted experiment: skip tasks already recorded passed.
         #[arg(long)]
         resume: Option<String>,
+        /// Dispatch even when the D13 gate selfcheck (nop + polarity) FAILS on the built workspace.
+        #[arg(long)]
+        skip_selfcheck: bool,
     },
 
     /// Container PID 1 (root): inner dockerd, codex seeding, prereqs, then the agent.

@@ -73,7 +73,6 @@ pub fn generate(task_dir: &Path) -> anyhow::Result<GeneratedProgress> {
     body.push_str(&format!("{}\n\n", taskfile::CHECKLIST_END));
     body.push_str("## Log\n\n");
     body.push_str("## Handoff\n");
-    body.push_str(&format!("NEXT: {first_leaf}\n"));
     body.push_str("CURRENT_FAILURE: none\n");
     body.push_str("DECISIONS: none\n");
 
@@ -156,6 +155,21 @@ mod tests {
         assert_eq!(header_value(text, "STATE").as_deref(), Some("IN_PROGRESS"));
         assert_eq!(header_value(text, "CURRENT").as_deref(), Some("1.1"));
         assert_eq!(header_value(text, "BASELINE"), None);
+    }
+
+    #[test]
+    fn generated_handoff_has_no_next_line() {
+        let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/example");
+        let generated = generate(&example).unwrap();
+        assert_eq!(generated.first_leaf, "1.1");
+        assert!(
+            generated
+                .body
+                .ends_with("## Handoff\nCURRENT_FAILURE: none\nDECISIONS: none\n"),
+            "{}",
+            generated.body
+        );
+        assert!(!generated.body.contains("NEXT:"));
     }
 
     #[test]
