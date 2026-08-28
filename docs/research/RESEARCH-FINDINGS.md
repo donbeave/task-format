@@ -70,6 +70,7 @@ Converges on: clear problem, acceptance criteria, file pointers, concrete succes
 | D12 | verify.sh | Conceptual sketch | **Concrete generic script + `verify.config` + `protected.sha256` manifest + `manifest.sh`.** Structured `CHECK <name> PASS|FAIL` lines, `SUMMARY`, `RESULT`, `DONE` last line only on full pass; ERR trap → never a silent DONE. Checks: protected manifest, scope (git diff vs BASE_REF ∪ staged ∪ untracked vs ALLOWED/DENIED globs), required/forbidden paths, forbidden patterns, focused/regression/lint commands, progress consistency. Same script for agent feedback loop and host gate (env vars point at trusted copies). | Tested on a fixture: baseline FAIL rc=1; solved+DONE rc=0; parent/child, reworded copy, protected tamper, out-of-scope, outer-gate invocation all correct. |
 | D13 | Oracle requirement | Absent | **Required at dispatch:** verify.sh must FAIL on the untouched fixture and PASS with a reference solution. | Harbor mandatory `solve.sh`; Anthropic "reference solution proves the grader" [E2][A5]. |
 | D14 | Container layout | `tasks/TASK-042/` inside repo | **`/task` (ro: README.md, AGENTS.md, verify.sh, verify.config, protected.sha256), `/work` (rw fresh fixture copy, `baseline` tag), `/progress` (rw: progress.md).** Task package never inside the repo. | Package inside the repo pollutes the scope diff and can be `git add`ed. Separate `/progress` dir avoids the UNVERIFIED file-bind-over-ro-dir trick. |
+| D15 | Repo layout (2026-08-28) | dispatch tools inside `reference/task-template/` | **`reference/task-template/` holds only agent-visible package files (README.md, AGENTS.md+symlink, verify.sh, verify.config). All tooling (task-lint.sh, progress-init.sh, manifest.sh, selftest.sh), the launch prompt and the lint corpus live in `harness/`. `manifest.sh` is not copied into task dirs at dispatch.** | The template folder is the research object; anything else in it is a variable the agent can see. Only the generated `protected.sha256` ships (D14 mount list); `manifest.sh` itself is not needed by the agent. |
 | D15 | Launch prompt | ~180-word `/goal` prose, no turn bound | **Short condition (<4,000 chars) naming: verify.sh run+DONE shown in transcript, progress STATE DONE, final report, nothing under /task changed, BLOCKED/NEEDS_REPLAN rules, "stop after 40 turns"; plus `--max-turns 40 --max-budget-usd 10`.** | `/goal` docs [C1]. |
 | D16 | Hooks as gates | v1 implied PostToolUse gates | **Not relied on.** Optional later: `PreToolUse` deny on `/task/*` edits, `SessionStart compact` re-injection. The host gate is the authority. | `PostToolUse` cannot block; Stop hooks capped at 8 [C4]. |
 | D17 | Ordering rule | "numeric depth-first, do not skip" as MUST | **Default ID order; `README.md` may state a different dependency order.** | Over-prescriptive step order is an anti-pattern [A5][E3]. |
@@ -87,7 +88,7 @@ Converges on: clear problem, acceptance criteria, file pointers, concrete succes
 
 ## 4. The v3 reference package
 
-Location: `reference/task-template/` (+ `reference/goal-prompt.md`, `reference/example/`).
+Location: `reference/task-template/` — pure task files, nothing else. Dispatch tooling (task-lint.sh, progress-init.sh, manifest.sh, selftest.sh), the launch prompt (`harness/goal-prompt.md`) and the lint corpus (`harness/testdata/example/`) live in `harness/` (D15).
 
 | File | Mount | Owner | Content |
 | --- | --- | --- | --- |
@@ -97,9 +98,9 @@ Location: `reference/task-template/` (+ `reference/goal-prompt.md`, `reference/e
 | `verify.config` | `/task` ro | planner | `BASE_REF`, command arrays, forbidden patterns/paths, required paths, allowed/denied globs, extra checks. |
 | `protected.sha256` | `/task` ro | dispatch tool | `manifest.sh gen` output; workspace-relative paths. |
 | `progress.md` | `/progress` rw | agent | **Generated per run by `progress-init.sh` from `README.md`; never stored in the repo.** `TASK/STATE/CURRENT/BASELINE` header; verbatim checklist copy; append-only `## Log` (`- <id> | DONE|FAILED|REOPENED|BLOCKED | <command -> result>`); `## Handoff` (`NEXT`, `CURRENT_FAILURE`, `DECISIONS`). |
-| `task-lint.sh` | dispatch | fixed | Author checklist as a program: frontmatter, sections, placeholders, `P-*` commands, `AC-*` rows, checklist grammar/contiguity/depth/leaf count/evidence/AC coverage/gate leaf, `verify.config` ↔ frontmatter consistency. |
-| `progress-init.sh` | dispatch | fixed | Lints, then emits the initial `progress.md`. Only way a `progress.md` comes into existence. |
-| `selftest.sh` | dispatch | fixed | Throwaway-fixture proof that lint rejects broken contracts and the gate fails on every tamper (`STATE`, `CURRENT`, `BASELINE`, `TASK`, parent/child, reword, delete, add) and passes only on the complete `DONE` file. |
+| `task-lint.sh` | `harness/` | fixed | Author checklist as a program: frontmatter, sections, placeholders, `P-*` commands, `AC-*` rows, checklist grammar/contiguity/depth/leaf count/evidence/AC coverage/gate leaf, `verify.config` ↔ frontmatter consistency. |
+| `progress-init.sh` | `harness/` | fixed | Lints, then emits the initial `progress.md`. Only way a `progress.md` comes into existence. |
+| `selftest.sh` | `harness/` | fixed | Throwaway-fixture proof that lint rejects broken contracts and the gate fails on every tamper (`STATE`, `CURRENT`, `BASELINE`, `TASK`, parent/child, reword, delete, add) and passes only on the complete `DONE` file. |
 
 Checklist rules (in `README.md` header + AGENTS.md): IDs `N`, `N.N`, `N.N.N`, `N.N.N.N`; exactly four spaces per level; depth = ID components; siblings contiguous from 1; leaf = item with no children; only leaves count; only a leaf may be `CURRENT`; parent `[x]` ⇔ all children `[x]`; 5–20 leaves; every leaf states what becomes true + evidence command; agent never edits text/IDs/order/indent; missing work → `NEEDS_REPLAN`.
 
@@ -159,7 +160,7 @@ Minimum design: ≥3 task kinds (bugfix, feature, removal) × ≥5 seeds × vari
 6. Harness-driven loop instead of `/goal`: one `claude -p`, host runs verify.sh, re-invoke with `--continue` + verifier output; identical for Codex.
 7. Fresh reviewer pass (second `-p` with README.md + diff + verifier output → PASS/FAIL per R/AC).
 8. Hooks: `PreToolUse` deny on `/task/*`, `SessionStart compact` re-injection — measure effect on `protected_tamper` attempts and post-compaction resume.
-9. ~~Task linter implementing the author checklist.~~ Done: `reference/task-template/task-lint.sh` (all six pgtui packages and the example pass; the six READMEs exceed the ~2,500-token target by 2–22%, reported as warnings — trim or accept as a measured variable).
+9. ~~Task linter implementing the author checklist.~~ Done: `harness/task-lint.sh` (all six pgtui packages and the example pass; the six READMEs exceed the ~2,500-token target by 2–22%, reported as warnings — trim or accept as a measured variable).
 
 ---
 

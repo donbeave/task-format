@@ -7,7 +7,8 @@
 # verify.sh FAILS on the fresh progress file, FAILS on each tamper, PASSES only on the fully-checked DONE file.
 set -Eeuo pipefail
 T="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-EX="$T/../example"
+TEMPLATE="$T/../reference/task-template"
+EX="$T/testdata/example"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/task-selftest.XXXXXX")"; trap 'rm -rf "$TMP"' EXIT
 FAILS=0
 expect() {  # expect NAME want-rc CMD...   (stdout/stderr captured; shown on mismatch)
@@ -20,12 +21,12 @@ expect() {  # expect NAME want-rc CMD...   (stdout/stderr captured; shown on mis
 # ---- repo rule: every AGENTS.md has a sibling CLAUDE.md symlink pointing at it ----
 check_symlinks() { local f d rc=0; while IFS= read -r f; do d="$(dirname "$f")"
   [[ -L "$d/CLAUDE.md" && "$(readlink "$d/CLAUDE.md")" == "AGENTS.md" ]] || { echo "no CLAUDE.md -> AGENTS.md symlink next to $f"; rc=1; }
-  done < <(find "$T/../.." -name AGENTS.md -not -path '*/.git/*' -not -path '*/runs/*'); return $rc; }
+  done < <(find "$T/.." -name AGENTS.md -not -path '*/.git/*' -not -path '*/runs/*'); return $rc; }
 expect "repo: AGENTS.md/CLAUDE.md symlinks" 0 check_symlinks
 
 # ---- lint ----
 expect "lint: example passes"         0 "$T/task-lint.sh" "$EX"
-expect "lint: template has placeholders" 1 "$T/task-lint.sh" "$T"
+expect "lint: template has placeholders" 1 "$T/task-lint.sh" "$TEMPLATE"
 mkdir -p "$TMP/bad"; cp "$EX/verify.config" "$TMP/bad/"
 sed -E 's/^(    - \[ \] \*\*3\.2\*\*)/\1X/' "$EX/README.md" > "$TMP/bad/README.md"   # breaks the line grammar
 expect "lint: broken checklist grammar"  1 "$T/task-lint.sh" "$TMP/bad"
@@ -37,7 +38,7 @@ expect "lint: H1/id mismatch"            1 "$T/task-lint.sh" "$TMP/bad"
 # ---- workspace: git repo tagged baseline, task dir with empty manifest ----
 W="$TMP/work"; TD="$TMP/task"; mkdir -p "$W" "$TD"
 ( cd "$W" && git init -q && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m baseline && git tag baseline )
-cp "$EX/README.md" "$T/verify.sh" "$TD/"; : > "$TD/protected.sha256"
+cp "$EX/README.md" "$TEMPLATE/verify.sh" "$TD/"; : > "$TD/protected.sha256"
 cat > "$TD/verify.config" <<'CFG'
 BASE_REF="baseline"
 FOCUSED_CMDS=(); REGRESSION_CMDS=(); LINT_CMDS=()

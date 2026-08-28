@@ -6,7 +6,7 @@
 # Exit 0 = every rule passed. Exit 1 = at least one ERROR. Warnings never fail.
 # Output: one line per finding, "ERROR <rule>: <detail>" or "WARN <rule>: <detail>", then "LINT PASS|FAIL".
 #
-# Checked (see PACKAGE.md "Author checklist"):
+# Checked (see harness/README.md "Author checklist"):
 #   frontmatter   schema task/v3; id TASK-<n>; kind in the allowed set; verify; expected_paths non-empty
 #   sections      every required H2 present, in template order
 #   placeholders  no template placeholders left (TASK-000, P-NNN, <command>, <expected>, ...)
