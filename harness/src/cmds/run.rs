@@ -211,6 +211,9 @@ pub fn dispatch_one(
 
     // ---------- 10. herdr pane ----------
     manifest.pane = wait_pane(&manifest, Duration::from_secs(50))?;
+    // rename before any `agent`-targeted call: "task" is the only stable target name, and the
+    // agent does not exist under it until the rename lands
+    herdr::rename_to_task(&manifest)?;
     manifest.save(&run_dir)?;
 
     // ---------- 11. readiness + prompt injection ----------
@@ -224,7 +227,6 @@ pub fn dispatch_one(
             manifest.container
         );
     }
-    herdr::rename_to_task(&manifest)?;
     if let Err(err) = herdr::prompt(&manifest, &prompt) {
         redact::eemit(&format!("prompt refused: {err:#}"));
         if let Ok(screen) = herdr::pane_visible(&manifest) {
