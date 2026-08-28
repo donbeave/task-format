@@ -177,6 +177,7 @@ fn resuming_a_finished_experiment_creates_no_repo() {
         None,
         None,
         Some(&fx.experiment_id),
+        false,
     )
     .unwrap();
     assert_eq!(code, 0, "nothing left to run");
@@ -195,6 +196,7 @@ fn resuming_with_a_conflicting_repo_arg_fails_before_dispatch() {
         Some(OTHER),
         None,
         Some(&fx.experiment_id),
+        false,
     )
     .unwrap_err()
     .to_string();
@@ -213,6 +215,7 @@ fn resuming_a_missing_experiment_says_so_without_creating_a_repo() {
         None,
         None,
         Some("exp-nope"),
+        false,
     )
     .unwrap_err()
     .to_string();
@@ -243,6 +246,7 @@ fn run_with_exp_tag_uses_the_recorded_repo() {
         false,
         None,
         Some(&fx.experiment_id),
+        false,
     )
     .unwrap_err()
     .to_string();
@@ -267,6 +271,7 @@ fn run_with_exp_tag_refuses_a_conflicting_repo_arg() {
         false,
         None,
         Some(&fx.experiment_id),
+        false,
     )
     .unwrap_err()
     .to_string();
@@ -293,6 +298,7 @@ fn run_without_exp_state_honours_the_repo_arg() {
         false,
         None,
         Some("exp-fresh"),
+        false,
     )
     .unwrap_err()
     .to_string();
