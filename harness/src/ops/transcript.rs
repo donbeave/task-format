@@ -110,9 +110,38 @@ pub fn has_any_goal_status(transcript: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// True when the last assistant event is newer than `max_age` — ground truth for "the agent is
+/// doing something right now". Not file mtime: claude keeps touching the file with heartbeat
+/// entries (token reminders) long after the agent settled, which would keep an idle run labeled
+/// active forever.
+pub fn recently_active(transcript: &Path, max_age: std::time::Duration) -> bool {
+    let Ok(text) = std::fs::read_to_string(transcript) else {
+        return false;
+    };
+    for line in text.lines().rev() {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if value.get("type").and_then(serde_json::Value::as_str) != Some("assistant") {
+            continue;
+        }
+        let Some(ts) = value
+            .get("timestamp")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        else {
+            continue;
+        };
+        let age = chrono::Utc::now().signed_duration_since(ts).to_std().ok();
+        return age.is_some_and(|age| age < max_age);
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     fn write_tmp(content: &str) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
@@ -139,6 +168,43 @@ mod tests {
         let dir = write_tmp("");
         assert!(goal_verdict(&dir.path().join("t.jsonl")).is_none());
         assert!(goal_verdict(dir.path().join("nope.jsonl").as_path()).is_none());
+    }
+
+    #[test]
+    fn recently_active_reads_the_last_assistant_event_not_the_file_mtime() {
+        let dir = tempfile::tempdir().unwrap();
+        let tr = dir.path().join("t.jsonl");
+        // a fresh-looking file whose only assistant event is 10 minutes old: idle
+        let old = (chrono::Utc::now() - chrono::Duration::seconds(600)).to_rfc3339();
+        std::fs::write(
+            &tr,
+            format!(
+                "{{\"type\":\"assistant\",\"timestamp\":\"{old}\"}}\n{{\"type\":\"system\"}}\n"
+            ),
+        )
+        .unwrap();
+        assert!(!recently_active(&tr, Duration::from_secs(300)));
+        assert!(recently_active(&tr, Duration::from_secs(700)));
+
+        // a recent assistant event: active, even with noise after it
+        let now = chrono::Utc::now().to_rfc3339();
+        std::fs::write(
+            &tr,
+            format!(
+                "{{\"type\":\"assistant\",\"timestamp\":\"{now}\"}}\n{{\"type\":\"attachment\"}}\n"
+            ),
+        )
+        .unwrap();
+        assert!(recently_active(&tr, Duration::from_secs(300)));
+
+        // no assistant events at all: never "active"
+        std::fs::write(&tr, "{\"type\":\"system\"}\n").unwrap();
+        assert!(!recently_active(&tr, Duration::from_secs(300)));
+        // missing file: never active
+        assert!(!recently_active(
+            dir.path().join("nope.jsonl").as_path(),
+            Duration::from_secs(1)
+        ));
     }
 
     #[test]

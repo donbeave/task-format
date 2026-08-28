@@ -131,6 +131,14 @@ pub fn check(manifest: &Manifest, _run_dir: &std::path::Path) -> anyhow::Result<
         }
     }
 
+    // 4. herdr misreads a busy claude (spinner frames classify as idle/blocked). Fresh transcript
+    //    activity is ground truth for "working right now", so settle states downgrade to RUNNING;
+    //    verdicts and hard exits are never touched.
+    if matches!(state.as_str(), IDLE | BLOCKED) {
+        let active = transcript::recently_active(&tr, ACTIVE_WINDOW);
+        state = downgrade_if_active(&state, active).to_string();
+    }
+
     Ok(Status {
         state,
         herdr_status: hstate,
@@ -138,6 +146,21 @@ pub fn check(manifest: &Manifest, _run_dir: &std::path::Path) -> anyhow::Result<
         goal_result_line: result,
         goal_verdicts: verdicts,
     })
+}
+
+/// Transcript silence that still counts as "the agent may be mid-tool" (a cold cargo build writes
+/// no events until it finishes).
+const ACTIVE_WINDOW: Duration = Duration::from_secs(300);
+
+/// herdr misclassifies a busy claude: spinner frames read as idle/blocked. The transcript is the
+/// ground truth for "is the agent doing anything": fresh activity downgrades those two states
+/// back to RUNNING. Verdicts and hard exits are never downgraded.
+fn downgrade_if_active(state: &str, transcript_active: bool) -> &str {
+    if transcript_active && matches!(state, IDLE | BLOCKED) {
+        RUNNING
+    } else {
+        state
+    }
 }
 
 fn json_line(status: &Status) -> String {
@@ -276,5 +299,34 @@ mod tests {
         assert!(!confirmed);
         let (_, confirmed) = observe(&candidate, 45, GOAL_MET);
         assert!(confirmed);
+    }
+
+    #[test]
+    fn fresh_transcript_activity_downgrades_settle_states_only() {
+        assert_eq!(downgrade_if_active(IDLE, true), RUNNING);
+        assert_eq!(downgrade_if_active(BLOCKED, true), RUNNING);
+        assert_eq!(downgrade_if_active(IDLE, false), IDLE);
+        assert_eq!(downgrade_if_active(BLOCKED, false), BLOCKED);
+        // verdicts and hard exits survive an active transcript
+        assert_eq!(downgrade_if_active(GOAL_MET, true), GOAL_MET);
+        assert_eq!(
+            downgrade_if_active(CONTAINER_STOPPED, true),
+            CONTAINER_STOPPED
+        );
+        assert_eq!(downgrade_if_active(AGENT_EXITED, true), AGENT_EXITED);
+    }
+
+    #[test]
+    fn recently_active_follows_the_last_assistant_event() {
+        let dir = tempfile::tempdir().unwrap();
+        let tr = dir.path().join("t.jsonl");
+        // fresh mtime but a 10-minute-old assistant event: idle, not active
+        let old = (chrono::Utc::now() - chrono::Duration::seconds(600)).to_rfc3339();
+        std::fs::write(
+            &tr,
+            format!("{{\"type\":\"assistant\",\"timestamp\":\"{old}\"}}\n"),
+        )
+        .unwrap();
+        assert!(!transcript::recently_active(&tr, Duration::from_secs(300)));
     }
 }

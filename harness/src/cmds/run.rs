@@ -108,8 +108,9 @@ pub fn dispatch_one(
     redact::emit(&format!("== clone {repo_url}"));
     git::clone_main(repo_url, &workspace)
         .with_context(|| format!("cloning {repo_url} into {}", workspace.display()))?;
+    let clone_sha = git::head(&workspace)?;
 
-    // ---------- 2. trusted overlay + the trusted base commit (workspace-local, never pushed) ----------
+    // ---------- 2. trusted overlay + the trusted base commit (pushed with the task's chain) ----------
     let trusted = task_dir.join("trusted");
     if trusted.is_dir() {
         crate::ops::copy_tree_filtered(&trusted, &workspace, &|rel| rel != Path::new(".git"))?;
@@ -183,6 +184,7 @@ pub fn dispatch_one(
         task: task_id.to_string(),
         repo_url: repo_url.to_string(),
         base_sha,
+        clone_sha: clone_sha.clone(),
         session_id,
         pane: String::new(),
         agent_name: "task".to_string(),

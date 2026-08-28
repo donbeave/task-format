@@ -25,7 +25,7 @@ harness/
 | `decisions.md` | `/task` ro | planner | the fixed decisions verbatim (mounted next to the README). |
 | `AGENTS.md` (+ `CLAUDE.md` symlink) | `/task` ro | fixed | execution protocol, progress grammar, final report; the gate is `taskfmt verify`. |
 | `verify.toml` | `/task` ro | planner | declarative gate inputs: `focused`/`regression`/`lint` command lists, `forbidden_patterns` (regex + optional paths), `forbidden_paths` (must not be created or modified vs the base commit), `required_paths`, `allowed_globs` (== `expected_paths`). |
-| `trusted/` | overlay → `/work`, committed as the run-local trusted base commit (never pushed) | planner | tests, support harness, seed SQL, `render.rs`, fonts — verification material, outside every whitelist. |
+| `trusted/` | overlay → `/work`, committed as the trusted base commit (lands on `main` ahead of the agent's commit — a push carries ancestors, and later tasks build on this material) | planner | tests, support harness, seed SQL, `render.rs`, fonts — verification material, outside every whitelist. |
 | `progress.md` | `/progress` rw | agent | generated per run by `taskfmt progress-init` from `README.md`; never committed. |
 
 Scope base resolution: `--base` > `TASKFMT_BASE` env (set to the trusted commit by dispatch) > `base_ref` in verify.toml > `baseline` tag.
@@ -57,7 +57,7 @@ Globals: `--config PATH` (default `experiment.toml`), `--auto`, `--yes`, `-v`. I
 ## Lifecycle (one experiment, gate-protected)
 
 1. `taskfmt repo create` — disposable private GitHub repo; `main` = one allow-empty bootstrap commit.
-2. For every task in order: fresh clone/fetch of `origin/main` → record base SHA → overlay `trusted/` → commit it as the trusted base (workspace-local, never pushed) → lint → `progress-init` → container (`docker run -d --privileged`, no `--rm`; `/work`, `/task:ro`, `/progress`, `/agent-home`, `/out`, `/seed:ro`) → prereq stage (inner dockerd `vfs`, `docker load` postgres, standing `prereq-postgres`, seed restore) → herdr pane + agent → inject the one-line `/goal` prompt.
+2. For every task in order: fresh clone/fetch of `origin/main` → record base SHA → overlay `trusted/` → commit it as the trusted base (pushed together with the task commit) → lint → `progress-init` → container (`docker run -d --privileged`, no `--rm`; `/work`, `/task:ro`, `/progress`, `/agent-home`, `/out`, `/seed:ro`) → prereq stage (inner dockerd `vfs`, `docker load` postgres, standing `prereq-postgres`, seed restore) → herdr pane + agent → inject the one-line `/goal` prompt.
 3. On completion: host `gate` re-runs `taskfmt verify` against trusted copies. PASS ⇒ `promote` (`git commit -s`, push `main`). FAIL/BLOCKED ⇒ never pushed; the experiment stops there.
 4. Every step lands in `runs/<id>/manifest.json` (+ `experiment.json` for the loop): repo URL, base/result SHAs, gate verdict, agent profile/model/effort, session id, container.
 

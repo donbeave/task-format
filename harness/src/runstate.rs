@@ -29,8 +29,12 @@ pub struct Manifest {
     pub effort: String,
     pub task: String,
     pub repo_url: String,
-    /// The trusted base commit the workspace started from (never pushed).
+    /// The trusted base commit the workspace started from (pushed with the task's chain).
     pub base_sha: String,
+    /// `origin/main` HEAD the fresh clone started from (empty for manifests written before this
+    /// field existed; it is the trusted commit's parent unless the overlay was a no-op).
+    #[serde(default)]
+    pub clone_sha: String,
     pub session_id: String,
     /// herdr pane id of the workspace root pane.
     pub pane: String,
@@ -241,6 +245,7 @@ mod tests {
             task: "TASK-101".into(),
             repo_url: "https://github.com/donbeave/x.git".into(),
             base_sha: "abc123".into(),
+            clone_sha: "parent0".into(),
             session_id: "00000000-0000-4000-8000-000000000000".into(),
             pane: "pane-1".into(),
             agent_name: default_agent_name(),

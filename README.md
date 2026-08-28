@@ -24,6 +24,6 @@ experiment.toml           versioned experiment manifest (github, images, runtime
 - v4 reference package (schema task/v4): task content in `README.md`, protocol in `AGENTS.md` (+`CLAUDE.md` symlink), declarative gate config `verify.toml`; the gate is the baked-in `taskfmt verify` binary.
 - Task sequence TASK-001..007 starts at repository bootstrap from an empty `main` and ends with the complete `pgtui` app (Rust ratatui PostgreSQL browser). No task assumes fixture-supplied application code; each package ships `trusted/` verification material overlaid at dispatch (D25, D28).
 - Execution tooling is one Rust CLI, `taskfmt` (D24). No shell scripts in the execution path. Container images bake the binary; the entrypoint/prereq stage is Rust.
-- Lifecycle (D25): disposable GitHub repo with allow-empty bootstrap `main`; per task fresh clone → trusted overlay commit (never pushed) → headed herdr run in a persistent privileged container → host gate → `git commit -s` + push only on PASS.
+- Lifecycle (D25): disposable GitHub repo with allow-empty bootstrap `main`; per task fresh clone → trusted overlay commit (pushed as part of the task's chain, before the agent's commit) → headed herdr run in a persistent privileged container → host gate → `git commit -s` + push only on PASS.
 - Agents run through the `zai-flash` profile: Z.ai Anthropic-compatible endpoint, GLM-5.3-Flash, effort low, token from 1Password via `op read`, injected by env-file, redacted everywhere (D27).
 - Decisions + evidence: `docs/research/RESEARCH-FINDINGS.md` (D1–D30).
