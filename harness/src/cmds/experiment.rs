@@ -82,7 +82,7 @@ pub fn run(
             index + 1 + done.len(),
             selection.len()
         ));
-        let outcome = match crate::cmds::run::dispatch_one(
+        let mut outcome = match crate::cmds::run::dispatch_one(
             &resolved,
             &profile_name,
             None,
@@ -99,13 +99,16 @@ pub fn run(
             }
         };
 
-        // attached: poll until terminal, gate, promote only on PASS
+        // attached: poll until terminal, gate, promote only on PASS. wait_and_gate records the
+        // gate into the outcome's manifest, so the promotable check below sees the real verdict.
+        let mut manifest = outcome.manifest;
         let status = crate::cmds::run::wait_and_gate(
-            &outcome.manifest,
+            &mut manifest,
             &outcome.run_dir,
             &resolved,
             Some(resolved.cfg.runtime.kill_after_min),
         )?;
+        outcome.manifest = manifest;
         let gated = outcome.manifest.gate.as_ref();
         let mut entry = crate::runstate::ExperimentTask {
             task: task_id.clone(),
@@ -148,6 +151,8 @@ pub fn run(
                 return Ok(1);
             }
         }
+        // a re-run of a task replaces its earlier (unpushed) entry instead of stacking a dup
+        state.tasks.retain(|done| done.task != *task_id);
         state.tasks.push(entry);
         state.save(&state_file)?;
     }

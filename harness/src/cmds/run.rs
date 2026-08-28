@@ -57,7 +57,8 @@ pub fn run(
     )?;
 
     if wait {
-        let status = wait_and_gate(&outcome.manifest, &outcome.run_dir, &resolved, kill_after)?;
+        let mut manifest = outcome.manifest;
+        let status = wait_and_gate(&mut manifest, &outcome.run_dir, &resolved, kill_after)?;
         return Ok(if status.state == crate::cmds::status::GOAL_MET {
             0
         } else {
@@ -248,9 +249,10 @@ pub fn dispatch_one(
     })
 }
 
-/// `--wait`: poll until the run is terminal, then gate and record the verdict.
+/// `--wait`: poll until the run is terminal, then gate and record the verdict. The gate record
+/// lands in the caller's manifest (and on disk) — the caller gates promotion on it.
 pub fn wait_and_gate(
-    manifest: &Manifest,
+    manifest: &mut Manifest,
     run_dir: &Path,
     resolved: &Resolved,
     kill_after_min: Option<u64>,
@@ -261,8 +263,7 @@ pub fn wait_and_gate(
         run_dir,
         Duration::from_secs(60 * minutes),
     )?;
-    let mut owned = manifest.clone();
-    let passed = crate::cmds::gate::gate_run(run_dir, resolved, &mut owned)?;
+    let passed = crate::cmds::gate::gate_run(run_dir, resolved, manifest)?;
     redact::emit(&format!(
         "GATE {} {}",
         manifest.run,
