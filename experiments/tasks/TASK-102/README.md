@@ -20,12 +20,12 @@ protected_paths:
   - "crates/pgtui/Cargo.toml"
   - "justfile"
   - "rust-toolchain.toml"
-  - "CLAUDE.md"
+  - "AGENTS.md"
 ---
 
 # TASK-102 — Create a new connection from the TUI and show it selected in the list
 
-Execution protocol, progress file grammar, and final report format are in `/task/AGENT.md`. This file is read-only. It defines WHAT must become true; it does not change during execution.
+Execution protocol, progress file grammar, and final report format are in `/task/AGENTS.md`. This file is read-only. It defines WHAT must become true; it does not change during execution.
 
 ## Goal
 
@@ -44,7 +44,7 @@ Desired behavior:
 
 Read before editing (non-normative hints, in order):
 
-1. `CLAUDE.md` — build/test/lint commands.
+1. `AGENTS.md` — build/test/lint commands.
 2. `/task/decisions.md` — verbatim D-* text (form keys D-032, validation strings, layout D-060 CreateConnection). Decided; do not reopen.
 3. `crates/pgtui/src/app.rs`, `keys.rs`, `runtime.rs` — existing `Msg`/`Effect`/`Status` handling to extend.
 4. `crates/pgtui/src/store/mod.rs` — frozen `ConnectionStore::insert` + `StoreError::DuplicateName` (protected; use, do not edit).
@@ -62,7 +62,7 @@ Expected before this change: compile error (`CreateForm` has no fields; `pgtui::
 
 ## Preconditions
 
-Each precondition has a command. If a command fails, stop and report `BLOCKED` (see AGENT.md). Do not work around it.
+Each precondition has a command. If a command fails, stop and report `BLOCKED` (see AGENTS.md). Do not work around it.
 
 - **P-001:** toolchain available — `cargo --version`
 - **P-002:** test support present — `test -f crates/pgtui/tests/support/mod.rs`

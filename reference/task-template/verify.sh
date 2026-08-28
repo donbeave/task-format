@@ -117,7 +117,7 @@ check_forbidden_paths() { local rc=0 p; for p in "${FORBIDDEN_PATHS[@]}"; do if 
 check_required_paths()  { local rc=0 p; for p in "${REQUIRED_PATHS[@]}";  do if [[ -e "$p" ]]; then echo "ok $p"; else echo "MISSING $p"; rc=1; fi; done; return $rc; }
 
 # progress.md: checklist == README.md checklist modulo [ ]/[x]; all leaves checked;
-# parent checked <=> all children checked; STATE=DONE; CURRENT=NONE.
+# parent checked <=> all children checked; TASK == README id; STATE=DONE; CURRENT=NONE; BASELINE recorded.
 checklist_lines() { awk '/<!-- checklist:start -->/{f=1;next} /<!-- checklist:end -->/{f=0} f' "$1"; }
 check_progress() {
   [[ -f "$PROGRESS_FILE" ]] || { echo "missing $PROGRESS_FILE"; return 1; }
@@ -149,12 +149,17 @@ check_progress() {
       printf "leaves=%d checked=%d\n", leaves, done
       exit bad
     }' || return 1
-  local state cur
+  local state cur task id baseline
+  task="$(sed -nE 's/^TASK: *(TASK-[0-9]+).*/\1/p' "$PROGRESS_FILE" | head -1)"
+  id="$(awk 'NR==1 && $0!="---"{exit} NR==1{next} /^---$/{exit} {print}' "$TASK_FILE" | sed -nE 's/^id: *"?(TASK-[0-9]+)"?.*/\1/p' | head -1)"
   state="$(sed -nE 's/^STATE: *([A-Z_]+).*/\1/p' "$PROGRESS_FILE" | head -1)"
   cur="$(sed -nE 's/^CURRENT: *([0-9.]+|NONE).*/\1/p' "$PROGRESS_FILE" | head -1)"
+  baseline="$(sed -nE 's/^BASELINE: *(.*[^ ]) *$/\1/p' "$PROGRESS_FILE" | head -1)"
+  [[ -n "$task" && "$task" == "$id" ]] || { echo "TASK=$task (want $id from README.md)"; return 1; }
   [[ "$state" == "DONE" ]] || { echo "STATE=$state (want DONE)"; return 1; }
   [[ "$cur" == "NONE" ]]   || { echo "CURRENT=$cur (want NONE)"; return 1; }
-  echo "ok STATE=DONE CURRENT=NONE"
+  [[ -n "$baseline" && "$baseline" != "<not run>" ]] || { echo "BASELINE not recorded (want '<command> -> <observed result>')"; return 1; }
+  echo "ok TASK=$task STATE=DONE CURRENT=NONE BASELINE recorded"
 }
 
 # ---------- run ----------

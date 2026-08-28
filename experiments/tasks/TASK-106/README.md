@@ -24,12 +24,12 @@ protected_paths:
   - "crates/pgtui/Cargo.toml"
   - "justfile"
   - "rust-toolchain.toml"
-  - "CLAUDE.md"
+  - "AGENTS.md"
 ---
 
 # TASK-106 — Disconnect returns to the list, exit restores the terminal, gallery renders every screen
 
-Execution protocol, progress file grammar, and final report format are in `/task/AGENT.md`. Verbatim fixed-decision text is in `/task/decisions.md`. Both are read-only, as is this file.
+Execution protocol, progress file grammar, and final report format are in `/task/AGENTS.md`. Verbatim fixed-decision text is in `/task/decisions.md`. Both are read-only, as is this file.
 
 ## Goal
 
@@ -52,7 +52,7 @@ Desired behavior:
 
 Read before editing (non-normative hints, in order):
 
-1. `CLAUDE.md` — build, test, lint commands.
+1. `AGENTS.md` — build, test, lint commands.
 2. `/task/decisions.md` — D-002, D-012, D-024, D-030, D-033, D-040, D-041, D-070, D-071, D-080 verbatim; decided, do not reopen.
 3. `crates/pgtui/src/render.rs` — protected; the only render implementation. The bin calls it; it must not copy it.
 4. `crates/pgtui/src/runtime.rs`, `crates/pgtui/src/db/postgres.rs` — where the session and its connection task live.
@@ -72,7 +72,7 @@ Expected before this change: `d_disconnects` fails — `d` is a no-op (`screen =
 
 ## Preconditions
 
-Each precondition has a command. If a command fails, stop and report `BLOCKED` (see AGENT.md). Do not work around it.
+Each precondition has a command. If a command fails, stop and report `BLOCKED` (see AGENTS.md). Do not work around it.
 
 - **P-001:** toolchain available — `cargo --version`
 - **P-002:** protected test support present — `test -f crates/pgtui/tests/support/mod.rs`

@@ -7,6 +7,7 @@ verify: "/task/verify.sh"
 expected_paths:
   - "src/auth/session/*"
   - "tests/auth/*"
+  - "Cargo.lock"
 protected_paths:
   - "tests/fixtures/refresh-token-contract.json"
   - "tests/auth/valid_refresh_rotation.rs"
@@ -14,7 +15,7 @@ protected_paths:
 
 # TASK-042 — Reject expired refresh tokens before session rotation
 
-Execution protocol, progress file grammar, and final report format are in `/task/AGENT.md`. This file is read-only.
+Execution protocol, progress file grammar, and final report format are in `/task/AGENTS.md`. This file is read-only.
 
 ## Goal
 
@@ -33,7 +34,7 @@ Desired behavior:
 
 Read before editing (non-normative hints, in order):
 
-1. `CLAUDE.md` — test and lint commands.
+1. `AGENTS.md` — test and lint commands.
 2. `src/auth/session/rotate.rs` — the rotation flow; the ordering bug is here.
 3. `src/auth/token_store.rs` — `validate()` already returns `TokenError::Expired`; reuse it.
 4. `docs/decisions/D-041.md` — error-code contract; decided, do not reopen.

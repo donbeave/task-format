@@ -21,7 +21,7 @@ pgtui-101/
   .gitignore                         target/  *.snap.new
   .cargo/config.toml                 [env] TESTCONTAINERS_COMMAND = "remove"
   justfile                           test, test-unit, test-pg, lint, snap, gallery (D-005)
-  CLAUDE.md                          agent-facing repo instructions (below); AGENTS.md -> symlink to CLAUDE.md
+  AGENTS.md                          agent-facing repo instructions (below); CLAUDE.md -> symlink to AGENTS.md
   README.md                          one paragraph: what pgtui is; TASK-106 appends the screen list
   crates/pgtui/Cargo.toml            [lib] + [[bin]] pgtui (src/main.rs) + [[bin]] gallery (src/bin/gallery.rs); all deps `workspace = true`
   crates/pgtui/src/lib.rs            exactly `pub mod render;`
@@ -62,7 +62,7 @@ Every crate any of the six tasks needs is declared here so no task ever edits `C
 
 Edition `2024`, `rust-version = "1.88"` (ratatui 0.30 MSRV; sqlx's 1.94 floor no longer applies). `Cargo.lock` must build offline after one warm-up on the harness image.
 
-## `CLAUDE.md` content (fixture, protected)
+## `AGENTS.md` content (fixture, protected; `CLAUDE.md` is a symlink to it)
 
 Commands only, no architecture (architecture lives in `README.md`/`decisions.md`):
 

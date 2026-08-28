@@ -24,12 +24,12 @@ protected_paths:
   - "crates/pgtui/Cargo.toml"
   - "justfile"
   - "rust-toolchain.toml"
-  - "CLAUDE.md"
+  - "AGENTS.md"
 ---
 
 # TASK-104 — Preview a selected table in a sortable grid
 
-Execution protocol, progress file grammar, and final report format are in `/task/AGENT.md`. Verbatim fixed-decision text is in `/task/decisions.md`. Both are read-only, as is this file.
+Execution protocol, progress file grammar, and final report format are in `/task/AGENTS.md`. Verbatim fixed-decision text is in `/task/decisions.md`. Both are read-only, as is this file.
 
 ## Goal
 
@@ -51,7 +51,7 @@ Desired behavior:
 
 Read before editing (non-normative hints, in order):
 
-1. `CLAUDE.md` — build, test, lint commands.
+1. `AGENTS.md` — build, test, lint commands.
 2. `/task/decisions.md` — D-025, D-026, D-033, D-041, D-050..D-053, D-060, D-061, D-070..D-072 verbatim; decided, do not reopen.
 3. `crates/pgtui/src/app.rs`, `crates/pgtui/src/keys.rs` — `Msg`, `Effect`, `SessionView`, `Focus`, Browser key mapping to extend.
 4. `crates/pgtui/src/db/postgres.rs` — how `list_tables` uses `simple_query`; `query` sits beside it.
@@ -70,7 +70,7 @@ Expected before this change: `error[E0432]: unresolved import` (`pgtui::grid` mi
 
 ## Preconditions
 
-Each precondition has a command. If a command fails, stop and report `BLOCKED` (see AGENT.md). Do not work around it.
+Each precondition has a command. If a command fails, stop and report `BLOCKED` (see AGENTS.md). Do not work around it.
 
 - **P-001:** toolchain available — `cargo --version`
 - **P-002:** protected test support present — `test -f crates/pgtui/tests/support/mod.rs`

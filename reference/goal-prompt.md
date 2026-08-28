@@ -1,11 +1,11 @@
 # Launch prompt
 
-Keep the `/goal` condition under 4,000 characters; the evaluator (Haiku Stop hook) sees only the transcript, so the agent must surface the verifier output. Everything else lives in `/task/AGENT.md`.
+Keep the `/goal` condition under 4,000 characters; the evaluator (Haiku Stop hook) sees only the transcript, so the agent must surface the verifier output. Everything else lives in `/task/AGENTS.md`.
 
 ## Claude Code (`/goal`)
 
 ```text
-/goal Implement the single task in /task/README.md following /task/AGENT.md exactly.
+/goal Implement the single task in /task/README.md following /task/AGENTS.md exactly.
 Done when: /task/verify.sh has been run from /work in this session, exited 0, and
 printed DONE as its last line, with that full output shown in the transcript;
 /progress/progress.md has STATE: DONE with every checklist item [x]; and the final
@@ -37,5 +37,5 @@ codex exec --json --skip-git-repo-check -C /work \
   --dangerously-bypass-approvals-and-sandbox \
   --add-dir /task --add-dir /progress \
   -o /out/last-message.txt \
-  "Implement the single task in /task/README.md following /task/AGENT.md exactly. Finish when /task/verify.sh exits 0 with last line DONE, /progress/progress.md has STATE: DONE, and the final report ending in GOAL_RESULT is printed. Nothing under /task/ may change. If a precondition fails stop with STATUS: BLOCKED; if scope or decisions must change stop with STATUS: NEEDS_REPLAN."
+  "Implement the single task in /task/README.md following /task/AGENTS.md exactly. Finish when /task/verify.sh exits 0 with last line DONE, /progress/progress.md has STATE: DONE, and the final report ending in GOAL_RESULT is printed. Nothing under /task/ may change. If a precondition fails stop with STATUS: BLOCKED; if scope or decisions must change stop with STATUS: NEEDS_REPLAN."
 ```

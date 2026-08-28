@@ -13,7 +13,7 @@ protected_paths:        # hashed at dispatch; any change fails the gate
 
 # TASK-000 — <imperative title>
 
-Execution protocol, progress file grammar, and final report format are in `/task/AGENT.md`. This file is read-only. It defines WHAT must become true; it does not change during execution.
+Execution protocol, progress file grammar, and final report format are in `/task/AGENTS.md`. This file is read-only. It defines WHAT must become true; it does not change during execution.
 
 ## Goal
 
@@ -48,7 +48,7 @@ Expected before this change: `<concise failing result>`
 
 ## Preconditions
 
-Each precondition has a command. If a command fails, stop and report `BLOCKED` (see AGENT.md). Do not work around it.
+Each precondition has a command. If a command fails, stop and report `BLOCKED` (see AGENTS.md). Do not work around it.
 
 - **P-001:** <state> — `<command that exits 0 when true>`
 - **P-002:** <state> — `<command>`

@@ -7,14 +7,14 @@ You are implementing exactly one task: `/task/README.md`. This protocol is the s
 | Path | Access | Purpose |
 | --- | --- | --- |
 | `/task/README.md` | read-only | The contract: goal, requirements, acceptance criteria, decisions, checklist. |
-| `/task/AGENT.md` | read-only | This protocol. |
+| `/task/AGENTS.md` | read-only | This protocol. `/task/CLAUDE.md` is a symlink to it. |
 | `/task/verify.sh` | read-only | The completion gate. Run it; never edit it. |
 | `/progress/progress.md` | read-write | The only file you maintain for state. Checklist copy + log + handoff. |
 | `/work/` | read-write | The repository. All code changes happen here. |
 
 ## Protocol
 
-1. Read `/task/README.md` fully, then the repository instructions (`CLAUDE.md` / `AGENTS.md`), then the files listed under "Read before editing".
+1. Read `/task/README.md` fully, then the repository instructions (`AGENTS.md`; `CLAUDE.md` is a symlink to it), then the files listed under "Read before editing".
 2. If `/progress/progress.md` has `STATE: IN_PROGRESS` you are resuming: read it, run `git status` and `git diff --stat`, and continue from `CURRENT:`. Do not reconstruct state from memory.
 3. State in the transcript: task ID, the one-sentence goal, the acceptance-criterion IDs, and the first leaf you will work on.
 4. Run every precondition command. If one fails, write `STATE: BLOCKED` and the failing command to `progress.md`, then emit the final report with `STATUS: BLOCKED`. Do not work around a failed precondition.
@@ -46,7 +46,7 @@ CURRENT_FAILURE: <exact failing check or none>
 DECISIONS: <incidental choices or none>
 ```
 
-Rules: never change checklist text, IDs, order, or indentation — only the three-character checkbox token. Log is append-only; log statuses are `DONE | FAILED | REOPENED | BLOCKED`. Missing work is not a new checklist line; it is `NEEDS_REPLAN`.
+Rules: never change checklist text, IDs, order, or indentation — only the three-character checkbox token. Never change `TASK:`. `BASELINE:` must hold the real command and observed result before `DONE`; the gate rejects `<not run>`. Log is append-only; log statuses are `DONE | FAILED | REOPENED | BLOCKED`. Missing work is not a new checklist line; it is `NEEDS_REPLAN`.
 
 ## Prohibited
 

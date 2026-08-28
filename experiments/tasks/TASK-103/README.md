@@ -22,12 +22,12 @@ protected_paths:
   - "crates/pgtui/Cargo.toml"
   - "justfile"
   - "rust-toolchain.toml"
-  - "CLAUDE.md"
+  - "AGENTS.md"
 ---
 
 # TASK-103 — Connect to PostgreSQL from a saved connection and list its tables in a sidebar
 
-Execution protocol, progress file grammar, and final report format are in `/task/AGENT.md`. This file is read-only. It defines WHAT must become true; it does not change during execution.
+Execution protocol, progress file grammar, and final report format are in `/task/AGENTS.md`. This file is read-only. It defines WHAT must become true; it does not change during execution.
 
 ## Goal
 
@@ -46,7 +46,7 @@ Desired behavior:
 
 Read before editing (non-normative hints, in order):
 
-1. `CLAUDE.md` — build/test/lint commands; `docker` is required for `pg_*` tests.
+1. `AGENTS.md` — build/test/lint commands; `docker` is required for `pg_*` tests.
 2. `/task/decisions.md` — verbatim D-* text (client/protocol D-023, DSN D-024, SQL D-025, types D-026, Browser keys D-033, layout D-060, seed D-072). Decided; do not reopen.
 3. `crates/pgtui/tests/support/mod.rs` — `pg_container() -> (ContainerAsync<Postgres>, ConnParams)` and `fake_data::tables()`; shows the `ConnParams` and `PgSession` surface the tests compile against.
 4. `crates/pgtui/tests/pg_connect_test.rs`, `app_browser_test.rs`, `pg_runtime_connect_test.rs`, `screen_browser_test.rs` — the oracles.
@@ -64,7 +64,7 @@ Expected before this change: `error[E0433]`/`E0432` — `pgtui::db::postgres` un
 
 ## Preconditions
 
-Each precondition has a command. If a command fails, stop and report `BLOCKED` (see AGENT.md). Do not work around it.
+Each precondition has a command. If a command fails, stop and report `BLOCKED` (see AGENTS.md). Do not work around it.
 
 - **P-001:** toolchain available — `cargo --version`
 - **P-002:** test support present — `test -f crates/pgtui/tests/support/mod.rs`

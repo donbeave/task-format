@@ -23,12 +23,12 @@ protected_paths:
   - "crates/pgtui/Cargo.toml"
   - "justfile"
   - "rust-toolchain.toml"
-  - "CLAUDE.md"
+  - "AGENTS.md"
 ---
 
 # TASK-105 — Run custom SQL from a dedicated screen into a plain grid
 
-Execution protocol, progress file grammar, and final report format are in `/task/AGENT.md`. Verbatim fixed-decision text is in `/task/decisions.md`. Both are read-only, as is this file.
+Execution protocol, progress file grammar, and final report format are in `/task/AGENTS.md`. Verbatim fixed-decision text is in `/task/decisions.md`. Both are read-only, as is this file.
 
 ## Goal
 
@@ -51,7 +51,7 @@ Desired behavior:
 
 Read before editing (non-normative hints, in order):
 
-1. `CLAUDE.md` — build, test, lint commands.
+1. `AGENTS.md` — build, test, lint commands.
 2. `/task/decisions.md` — D-010, D-011, D-013, D-025, D-026, D-034, D-041, D-050, D-060, D-071, D-072 verbatim; decided, do not reopen.
 3. `crates/pgtui/src/app.rs`, `crates/pgtui/src/keys.rs` — Browser/grid handling from TASK-104; the CustomSql arm is new.
 4. `crates/pgtui/src/db/postgres.rs`, `crates/pgtui/src/db/mod.rs` — `query` over `simple_query`; extend result handling and add `DbError::MultiStatement`.
@@ -70,7 +70,7 @@ Expected before this change: `navigation_x_opens_sql_screen` fails — assertion
 
 ## Preconditions
 
-Each precondition has a command. If a command fails, stop and report `BLOCKED` (see AGENT.md). Do not work around it.
+Each precondition has a command. If a command fails, stop and report `BLOCKED` (see AGENTS.md). Do not work around it.
 
 - **P-001:** toolchain available — `cargo --version`
 - **P-002:** protected test support present — `test -f crates/pgtui/tests/support/mod.rs`

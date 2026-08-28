@@ -15,12 +15,12 @@ protected_paths:
   - "crates/pgtui/Cargo.toml"
   - "justfile"
   - "rust-toolchain.toml"
-  - "CLAUDE.md"
+  - "AGENTS.md"
 ---
 
 # TASK-101 — List saved PostgreSQL connections from a Turso store in a ratatui shell
 
-Execution protocol, progress file grammar, and final report format are in `/task/AGENT.md`. This file is read-only. It defines WHAT must become true; it does not change during execution.
+Execution protocol, progress file grammar, and final report format are in `/task/AGENTS.md`. This file is read-only. It defines WHAT must become true; it does not change during execution.
 
 ## Goal
 
@@ -39,7 +39,7 @@ Desired behavior:
 
 Read before editing (non-normative hints, in order):
 
-1. `CLAUDE.md` — build/test/lint commands.
+1. `AGENTS.md` — build/test/lint commands.
 2. `/task/decisions.md` — verbatim D-* text (layout, state machine, store API, keys, exit codes, frame). Decided; do not reopen.
 3. `crates/pgtui/tests/support/mod.rs` — `render_text`, `render_svg`, `key`, `ctrl`, `temp_store` helpers the trusted tests use; shows the exact `App`/`Msg`/`Effect` surface they compile against.
 4. `crates/pgtui/tests/store_test.rs`, `app_connection_list_test.rs`, `screen_connection_list_test.rs`, `cli_test.rs` — the oracles.
@@ -57,7 +57,7 @@ Expected before this change: `error[E0432]: unresolved import` (`pgtui::store` d
 
 ## Preconditions
 
-Each precondition has a command. If a command fails, stop and report `BLOCKED` (see AGENT.md). Do not work around it.
+Each precondition has a command. If a command fails, stop and report `BLOCKED` (see AGENTS.md). Do not work around it.
 
 - **P-001:** toolchain available — `cargo --version`
 - **P-002:** test support present — `test -f crates/pgtui/tests/support/mod.rs`

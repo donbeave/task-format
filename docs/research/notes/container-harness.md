@@ -390,7 +390,7 @@ mkdir -p "$RUN"/{workspace,agent-home,out,task-snapshot}
 cp -a "$TASK_DIR"/. "$RUN/task-snapshot/"                 # pristine, never mounted
 cp -a "$FIXTURE"/. "$RUN/workspace/"
 cp "$TASK_DIR/task.md"     "$RUN/task.md"                 # mutable copy mounted rw
-cp "$TASK_DIR/progress.md" "$RUN/progress.md"
+"$ROOT/../reference/task-template/progress-init.sh" "$TASK_DIR" -o "$RUN/progress.md"   # generated, never stored
 ( cd "$RUN/workspace" && git init -q && git add -A && git commit -qm baseline --no-verify && git tag baseline )
 
 # 2. hashes before (protected.txt lists container paths; map /task→snapshot, /work→workspace)

@@ -250,7 +250,7 @@ collects the result.
 ```text
 /task/               read-only bind mount (owned by harness)
   task.md            contract + static checklist definition
-  AGENT.md           execution protocol, shared across all tasks
+  AGENTS.md           execution protocol, shared across all tasks
   verify.sh          code-level gate; run as: cd /work && /task/verify.sh
 /work/               read-write; the repository checkout
 /work/.goal/         read-write, gitignored; excluded from scope diff
@@ -268,7 +268,7 @@ Rules that follow from the layout, none needing prose:
   `task.md`.
 - The harness, not the agent, re-runs `/task/verify.sh` on the final tree.
   The agent's own runs are for its feedback loop only.
-- Codex parity: identical layout, `AGENT.md` content goes into
+- Codex parity: identical layout, `AGENTS.md` content goes into
   `AGENTS.md`/instructions; nothing in the protocol references Claude-specific
   slash commands.
 
@@ -321,7 +321,7 @@ comment (move to a task linter). These are not task-specific; repeating them
 per task means every task instance re-states the protocol, and any drift
 between instances changes agent behavior for reasons unrelated to the task.
 
-### `/task/AGENT.md` (read-only, shared across all tasks, target 600-900 tokens)
+### `/task/AGENTS.md` (read-only, shared across all tasks, target 600-900 tokens)
 
 - Read order: `task.md`, repo instructions, listed context, then
   `.goal/progress.md` if it exists (resume).
@@ -342,8 +342,8 @@ between instances changes agent behavior for reasons unrelated to the task.
 - Final report grammar (below).
 
 Rationale for the split: the protocol becomes an independent experimental
-variable. Same `AGENT.md`, different `task.md` → measures task-format effect.
-Same `task.md`, different `AGENT.md` → measures protocol effect. v2 entangles
+variable. Same `AGENTS.md`, different `task.md` → measures task-format effect.
+Same `task.md`, different `AGENTS.md` → measures protocol effect. v2 entangles
 both in one file, so no experiment can separate them.
 
 ### `/work/.goal/progress.md` (read-write, agent-owned, machine-parsed)
@@ -448,8 +448,8 @@ not more predictable.
    predictable than the in-agent loop because the stop condition is external
    and identical for Claude Code and Codex.
 4. **Protocol-location ablation** (identical task content; protocol inline in
-   `task.md` vs in `AGENT.md` vs in the launch prompt). Hypothesis: no
-   difference in violations; validates the v3 split and lets `AGENT.md` be
+   `task.md` vs in `AGENTS.md` vs in the launch prompt). Hypothesis: no
+   difference in violations; validates the v3 split and lets `AGENTS.md` be
    frozen across experiments.
 5. **Rule-count ablation** (prohibited list with 6 vs 15 vs 25 items).
    Hypothesis: violation rate of the six core rules is unchanged; extra rules

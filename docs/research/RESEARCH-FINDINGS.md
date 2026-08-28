@@ -57,7 +57,7 @@ Converges on: clear problem, acceptance criteria, file pointers, concrete succes
 | # | Topic | v2 (raw/02) | v3 decision | Reason / evidence |
 | --- | --- | --- | --- | --- |
 | D1 | Where checkbox state lives | Inside `README.md` in marked mutable regions; normalizer before hashing | **`README.md` byte-immutable, read-only mount. Checkboxes live in `progress.md` as a verbatim generated copy of the checklist block; the gate diffs it (modulo `[ ]`/`[x]`) against `README.md`.** | Read-only mount is the only parser-free tamper protection (raw/01). Anthropic: agents "inappropriately change or overwrite" markdown they may edit [A1]. Tested: reworded/reordered copy fails the gate. Keeps your requirement (visible numbered checkboxes) without giving the agent write access to the contract. |
-| D2 | Protocol location | Repeated in every `README.md` (~75–80 rules, ~7.5k tokens) | **Split: `README.md` = task-specific content only (~1.1k tokens template); `AGENT.md` = protocol shared by all tasks (~1k tokens).** | Every instruction-file source warns adherence drops with length [C2][C3][O4]. Split makes protocol an independent experimental variable (same AGENT.md, vary README.md, and vice versa). |
+| D2 | Protocol location | Repeated in every `README.md` (~75–80 rules, ~7.5k tokens) | **Split: `README.md` = task-specific content only (~1.1k tokens template); `AGENTS.md` = protocol shared by all tasks (~1k tokens).** | Every instruction-file source warns adherence drops with length [C2][C3][O4]. Split makes protocol an independent experimental variable (same AGENTS.md, vary README.md, and vice versa). |
 | D3 | Checklist depth / numbering | 4 levels, four-space indent, leaf-only progress, one current leaf | **Kept: IDs `N`…`N.N.N.N`, max depth 4, four spaces per level, leaf-only counting, exactly one `CURRENT` leaf, parents roll up.** Depth 4 is a ceiling, not a target; no single-child levels for show. | Your requirement. GFM task lists are binary; three states via the `CURRENT` pointer [G1]. Depth cap is a task-sizing signal (raw/02). Critique's "flat or 2-level" is recorded as a future ablation (§7), not adopted now. |
 | D4 | Hand-maintained counters | `Leaf progress n/N (x%)`, `LEAVES:`, per-turn counts, report `CHECKLIST` block, timestamps | **Dropped.** Agent writes only checkbox tokens, `STATE`, `CURRENT`, `BASELINE`, log lines, handoff. Counts/percent derived by the gate/harness. No timestamps (harness has them; agents fabricate). | Critique: five projections of one state diverge; v2's own two progress-log copies already differed. |
 | D5 | Checklist leaves that are not verifiable | 1.1 "read context", 1.2 "confirm preconditions", 4.4 "reconcile", 4.5 "prepare report" | **Removed.** Kept: preconditions leaf (commands exist), baseline leaf, implementation leaves, AC proof leaves, diff review leaf, gate leaf. | Unverifiable leaves inflate progress and are invisible to any gate. |
@@ -69,7 +69,7 @@ Converges on: clear problem, acceptance criteria, file pointers, concrete succes
 | D11 | Frontmatter | schema, parent, depends_on, base_ref, subsystem, progress_log, task_contract, checklist config, verification, protected_paths | **Kept: `id`, `title`, `kind`, `verify`, `expected_paths`, `protected_paths`.** DAG metadata belongs to the orchestrator (later). | Fields with no in-container consumer are attention cost. |
 | D12 | verify.sh | Conceptual sketch | **Concrete generic script + `verify.config` + `protected.sha256` manifest + `manifest.sh`.** Structured `CHECK <name> PASS|FAIL` lines, `SUMMARY`, `RESULT`, `DONE` last line only on full pass; ERR trap → never a silent DONE. Checks: protected manifest, scope (git diff vs BASE_REF ∪ staged ∪ untracked vs ALLOWED/DENIED globs), required/forbidden paths, forbidden patterns, focused/regression/lint commands, progress consistency. Same script for agent feedback loop and host gate (env vars point at trusted copies). | Tested on a fixture: baseline FAIL rc=1; solved+DONE rc=0; parent/child, reworded copy, protected tamper, out-of-scope, outer-gate invocation all correct. |
 | D13 | Oracle requirement | Absent | **Required at dispatch:** verify.sh must FAIL on the untouched fixture and PASS with a reference solution. | Harbor mandatory `solve.sh`; Anthropic "reference solution proves the grader" [E2][A5]. |
-| D14 | Container layout | `tasks/TASK-042/` inside repo | **`/task` (ro: README.md, AGENT.md, verify.sh, verify.config, protected.sha256), `/work` (rw fresh fixture copy, `baseline` tag), `/progress` (rw: progress.md).** Task package never inside the repo. | Package inside the repo pollutes the scope diff and can be `git add`ed. Separate `/progress` dir avoids the UNVERIFIED file-bind-over-ro-dir trick. |
+| D14 | Container layout | `tasks/TASK-042/` inside repo | **`/task` (ro: README.md, AGENTS.md, verify.sh, verify.config, protected.sha256), `/work` (rw fresh fixture copy, `baseline` tag), `/progress` (rw: progress.md).** Task package never inside the repo. | Package inside the repo pollutes the scope diff and can be `git add`ed. Separate `/progress` dir avoids the UNVERIFIED file-bind-over-ro-dir trick. |
 | D15 | Launch prompt | ~180-word `/goal` prose, no turn bound | **Short condition (<4,000 chars) naming: verify.sh run+DONE shown in transcript, progress STATE DONE, final report, nothing under /task changed, BLOCKED/NEEDS_REPLAN rules, "stop after 40 turns"; plus `--max-turns 40 --max-budget-usd 10`.** | `/goal` docs [C1]. |
 | D16 | Hooks as gates | v1 implied PostToolUse gates | **Not relied on.** Optional later: `PreToolUse` deny on `/task/*` edits, `SessionStart compact` re-injection. The host gate is the authority. | `PostToolUse` cannot block; Stop hooks capped at 8 [C4]. |
 | D17 | Ordering rule | "numeric depth-first, do not skip" as MUST | **Default ID order; `README.md` may state a different dependency order.** | Over-prescriptive step order is an anti-pattern [A5][E3]. |
@@ -92,15 +92,20 @@ Location: `reference/task-template/` (+ `reference/goal-prompt.md`, `reference/e
 | File | Mount | Owner | Content |
 | --- | --- | --- | --- |
 | `README.md` | `/task` ro | planner | frontmatter (`id,title,kind,verify,expected_paths,protected_paths`); Goal; Context (current/desired, read list, code flow, baseline command + expected failure); Preconditions with commands; Scope in/out; Requirements `R-*`; Acceptance table `AC-*`; Fixed decisions `D-*`; static numbered Checklist between `<!-- checklist:start/end -->`. |
-| `AGENT.md` | `/task` ro | fixed | Files table; 8-step protocol; `progress.md` grammar; 6 prohibitions; BLOCKED/NEEDS_REPLAN; `GOAL_PROGRESS` turn line; final report grammar ending in `GOAL_RESULT`. |
+| `AGENTS.md` (+ `CLAUDE.md` symlink) | `/task` ro | fixed | Files table; 8-step protocol; `progress.md` grammar; 6 prohibitions; BLOCKED/NEEDS_REPLAN; `GOAL_PROGRESS` turn line; final report grammar ending in `GOAL_RESULT`. |
 | `verify.sh` | `/task` ro | fixed | Generic gate (D12). |
 | `verify.config` | `/task` ro | planner | `BASE_REF`, command arrays, forbidden patterns/paths, required paths, allowed/denied globs, extra checks. |
 | `protected.sha256` | `/task` ro | dispatch tool | `manifest.sh gen` output; workspace-relative paths. |
-| `progress.md` | `/progress` rw | agent | `TASK/STATE/CURRENT/BASELINE` header; verbatim checklist copy; append-only `## Log` (`- <id> | DONE|FAILED|REOPENED|BLOCKED | <command -> result>`); `## Handoff` (`NEXT`, `CURRENT_FAILURE`, `DECISIONS`). |
+| `progress.md` | `/progress` rw | agent | **Generated per run by `progress-init.sh` from `README.md`; never stored in the repo.** `TASK/STATE/CURRENT/BASELINE` header; verbatim checklist copy; append-only `## Log` (`- <id> | DONE|FAILED|REOPENED|BLOCKED | <command -> result>`); `## Handoff` (`NEXT`, `CURRENT_FAILURE`, `DECISIONS`). |
+| `task-lint.sh` | dispatch | fixed | Author checklist as a program: frontmatter, sections, placeholders, `P-*` commands, `AC-*` rows, checklist grammar/contiguity/depth/leaf count/evidence/AC coverage/gate leaf, `verify.config` ↔ frontmatter consistency. |
+| `progress-init.sh` | dispatch | fixed | Lints, then emits the initial `progress.md`. Only way a `progress.md` comes into existence. |
+| `selftest.sh` | dispatch | fixed | Throwaway-fixture proof that lint rejects broken contracts and the gate fails on every tamper (`STATE`, `CURRENT`, `BASELINE`, `TASK`, parent/child, reword, delete, add) and passes only on the complete `DONE` file. |
 
-Checklist rules (in `README.md` header + AGENT.md): IDs `N`, `N.N`, `N.N.N`, `N.N.N.N`; exactly four spaces per level; depth = ID components; siblings contiguous from 1; leaf = item with no children; only leaves count; only a leaf may be `CURRENT`; parent `[x]` ⇔ all children `[x]`; 5–20 leaves; every leaf states what becomes true + evidence command; agent never edits text/IDs/order/indent; missing work → `NEEDS_REPLAN`.
+Checklist rules (in `README.md` header + AGENTS.md): IDs `N`, `N.N`, `N.N.N`, `N.N.N.N`; exactly four spaces per level; depth = ID components; siblings contiguous from 1; leaf = item with no children; only leaves count; only a leaf may be `CURRENT`; parent `[x]` ⇔ all children `[x]`; 5–20 leaves; every leaf states what becomes true + evidence command; agent never edits text/IDs/order/indent; missing work → `NEEDS_REPLAN`.
 
-Completion (host gate, only source of truth): `verify.sh` exit 0 AND last stdout line `DONE` on the final tree with trusted copies; implies protected hashes unchanged, scope respected, all checks green, `progress.md` structurally consistent with `STATE: DONE`, `CURRENT: NONE`, all leaves `[x]`.
+Completion (host gate, only source of truth): `verify.sh` exit 0 AND last stdout line `DONE` on the final tree with trusted copies; implies protected hashes unchanged, scope respected, all checks green, `progress.md` structurally consistent with `TASK:` = README `id`, `STATE: DONE`, `CURRENT: NONE`, `BASELINE:` recorded, all leaves `[x]`.
+
+Why `progress.md` is generated, not stored (D1 corollary): a checked-in copy is a second source of truth for the checklist; the moment an author edits `README.md` the two drift and the gate's byte-diff fails for a reason unrelated to the agent. Generation at dispatch makes drift impossible and turns the generator into the single definition of the initial state.
 
 ---
 
@@ -147,20 +152,21 @@ Minimum design: ≥3 task kinds (bugfix, feature, removal) × ≥5 seeds × vari
 ## 7. Experiment backlog (one at a time, manual)
 
 1. **v3 baseline** (this package) on Claude Code; then Codex.
-2. Protocol-location ablation: same task, protocol in `AGENT.md` vs inline in `README.md` vs in the launch prompt.
+2. Protocol-location ablation: same task, protocol in `AGENTS.md` vs inline in `README.md` vs in the launch prompt.
 3. Checklist depth ablation: 4-level vs 2-level vs no checklist (hypothesis: <5-point `gate_pass` change for ≤15-leaf tasks; checklist earns its place on resume-after-compaction).
 4. Rule-count ablation: 6 vs 15 vs 25 prohibitions.
 5. Executable checklist: each leaf is a script under `/task/leaves/`; harness computes progress; agent writes no state (hypothesis: `false_done` → 0).
 6. Harness-driven loop instead of `/goal`: one `claude -p`, host runs verify.sh, re-invoke with `--continue` + verifier output; identical for Codex.
 7. Fresh reviewer pass (second `-p` with README.md + diff + verifier output → PASS/FAIL per R/AC).
 8. Hooks: `PreToolUse` deny on `/task/*`, `SessionStart compact` re-injection — measure effect on `protected_tamper` attempts and post-compaction resume.
-9. Task linter implementing the author checklist (README).
+9. ~~Task linter implementing the author checklist.~~ Done: `reference/task-template/task-lint.sh` (all six pgtui packages and the example pass; the six READMEs exceed the ~2,500-token target by 2–22%, reported as warnings — trim or accept as a measured variable).
 
 ---
 
 ## 8. Open / UNVERIFIED
 
 - herdr: `docker exec -it … herdr` attach UX, `/goal …` via `agent prompt` (Enter vs slash popup), `customApiKeyResponses` format, Codex goal events. `/goal` under `--bare`; `SessionStart compact` injection reliability; Codex goal semantics in `exec`; Docker file-mount semantics on macOS; OpenAI harness-engineering quotes read via mirrors (primary 403).
+- Instruction-file naming: `AGENTS.md` is the real file everywhere (repo root, task package, fixture); `CLAUDE.md` is always a symlink to it, so Claude Code and Codex read one file. Whether Claude Code auto-loads `/task/CLAUDE.md` via `--add-dir` in the headed run is UNVERIFIED (docs say added directories contribute their CLAUDE.md); Codex reads `AGENTS.md` only on the git-root→cwd chain, i.e. `/work`, so the launch prompt keeps naming `/task/AGENTS.md` explicitly.
 - `check_progress` validates terminal state only; a `--partial` mid-run lint is a follow-up.
 - Model dependence: Anthropic notes newer models may need less decomposition [A2]; task size is a tunable.
 

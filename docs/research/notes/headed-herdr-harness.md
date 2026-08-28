@@ -288,7 +288,8 @@ mkdir -p "$RUN"/{workspace,agent-home,out,task-snapshot,progress}
 # 1. inputs (identical to the headless run.sh)
 cp -a "$TASK_DIR"/. "$RUN/task-snapshot/"
 cp -a "$FIXTURE"/. "$RUN/workspace/"
-cp "$TASK_DIR/progress.md" "$RUN/progress/progress.md"
+"$ROOT/../reference/task-template/task-lint.sh" "$TASK_DIR" >"$RUN/lint.log"      # refuse to dispatch an invalid contract
+"$ROOT/../reference/task-template/progress-init.sh" "$TASK_DIR" -o "$RUN/progress/progress.md"
 ( cd "$RUN/workspace" && git init -q && git add -A && git commit -qm baseline --no-verify && git tag baseline )
 "$ROOT/lib/hash-protected.sh" "$RUN" before > "$RUN/hashes-before.txt"
 

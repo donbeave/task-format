@@ -505,7 +505,7 @@ pgtui-fixture/                       git init; single commit; tag `baseline`
   rust-toolchain.toml                channel = "stable" (exact version pinned by the version agents)
   rustfmt.toml                       edition = "2024" only
   justfile                           test / test-unit / test-pg / lint / snap / gallery
-  CLAUDE.md                          = AGENTS.md symlink target: build/test/lint commands; "on start or resume read /progress/progress.md"; no architecture text (that lives in task.md)
+  AGENTS.md                          real file (CLAUDE.md -> symlink to it): build/test/lint commands; "on start or resume read /progress/progress.md"; no architecture text (that lives in task.md)
   README.md                          one paragraph; TASK-106 appends the screen list
   .gitignore                         target/, *.snap.new
   crates/pgtui/Cargo.toml            [lib] + [[bin]] pgtui + [[bin]] gallery (path src/bin/gallery.rs, `required-features = []`, file absent until 106 → planner ships a 3-line stub that prints usage and exits 2 so the workspace builds)
