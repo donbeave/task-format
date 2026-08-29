@@ -1,7 +1,8 @@
 # experiment.toml — the experiment manifest (schema experiment/v1).
 # Read by every `taskfmt` command that touches the repo layout, images, or agent profiles.
-# Secrets appear here only as 1Password references (`op://…`); they are resolved at dispatch time
-# and never written to any committed artifact.
+# Secrets appear here only as references — `file://NAME` for a local 0600 credential file lying
+# directly inside `$HOME/.config/taskfmt/`, `op://…` for 1Password. Both are resolved at dispatch
+# time and never written to any committed artifact.
 
 schema = "experiment/v1"
 
@@ -54,8 +55,12 @@ API_TIMEOUT_MS = "3000000"
 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
 
 [agents.profiles.zai-flash.env_secret]
-# 1Password reference for the Z.ai API key (as used by the operator's claude-zai-flash-yolo).
-ANTHROPIC_AUTH_TOKEN = "op://7sv67vb2ie6oponnetzhbf7yjy/usdqt4fotde4umcryzrlisaoku/API keys/otz5ln65imhmip4m7jkflkasxm"
+# Local reference for the Z.ai API key (as used by the operator's claude-zai-flash-yolo). The
+# value lives in `$HOME/.config/taskfmt/zai-flash.token`, mode 0600, outside every repository, so
+# resolution needs no subprocess and cannot stall an unattended chain behind a locked desktop app.
+# The reference is a bare NAME on purpose: rotation stays free forever — replace the file's bytes
+# and nothing here changes — whereas an absolute path would be pinned permanently from Phase 2 on.
+ANTHROPIC_AUTH_TOKEN = "file://zai-flash.token"
 
 [agents.profiles.codex-default]
 kind = "codex"

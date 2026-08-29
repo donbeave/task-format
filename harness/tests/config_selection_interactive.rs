@@ -52,7 +52,7 @@ fn manifest_matches_the_repo_root_file() {
     let codex = cfg.profile("codex-default").unwrap();
     assert_eq!(codex.kind, "codex");
     // only references are committed, never values
-    assert!(zai.env_secret.values().all(|v| v.starts_with("op://")));
+    assert!(zai.env_secret.values().all(|v| v.starts_with("file://")));
     assert!(codex.env_secret.values().all(|v| v.starts_with("op://")));
 }
 
