@@ -1,6 +1,7 @@
 //! git plumbing the harness needs: clone/fetch of the experiment repo, the trusted base commit,
 //! the scope diff, and signed commits.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -21,7 +22,7 @@ pub fn output(cmd: &mut Command) -> anyhow::Result<String> {
     Ok(captured.stdout)
 }
 
-fn in_dir(dir: &Path, args: &[&str]) -> Command {
+pub(super) fn in_dir(dir: &Path, args: &[&str]) -> Command {
     let mut cmd = Command::new("git");
     cmd.current_dir(dir).args(args);
     cmd
@@ -172,26 +173,71 @@ pub fn push(dir: &Path, remote: &str, refspec: &str) -> anyhow::Result<Captured>
 ///   `core.excludesFile`, both writable by the executor);
 /// - an untracked `.gitignore` that ignores itself (`*`) is listed anyway, so a new ignore file
 ///   cannot hide its siblings.
+/// - a candidate of that last enumeration is dropped only when its CONTAINING DIRECTORY was
+///   already ignored by the ignore files as they exist in `base`. That is sound because if the
+///   base ignored the directory, every untracked path under it was outside the scope check before
+///   the run started, so no ignore file planted there can move a path from inside the check to
+///   outside it. Testing the candidate itself would not be: a base rule naming ignore files could
+///   then suppress one planted in a directory that is fully in scope. Any evaluator error keeps
+///   every candidate.
 ///
 /// Sorted and deduped.
 pub fn changed_files(dir: &Path, base: &str) -> anyhow::Result<Vec<String>> {
     let mut files: Vec<String> = Vec::new();
-    for args in [
+    for (index, args) in [
         vec!["diff", "--no-renames", "--name-only", base, "--"],
         vec!["diff", "--no-renames", "--name-only", "--cached", "--"],
         vec!["ls-files", "--others", "--exclude-per-directory=.gitignore"],
         vec!["ls-files", "--others", "--", ":(top,glob)**/.gitignore"],
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let out = output(&mut in_dir(dir, &args))?;
-        files.extend(
-            out.lines()
-                .map(str::to_string)
-                .filter(|line| !line.is_empty()),
-        );
+        let listed: Vec<String> = out
+            .lines()
+            .map(str::to_string)
+            .filter(|line| !line.is_empty())
+            .collect();
+        if index == UNFILTERED_IGNORE_SCAN {
+            files.extend(drop_dirs_ignored_at_base(dir, base, listed));
+        } else {
+            files.extend(listed);
+        }
     }
     files.sort();
     files.dedup();
     Ok(files)
+}
+
+/// Index, in `changed_files`' list, of the enumeration that deliberately applies no ignore
+/// filtering of its own and therefore lists ignore files the base commit already ignored.
+const UNFILTERED_IGNORE_SCAN: usize = 3;
+
+/// Drop a candidate only when its containing directory was ignored under `base`'s own ignore
+/// rules; keep everything else. Fail-closed at every step, so any error keeps every candidate and
+/// the gate over-reports rather than hides.
+fn drop_dirs_ignored_at_base(dir: &Path, base: &str, candidates: Vec<String>) -> Vec<String> {
+    if candidates.is_empty() {
+        return candidates;
+    }
+    let Ok(rules) = super::ignore::BaseIgnores::load(dir, base) else {
+        return candidates;
+    };
+    let mut decided: HashMap<PathBuf, bool> = HashMap::new();
+    candidates
+        .into_iter()
+        .filter(|path| {
+            let parent = match Path::new(path).parent() {
+                Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+                // A candidate at the repository root has no containing directory to judge.
+                _ => return true,
+            };
+            !*decided
+                .entry(parent.clone())
+                .or_insert_with(|| rules.dir_ignored_at_base(&parent).unwrap_or(false))
+        })
+        .collect()
 }
 
 /// Index entries whose flags make `git diff` blind to worktree edits: `S` = skip-worktree,
@@ -331,5 +377,53 @@ mod tests {
         write_safe_directory(tmp.path()).unwrap();
         let text = std::fs::read_to_string(tmp.path().join(".gitconfig")).unwrap();
         assert_eq!(text.matches("[safe]").count(), 1);
+    }
+
+    #[test]
+    fn changed_files_drops_only_base_ignored_gitignore_candidates() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        init_repo(&repo);
+        std::fs::write(repo.join(".gitignore"), "runs/\n").unwrap();
+        git(&repo, &["add", "-A"]);
+        git(&repo, &["commit", "-q", "-m", "base"]);
+
+        // One candidate under a directory the base already ignored, one under a directory it did
+        // not. Both are untracked, and the fourth enumeration lists both.
+        super::super::write_file(&repo.join("runs/x/.gitignore"), "").unwrap();
+        super::super::write_file(&repo.join("src/evil/.gitignore"), "").unwrap();
+
+        let changed = changed_files(&repo, "HEAD").unwrap();
+
+        assert!(
+            changed.contains(&"src/evil/.gitignore".to_string()),
+            "a planted ignore file outside the base's ignored set must still be reported: {changed:?}"
+        );
+        assert!(
+            !changed.contains(&"runs/x/.gitignore".to_string()),
+            "an ignore file the base commit already ignored must not be reported: {changed:?}"
+        );
+    }
+
+    #[test]
+    fn changed_files_still_lists_a_self_ignoring_untracked_gitignore() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        init_repo(&repo);
+        std::fs::write(repo.join(".gitignore"), "*.log\n").unwrap();
+        git(&repo, &["add", "-A"]);
+        git(&repo, &["commit", "-q", "-m", "base"]);
+
+        // An ignore file that ignores itself and its siblings, planted in a directory the base
+        // never ignored: the property the fourth enumeration exists for.
+        super::super::write_file(&repo.join("src/legacy/sub/.gitignore"), "*\n").unwrap();
+        super::super::write_file(&repo.join("src/legacy/sub/hidden.txt"), "x\n").unwrap();
+
+        let changed = changed_files(&repo, "HEAD").unwrap();
+
+        assert!(
+            changed.contains(&"src/legacy/sub/.gitignore".to_string()),
+            "a self-ignoring untracked ignore file must still be reported: {changed:?}"
+        );
     }
 }

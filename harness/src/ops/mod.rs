@@ -7,6 +7,7 @@ pub mod docker;
 pub mod gh;
 pub mod git;
 pub mod herdr;
+pub mod ignore;
 pub mod images;
 pub mod op;
 pub mod signals;
