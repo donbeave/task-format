@@ -11,7 +11,7 @@ use crate::redact;
 use crate::runstate::Manifest;
 
 pub fn run(ctx: &Ctx, run_id: &str, yes: bool) -> anyhow::Result<i32> {
-    let resolved = ctx.load()?;
+    let resolved = crate::cmds::load_for_run(ctx, run_id)?;
     let run_dir = crate::cmds::resolve_run_arg(&resolved, run_id)?;
     promote_run(ctx, &run_dir, yes)?;
     Ok(0)

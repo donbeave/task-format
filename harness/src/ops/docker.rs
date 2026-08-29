@@ -182,6 +182,25 @@ pub fn exec_ok(
     Ok(captured)
 }
 
+/// The host source of a bind mount at `destination` (e.g. `/work`), or `None` when the container
+/// does not exist or has no such mount. Used to find a run's directory from its container alone,
+/// when no manifest is discoverable from the cwd (`cmds::load_for_run`).
+pub fn inspect_mount_source(container: &str, destination: &str) -> Option<PathBuf> {
+    let template = format!(
+        "{{{{range .Mounts}}}}{{{{if eq .Destination \"{destination}\"}}}}{{{{.Source}}}}{{{{end}}}}{{{{end}}}}"
+    );
+    let out = capture(Command::new("docker").args(["inspect", "-f", &template, container])).ok()?;
+    if !out.ok() {
+        return None;
+    }
+    let source = out.stdout.trim();
+    if source.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(source))
+    }
+}
+
 pub fn is_running(container: &str) -> bool {
     capture(Command::new("docker").args(["inspect", "-f", "{{.State.Running}}", container]))
         .map(|out| out.ok() && out.stdout.trim() == "true")

@@ -12,7 +12,7 @@ use crate::redact;
 use crate::runstate::{GateRecord, Manifest};
 
 pub fn run(ctx: &Ctx, run_id: &str) -> anyhow::Result<i32> {
-    let resolved = ctx.load()?;
+    let resolved = crate::cmds::load_for_run(ctx, run_id)?;
     let run_dir = crate::cmds::resolve_run_arg(&resolved, run_id)?;
     let mut manifest = Manifest::load(&run_dir)?;
     let passed = gate_run(&run_dir, &resolved, &mut manifest)?;

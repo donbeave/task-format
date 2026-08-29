@@ -19,10 +19,10 @@ pub mod verify;
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, bail};
+use anyhow::{Context, anyhow, bail};
 
 use crate::cli::Cli;
-use crate::config::{ExperimentConfig, Resolved};
+use crate::config::{ExperimentConfig, MANIFEST_NAME, Resolved, discover_upward};
 use crate::interactive::Interaction;
 use crate::runstate::{MANIFEST_FILE, Manifest};
 
@@ -65,6 +65,91 @@ impl Ctx {
         let (cfg, root) = ExperimentConfig::load(&self.config_path)?;
         Ok(Resolved::new(&root, cfg))
     }
+}
+
+/// `Ctx::load`, with a last-resort fallback for the four commands that take a `<RUN>` argument
+/// (`attach` / `status` / `gate` / `promote`). `--config` / `$TASKFMT_CONFIG` / cwd discovery all
+/// derive the manifest from where the *process* is running; a run directory or its container
+/// carries enough to find the manifest that dispatched it regardless. So when `Ctx::load` fails,
+/// this locates the run's own directory — from `run_id` as an existing directory holding
+/// `manifest.json`, or else from `docker inspect`'s `/work` bind mount, whose parent is the run
+/// dir — and walks up from *there* for `experiment.toml`. Same precedence otherwise; this is only
+/// the last resort, never tried when `Ctx::load` already succeeded. On total failure the error
+/// lists what both attempts tried.
+pub fn load_for_run(ctx: &Ctx, run_id: &str) -> anyhow::Result<Resolved> {
+    let cwd_err = match ctx.load() {
+        Ok(resolved) => return Ok(resolved),
+        Err(err) => err,
+    };
+    match run_derived_config(run_id) {
+        Ok(resolved) => Ok(resolved),
+        Err(run_err) => bail!(
+            "{cwd_err:#}; also tried resolving the manifest from the run {run_id:?}: {run_err:#}"
+        ),
+    }
+}
+
+/// The run-derived half of `load_for_run`: locate the run dir, then discover `experiment.toml` by
+/// walking up from it (not from the cwd).
+fn run_derived_config(run_id: &str) -> anyhow::Result<Resolved> {
+    let run_dir = locate_run_dir(run_id).ok_or_else(|| {
+        anyhow!(
+            "cannot locate a run directory for {run_id:?}: it is not an existing directory \
+             holding {MANIFEST_FILE}, and `docker inspect` found no /work mount for a container \
+             named {run_id:?} or {}{run_id:?}",
+            crate::ops::container::CONTAINER_PREFIX
+        )
+    })?;
+    let (found, searched) = discover_upward(&run_dir, Path::new(MANIFEST_NAME));
+    let manifest_path = found.ok_or_else(|| {
+        anyhow!(
+            "found run dir {} for {run_id:?} but no {MANIFEST_NAME} in it or any ancestor; \
+             searched: {}",
+            run_dir.display(),
+            searched
+                .iter()
+                .map(|dir| dir.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    })?;
+    let (cfg, root) = ExperimentConfig::load(&manifest_path)?;
+    Ok(Resolved::new(&root, cfg))
+}
+
+/// Find the run's own directory from the `<RUN>` argument alone (no manifest yet): an existing
+/// directory holding `manifest.json`, or the parent of the container's `/work` bind mount. Tries
+/// the argument as a container name, then with `CONTAINER_PREFIX` added (unless already present),
+/// so both a bare run id and the `harness-<run id>` container name work.
+fn locate_run_dir(run_id: &str) -> Option<PathBuf> {
+    locate_run_dir_with(run_id, |name| {
+        crate::ops::docker::inspect_mount_source(name, "/work")
+    })
+}
+
+/// The cwd/docker-free decision order behind `locate_run_dir`, with the `/work` mount lookup
+/// injected so the order is unit-testable without a real `docker`: (1) an existing directory
+/// holding `manifest.json` wins outright; (2) else the argument with `CONTAINER_PREFIX` prepended
+/// (unless already present); (3) else the bare argument as a container name.
+fn locate_run_dir_with(run_id: &str, inspect: impl Fn(&str) -> Option<PathBuf>) -> Option<PathBuf> {
+    let as_path = PathBuf::from(run_id);
+    if as_path.is_dir() && as_path.join(MANIFEST_FILE).is_file() {
+        return Some(std::fs::canonicalize(&as_path).unwrap_or(as_path));
+    }
+    let prefix = crate::ops::container::CONTAINER_PREFIX;
+    let candidates = if run_id.starts_with(prefix) {
+        vec![run_id.to_string()]
+    } else {
+        vec![format!("{prefix}{run_id}"), run_id.to_string()]
+    };
+    for name in candidates {
+        if let Some(workspace) = inspect(&name)
+            && let Some(run_dir) = workspace.parent()
+        {
+            return Some(run_dir.to_path_buf());
+        }
+    }
+    None
 }
 
 /// Dispatch one parsed CLI. Returns the process exit code.
@@ -360,5 +445,119 @@ mod tests {
             .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
             .collect();
         assert_eq!(names, vec!["TASK-100", "TASK-101"]);
+    }
+
+    #[test]
+    fn locate_run_dir_prefers_an_existing_run_dir_over_docker() {
+        let dir = tempfile::tempdir().unwrap();
+        let run_dir = dir.path().join("20260101-000000-x-TASK-001");
+        std::fs::create_dir_all(&run_dir).unwrap();
+        std::fs::write(run_dir.join(MANIFEST_FILE), "{}").unwrap();
+        // an inspect that would resolve to a different directory is never even called
+        let found = locate_run_dir_with(run_dir.to_str().unwrap(), |_| {
+            panic!("docker inspect must not be consulted when the path is already a run dir")
+        });
+        assert_eq!(found.unwrap(), std::fs::canonicalize(&run_dir).unwrap());
+    }
+
+    #[test]
+    fn locate_run_dir_tries_the_prefixed_container_name_before_the_bare_one() {
+        let workspace = PathBuf::from("/runs/20260101-000000-x-TASK-001/workspace");
+        let seen = std::cell::RefCell::new(Vec::new());
+        let found = locate_run_dir_with("20260101-000000-x-TASK-001", |name| {
+            seen.borrow_mut().push(name.to_string());
+            (name == "harness-20260101-000000-x-TASK-001").then(|| workspace.clone())
+        });
+        assert_eq!(
+            found.unwrap(),
+            PathBuf::from("/runs/20260101-000000-x-TASK-001")
+        );
+        // the prefixed name was tried first and hit, so the bare id was never tried
+        assert_eq!(
+            seen.into_inner(),
+            vec!["harness-20260101-000000-x-TASK-001"]
+        );
+    }
+
+    #[test]
+    fn locate_run_dir_falls_back_to_the_bare_argument_as_a_container_name() {
+        let workspace = PathBuf::from("/runs/20260101-000000-x-TASK-001/workspace");
+        let found = locate_run_dir_with("20260101-000000-x-TASK-001", |name| {
+            (name == "20260101-000000-x-TASK-001").then(|| workspace.clone())
+        });
+        assert_eq!(
+            found.unwrap(),
+            PathBuf::from("/runs/20260101-000000-x-TASK-001")
+        );
+    }
+
+    #[test]
+    fn locate_run_dir_does_not_double_prefix_an_already_prefixed_container_name() {
+        let seen = std::cell::RefCell::new(Vec::new());
+        let found = locate_run_dir_with("harness-20260101-000000-x-TASK-001", |name| {
+            seen.borrow_mut().push(name.to_string());
+            None
+        });
+        assert!(found.is_none());
+        assert_eq!(
+            seen.into_inner(),
+            vec!["harness-20260101-000000-x-TASK-001"]
+        );
+    }
+
+    #[test]
+    fn locate_run_dir_is_none_when_nothing_matches() {
+        let found = locate_run_dir_with("no-such-run", |_| None);
+        assert!(found.is_none());
+    }
+
+    /// The smallest manifest `ExperimentConfig::parse` accepts: `schema` and one agent profile are
+    /// the only fields without a default (`config.rs`'s own `EXAMPLE` test fixture has the full
+    /// documented shape; this only needs to load, not to dispatch anything).
+    const MINIMAL_MANIFEST: &str = r#"
+schema = "experiment/v1"
+[agents.default]
+profile = "x"
+[agents.profiles.x]
+kind = "claude"
+image = "harness-claude:latest"
+"#;
+
+    #[test]
+    fn load_for_run_falls_back_to_the_run_derived_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::write(root.join(crate::config::MANIFEST_NAME), MINIMAL_MANIFEST).unwrap();
+        let run_dir = root.join("experiments/runs/20260101-000000-x-TASK-001");
+        std::fs::create_dir_all(&run_dir).unwrap();
+        std::fs::write(run_dir.join(MANIFEST_FILE), "{}").unwrap();
+
+        let elsewhere = tempfile::tempdir().unwrap();
+        let ctx = Ctx {
+            config_path: elsewhere.path().join("experiment.toml"), // does not exist
+            verbose: false,
+            interaction: Interaction::new(true, true),
+        };
+        // `Ctx::load` fails (nothing under `elsewhere` and no ancestor carries a manifest); the
+        // run argument is the run dir itself, so `load_for_run` finds it and walks up from there.
+        assert!(ctx.load().is_err());
+        let resolved = load_for_run(&ctx, run_dir.to_str().unwrap()).unwrap();
+        assert_eq!(resolved.root, root);
+    }
+
+    #[test]
+    fn load_for_run_error_names_both_attempts() {
+        let elsewhere = tempfile::tempdir().unwrap();
+        let ctx = Ctx {
+            config_path: elsewhere.path().join("experiment.toml"),
+            verbose: false,
+            interaction: Interaction::new(true, true),
+        };
+        let err = load_for_run(&ctx, "no-such-run")
+            .err()
+            .map(|err| format!("{err:#}"))
+            .unwrap();
+        assert!(err.contains("cannot read experiment manifest"), "{err}");
+        assert!(err.contains("cannot locate a run directory"), "{err}");
     }
 }
