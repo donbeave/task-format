@@ -3,6 +3,7 @@
 //! verify-shaped; the gate FAILS on the fresh progress file, FAILS on each tamper, and PASSES only
 //! on the fully-checked DONE file. Also enforces the repo-wide `CLAUDE.md -> AGENTS.md` rule.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::gate::{self, GateOpts};
@@ -88,6 +89,83 @@ pub fn run() -> Report {
             .iter()
             .map(|p| format!("no CLAUDE.md -> AGENTS.md symlink next to {}", p.display()))
             .collect(),
+    );
+
+    // ---- repo rule: a relative path carried by two or more task packages under `trusted/` is
+    // the same bytes in every one of them, unless it is declared to evolve ----
+    let corpus = trusted_findings(&root.join("experiments/tasks"), TRUSTED_EVOLVING);
+    report.push(
+        "trusted: identity holds",
+        corpus.identity.is_empty(),
+        corpus.identity,
+    );
+    report.push(
+        "trusted: evolution forward-only",
+        corpus.evolution.is_empty(),
+        corpus.evolution,
+    );
+
+    // ---- the same rule proved in the rejecting direction, on synthetic corpora of invented
+    // names: a divergence under a `fixtures` directory, which the walk must descend into; a
+    // declared path returning to an earlier content; and a corpus too thin to compare ----
+    let synthetic = tempfile::tempdir().expect("tempdir");
+    let diverged = synthetic.path().join("diverged");
+    plant_corpus(
+        &diverged,
+        &[
+            ("alpha", "held.txt", "held"),
+            ("alpha", "nested/fixtures/data.bin", "one"),
+            ("beta", "held.txt", "held"),
+            ("beta", "nested/fixtures/data.bin", "one"),
+            ("gamma", "held.txt", "held"),
+            ("gamma", "nested/fixtures/data.bin", "two!!"),
+        ],
+    );
+    let planted = trusted_findings(&diverged, TRUSTED_EVOLVING);
+    report.push(
+        "trusted: divergence rejected and named",
+        planted.identity
+            == [
+                "nested/fixtures/data.bin len=3 packages=alpha,beta",
+                "nested/fixtures/data.bin len=5 packages=gamma",
+            ]
+            && planted.evolution.is_empty(),
+        planted.identity,
+    );
+
+    let reverted = synthetic.path().join("reverted");
+    plant_corpus(
+        &reverted,
+        &[
+            ("alpha", "moving.txt", "first"),
+            ("beta", "moving.txt", "second"),
+            ("gamma", "moving.txt", "first"),
+        ],
+    );
+    let reversion = trusted_findings(&reverted, &["moving.txt"]);
+    report.push(
+        "trusted: reversion rejected",
+        reversion.evolution
+            == [
+                "moving.txt len=5 packages=alpha,gamma",
+                "moving.txt len=6 packages=beta",
+            ]
+            && reversion.identity.is_empty(),
+        reversion.evolution,
+    );
+
+    let thin = synthetic.path().join("thin");
+    std::fs::create_dir_all(thin.join("alpha")).expect("thin package");
+    let none = trusted_findings(&thin, TRUSTED_EVOLVING);
+    plant_corpus(&thin, &[("alpha", "held.txt", "held")]);
+    let one = trusted_findings(&thin, TRUSTED_EVOLVING);
+    report.push(
+        "trusted: empty corpus rejected",
+        none.identity == ["fewer than two packages carry trusted material: packages=0"]
+            && one.identity == ["fewer than two packages carry trusted material: packages=1"]
+            && none.evolution.is_empty()
+            && one.evolution.is_empty(),
+        none.identity.into_iter().chain(one.identity).collect(),
     );
 
     // ---- lint ----
@@ -297,7 +375,12 @@ pub fn run() -> Report {
 }
 
 /// (name, focused command, whole-gate verdict) — the git-free command-semantics cases mirrored
-/// from `tests/gate_tamper_matrix.rs`, so `taskfmt selftest` proves them inside the image.
+/// from `tests/gate_tamper_matrix.rs`, so `taskfmt selftest` proves them with no toolchain and no
+/// network. Not inside a container image, though, and that claim used to stand here: an image
+/// ships the binary alone, `repo_root()` is the build-time `CARGO_MANIFEST_DIR`, and `run()`
+/// panics on the absent example package long before these cases. Measured — `docker run --rm
+/// harness-taskfmt:latest selftest` panics reading the example README. Nothing invokes `selftest`
+/// in a container, so nothing depends on it.
 const COMMAND_CASES: &[(&str, &str, bool)] = &[
     (
         "'false; true' fails focused.1 (errexit)",
@@ -558,6 +641,155 @@ pub fn symlink_violations(root: &Path) -> Vec<PathBuf> {
     }
     violations.sort();
     violations
+}
+
+/// Relative paths under `trusted/` declared to differ between task packages because each copy
+/// compiles against the API surface its own package asks an implementer to build. Every other
+/// path carried by two or more packages must be byte-identical. An entry here drops a path out of
+/// that enforcement for good, so this constant is the single, reviewable way to widen the
+/// exception: the file is fenced, and adding a line costs an adversarial debate round and a
+/// minted repair token.
+const TRUSTED_EVOLVING: &[&str] = &["crates/pgtui/tests/support/mod.rs"];
+
+/// One package's copy of a shared relative path: the package directory name and its bytes.
+type Carrier = (String, Vec<u8>);
+
+/// The `trusted/` trees of one corpus, keyed by relative path.
+struct TrustedCorpus {
+    /// Packages carrying a `trusted/` directory at all — fewer than two can compare nothing.
+    carriers: usize,
+    /// Relative path -> its copies, in ascending package order.
+    copies: BTreeMap<String, Vec<Carrier>>,
+}
+
+/// Verdict on one corpus. Both vectors hold ready-to-print detail lines and are empty when the
+/// invariant holds; a path that does not offend is never named.
+#[derive(Default)]
+struct TrustedFindings {
+    identity: Vec<String>,
+    evolution: Vec<String>,
+}
+
+/// Read `<corpus>/<package>/trusted/**`. Only direct children of `corpus` are packages, so no
+/// nested copy of a corpus elsewhere in the tree can join the comparison. The walk descends into
+/// every directory: `SKIP_DIRS` belongs to the symlink audit and excludes `fixtures`, which the
+/// packages share. Bytes are compared directly rather than digested — some trusted files are
+/// binary, and no collision argument is then needed.
+fn trusted_corpus(corpus: &Path) -> TrustedCorpus {
+    let mut packages: Vec<(String, PathBuf)> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(corpus) {
+        for entry in entries.flatten() {
+            let trusted = entry.path().join("trusted");
+            if trusted.is_dir() {
+                packages.push((entry.file_name().to_string_lossy().into_owned(), trusted));
+            }
+        }
+    }
+    packages.sort();
+    let mut copies: BTreeMap<String, Vec<Carrier>> = BTreeMap::new();
+    for (package, trusted) in &packages {
+        for entry in walkdir::WalkDir::new(trusted).follow_links(false) {
+            let entry = entry.expect("walk trusted tree");
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let rel = entry
+                .path()
+                .strip_prefix(trusted)
+                .expect("path under trusted")
+                .components()
+                .map(|part| part.as_os_str().to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join("/");
+            let bytes = std::fs::read(entry.path()).expect("read trusted file");
+            copies
+                .entry(rel)
+                .or_default()
+                .push((package.clone(), bytes));
+        }
+    }
+    TrustedCorpus {
+        carriers: packages.len(),
+        copies,
+    }
+}
+
+/// The failure grammar: one line per distinct content of `rel`, `PATH len=N packages=NAMES`, the
+/// carriers of a content ascending and the lines sorted, so a reader attributes a content to its
+/// packages from a single line and the output is stable.
+fn content_groups(rel: &str, copies: &[Carrier]) -> Vec<String> {
+    let mut groups: Vec<(&[u8], Vec<&str>)> = Vec::new();
+    for (package, bytes) in copies {
+        let content = bytes.as_slice();
+        match groups.iter().position(|(seen, _)| *seen == content) {
+            Some(index) => groups[index].1.push(package),
+            None => groups.push((content, vec![package])),
+        }
+    }
+    let mut lines: Vec<String> = groups
+        .iter()
+        .map(|(content, names)| {
+            let mut names = names.clone();
+            names.sort_unstable();
+            format!("{rel} len={} packages={}", content.len(), names.join(","))
+        })
+        .collect();
+    lines.sort();
+    lines
+}
+
+/// A declared path is exempt from identity, not from all structure: its contents in package order
+/// must form contiguous runs. A content that reappears after a different one intervened is a
+/// reversion — and, more to the point, is what an amendment applied to some packages but not
+/// others looks like.
+fn reverts(copies: &[Carrier]) -> bool {
+    let mut seen: Vec<&[u8]> = Vec::new();
+    for (index, (_, bytes)) in copies.iter().enumerate() {
+        let content = bytes.as_slice();
+        if index > 0 && content == copies[index - 1].1.as_slice() {
+            continue;
+        }
+        if seen.contains(&content) {
+            return true;
+        }
+        seen.push(content);
+    }
+    false
+}
+
+/// Judge one corpus against `evolving`, the declared-divergence set. A corpus with fewer than two
+/// carriers is reported with the count it does have rather than passing vacuously.
+fn trusted_findings(corpus: &Path, evolving: &[&str]) -> TrustedFindings {
+    let TrustedCorpus { carriers, copies } = trusted_corpus(corpus);
+    let mut findings = TrustedFindings::default();
+    if carriers < 2 {
+        findings.identity.push(format!(
+            "fewer than two packages carry trusted material: packages={carriers}"
+        ));
+        return findings;
+    }
+    for (rel, carried) in &copies {
+        if evolving.contains(&rel.as_str()) {
+            if reverts(carried) {
+                findings.evolution.extend(content_groups(rel, carried));
+            }
+        } else if carried.len() >= 2 {
+            let groups = content_groups(rel, carried);
+            if groups.len() > 1 {
+                findings.identity.extend(groups);
+            }
+        }
+    }
+    findings
+}
+
+/// Write a synthetic corpus from `(package, relative path, contents)` triples under `dir`.
+fn plant_corpus(dir: &Path, files: &[(&str, &str, &str)]) {
+    for (package, rel, body) in files {
+        let path = dir.join(package).join("trusted").join(rel);
+        std::fs::create_dir_all(path.parent().expect("corpus parent")).expect("corpus dir");
+        std::fs::write(&path, body).expect("corpus file");
+    }
 }
 
 /// Minimal verify.toml for the gate matrix: no commands, everything allowed.
