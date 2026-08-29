@@ -1,6 +1,7 @@
 //! Global secret redactor.
 //!
-//! Every resolved secret (`op read` result) is registered here. All output the CLI forwards or
+//! Every resolved secret — from either scheme `ops::op::read` accepts, `file://` or `op://` — is
+//! registered here. All output the CLI forwards or
 //! prints, every artifact file it writes, and every JSON manifest it emits passes through
 //! [`scrub`] first, so a resolved secret can never survive into a log, a manifest, or the terminal.
 

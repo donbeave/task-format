@@ -68,7 +68,7 @@ Globals: `--config PATH` (default `experiment.toml`), `--auto`, `--yes`, `-v`. I
 3. On completion: host `gate` re-runs `taskfmt verify` against trusted copies. PASS ⇒ `promote` (`git commit -s`, push `main`). FAIL/BLOCKED ⇒ never pushed; the experiment stops there.
 4. Every step lands in `runs/<id>/manifest.json` (+ `experiment.json` for the loop): repo URL, base/result SHAs, gate verdict, agent profile/model/effort, session id, container.
 
-Secrets: `env_secret` values are `op://` references resolved by `op read` at dispatch only, passed to the container via a 0600 env-file that is deleted immediately after `docker run` returns, and registered with the redactor that scrubs every output path. Values never appear in argv, logs, transcripts, or artifacts.
+Secrets: `env_secret` values are **references**, resolved at dispatch only. `file://NAME` names a regular file, mode exactly 0600, directly inside `$HOME/.config/taskfmt/` — a bare name with no `/`, refused unless the canonicalized leaf's parent is exactly that directory, and resolved with no subprocess; every other reference is handed to `op read`. Either way the resolved value is passed to the container via a 0600 env-file that is deleted immediately after `docker run` returns, and registered with the redactor that scrubs every output path. Values never appear in argv, logs, transcripts, artifacts, or any tracked file.
 
 ### Gate selfcheck (D13, D36)
 

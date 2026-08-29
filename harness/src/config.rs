@@ -238,8 +238,9 @@ pub struct AgentProfile {
     pub image: String,
     #[serde(default)]
     pub env_static: BTreeMap<String, String>,
-    /// `op://` references, resolved at dispatch time only. The reference may be committed; the
-    /// resolved value may never be.
+    /// Secret **references**, resolved at dispatch time only — `file://NAME` (a 0600 file directly
+    /// inside `$HOME/.config/taskfmt/`) or `op://…` (`op read`); see [`crate::ops::op`].
+    /// The reference may be committed; the resolved value may never be.
     #[serde(default)]
     pub env_secret: BTreeMap<String, String>,
 }
