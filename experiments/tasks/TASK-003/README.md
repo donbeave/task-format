@@ -54,7 +54,7 @@ Expected before this change: a compile error — `CreateForm`/`Field` do not exi
 If a command fails, stop and report `BLOCKED`. Never work around a precondition.
 
 - **P-001:** toolchain available — `cargo --version`
-- **P-002:** TASK-002 gate green — `taskfmt verify`
+- **P-002:** TASK-002 suites green — `cargo test -p pgtui --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test`
 - **P-003:** trusted form tests present — `test -f crates/pgtui/tests/app_create_form_test.rs`
 - **P-004:** working tree clean — `test -z "$(git status --porcelain)"`
 
@@ -66,7 +66,7 @@ In scope:
 
 Out of scope:
 
-- All of `db/` — the `db/mod.rs` placeholder TASK-002 left as well as `db/postgres.rs` — plus `browser.rs`, `custom_sql.rs`, `grid.rs`; later tasks.
+- All of `db/` — the D-027 `db/mod.rs` placeholder TASK-002 left as well as `db/postgres.rs` — plus `browser.rs`, `custom_sql.rs`, `grid.rs`; later tasks.
 - `render.rs`, `fonts/`, anything under `crates/pgtui/tests/`.
 - Any change to the D-021/D-022 store contract.
 
@@ -89,7 +89,7 @@ Observable behaviour plus the exact evidence command. The gate runs these; the h
 | AC-001 | Given the list screen, when `n` and then form keys are sent, then fields cycle with wrap, typing appends, backspace pops, port filters non-digits, and `Esc` discards. | `cargo test -p pgtui --test app_create_form_test` | exit 0, `9 passed` |
 | AC-002 | Given a valid form, when `Enter` is pressed and the runtime runs, then a row is inserted and `Msg::Saved(Ok)` reloads the list with the new row selected; a duplicate name reports the decided error. | `cargo test -p pgtui --test runtime_create_test` | exit 0, `3 passed` |
 | AC-003 | Given form state, when the 100x30 buffer is rendered, then labels, focus marker, masked password and help line appear as D-060 states. | `cargo test -p pgtui --test screen_create_form_test` | exit 0, `3 passed` |
-| AC-004 | Given the whole task, when the earlier tasks' trusted tests run, then they still pass. | `cargo test -p pgtui --test skeleton_test --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test --test app_create_form_test --test runtime_create_test --test screen_create_form_test` | exit 0, `35 passed` |
+| AC-004 | Given the whole task, when the earlier tasks' trusted tests run, then they still pass. | `cargo test -p pgtui --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test --test app_create_form_test --test runtime_create_test --test screen_create_form_test` | exit 0, `31 passed` |
 | AC-005 | Given the finished task, when the gate runs, then it reports `DONE`. | `taskfmt verify` | exit 0, last line `DONE` |
 
 ## Fixed decisions
@@ -122,7 +122,7 @@ Static plan. Hierarchical IDs, four spaces per level, max depth 4. Every leaf na
     - [ ] **4.1** `ui/create_form.rs` per D-060 with masked password (`R-005`, `AC-003`) — evidence: `cargo test -p pgtui --test screen_create_form_test` prints `3 passed`.
     - [ ] **4.2** Lint is clean (`D-004`) — evidence: `cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings` exits 0.
 - [ ] **5** Gate passes.
-    - [ ] **5.1** Regression `AC-004` holds — evidence: the combined `cargo test -p pgtui --test ...` command of `AC-004` prints `35 passed`.
+    - [ ] **5.1** Regression `AC-004` holds — evidence: the combined `cargo test -p pgtui --test ...` command of `AC-004` prints `31 passed`.
     - [ ] **5.2** Diff reviewed: only `expected_paths` changed, nothing temporary or unrelated (`R-006`, `R-007`) — evidence: `git status --porcelain` and `git diff --no-renames --stat $TASKFMT_BASE` show only in-scope files.
     - [ ] **5.3** `taskfmt verify` exits 0 with last line `DONE` (`AC-005`) — evidence: final full run (with progress check), full output shown in the transcript.
 <!-- checklist:end -->

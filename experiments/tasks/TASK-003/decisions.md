@@ -2,7 +2,7 @@
 
 Planner-owned and self-contained: every D-* in force for this task is written here in full. Numbering is global across the pgtui series; a D-id means the same thing in every task. Implement; do not reopen. Anything not covered here that changes public behaviour, architecture, data or security posture is `NEEDS_REPLAN`, not executor discretion.
 
-In force for TASK-003: D-001..D-005, D-010..D-013, D-020..D-022, D-030..D-032, D-040..D-041, D-060..D-061, D-070..D-071.
+In force for TASK-003: D-001..D-005, D-010..D-013, D-020..D-022, D-027, D-030..D-032, D-040..D-042, D-060..D-061, D-070..D-071.
 
 ## Repository, workspace, exact pins
 
@@ -20,7 +20,7 @@ In force for TASK-003: D-001..D-005, D-010..D-013, D-020..D-022, D-030..D-032, D
     app.rs            App state, Screen enum (D-010), Msg/Effect (D-011), App::update(Msg) -> Vec<Effect>
     keys.rs           KeyEvent -> per-screen handling (D-030..D-034)
     store/mod.rs      SavedConnection, NewConnection, StoreError, ConnectionStore (Turso) (D-020..D-022)
-    db/mod.rs         ConnParams, TableRef, ResultSet, Cell, DbError, QueryOutcome (D-026)
+    db/mod.rs         ConnParams, TableRef, ResultSet, Cell, DbError, QueryOutcome (D-026; D-027 here)
     db/postgres.rs    PgSession (D-023..D-025)
     grid.rs           Grid (D-050..D-053)
     runtime.rs        async execute(Effect) -> Option<Msg> against ConnectionStore + Option<PgSession>
@@ -103,6 +103,20 @@ In force for TASK-003: D-001..D-005, D-010..D-013, D-020..D-022, D-030..D-032, D
   impl SavedConnection { pub fn display_dsn(&self) -> String; }  // "user@host:port/dbname", never the password
   ```
 
+- **D-027 `db/mod.rs` before TASK-004** (in force for TASK-002 and TASK-003; D-026 replaces it whole when TASK-004 lands). D-002's module table gives `db/mod.rs` its final contents under D-026, and D-026 is not in force here, so what a conforming placeholder contains is fixed by this clause and by nothing else. `db/mod.rs` exists only so that the D-011 signatures compile, and it contains exactly:
+
+  ```rust
+  //! Database types. Placeholders until TASK-004 (D-026).
+  pub struct TableRef;
+  pub struct ResultSet;
+  pub struct DbError;
+  pub enum QueryOutcome { Rows(ResultSet), Affected(u64) }
+  ```
+
+  `QueryKind` stays in `app.rs` with its D-011 variant set. `QueryOutcome` lives here because D-002 and D-026 both place it here and its variant set is already D-011's, so TASK-004 neither moves nor re-shapes it. The three placeholder types carry no fields, no variants, no methods and no inherent impls; they may derive exactly what the D-011 types containing them need in order to compile and to satisfy the trusted assertions (`Debug`, `Clone`, `PartialEq`, `Eq`) and nothing further.
+
+  `ConnParams`, `Cell`, `PREVIEW_LIMIT`, `quote_ident` and the `From<&SavedConnection>` conversion belong to D-026 and must not be written before TASK-004: writing them here is a guess at a decision this task has not been shown. D-010's freeze on field and variant sets binds the shape each type's own decision fixes, never a placeholder, so TASK-004 replaces every declaration above with D-026's text rather than extending it.
+
 ## Key bindings (single source: `keys.rs`)
 
 - **D-030 Global.** `Ctrl+C` -> `Effect::Disconnect` (if connected) then `Effect::Quit`, from every screen. No other global key.
@@ -114,6 +128,13 @@ In force for TASK-003: D-001..D-005, D-010..D-013, D-020..D-022, D-030..D-032, D
 - **D-040 Exit codes.** `0` normal quit (`q`, `Ctrl+C`). `2` usage/config: bad CLI args, store open failure, cannot create data dir, unwritable output directory — message on stderr as `error: <msg>`, before entering raw mode. `1` unexpected runtime failure (terminal IO error, panic) — terminal restored by a panic hook first. From TASK-001 until its task replaces it, both binaries are stubs that print `error: not implemented` (`gallery`: usage) on stderr and exit 2.
 
 - **D-041 Error surfacing.** Every `Err` reaching `App::update` becomes `Status::Error` (D-013). No error is swallowed; no `unwrap()`/`expect()` on IO results in `src/` outside `main.rs`'s terminal setup.
+
+- **D-042 Non-interactive invocation** (in force from TASK-002 on; D-040 alone governs TASK-001, where both binaries are still stubs). `pgtui` is a full-screen program, every automated oracle launches it with no controlling terminal, and D-040's table has no row for that case — so the contract is stated here rather than derived from whichever library call happens to fail first.
+  - **When the check happens.** An invocation is *interactive* when both stdin and stdout are connected to a terminal. `pgtui` decides this once, after clap has parsed the arguments and after the store has been opened — the boundary D-040 already names, immediately before entering raw mode. `--version` and `--help` therefore still exit 0, and a store failure still reports the store's own `error: <msg>` and exits 2 (D-020, D-040), never the message below.
+  - **What it does.** When the invocation is not interactive, `pgtui` writes exactly `error: no terminal: pgtui requires an interactive terminal` and a newline to stderr, writes nothing to stdout, does not enter raw mode or the alternate screen, and exits 2. This is D-040's usage/config row, not its runtime-failure row: the absence of a terminal is a property of the invocation, not an unexpected failure, and it is decided before any terminal state is touched.
+  - **What it is not.** The TASK-001 stub message D-040 assigns to `pgtui` is retired the moment `pgtui`'s own task lands (TASK-002 R-005). The message above is a different string on purpose; reusing the retired wording for this path would reinstate the behaviour R-005 removes, so it must not appear in `crates/pgtui/src/main.rs` from TASK-002 on. `gallery` is never interactive, never performs this check, and keeps the exit codes its own decisions give it.
+  - **Consequence for the trusted material.** `crates/pgtui/tests/skeleton_test.rs` is TASK-001's oracle: `pgtui_stub_exits_2` asserts the stub message this clause retires, and `gallery_stub_exits_2` asserts the `gallery` stub that the gallery task replaces in turn. From TASK-002 on, no gate command in any package runs that target. The file itself is unchanged and stays byte-identical in every package carrying it; it is in force only where its subject is.
+  - **Supersession.** This clause is `pgtui`-specific and self-contained; nothing else in this file depends on its internals. When a format-level contract for the invocation environment lands, delete this clause whole and cite the new one from D-040 and from TASK-002 R-005.
 
 ## Layout (deterministic; behaviour tests depend on it)
 

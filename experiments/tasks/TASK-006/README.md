@@ -57,7 +57,7 @@ Expected before this change: a compile error — `Screen::CustomSql` is never en
 If a command fails, stop and report `BLOCKED`. Never work around a precondition. Docker is required.
 
 - **P-001:** toolchain available — `cargo --version`
-- **P-002:** TASK-005 gate green — `taskfmt verify`
+- **P-002:** TASK-005 suites green — `cargo test -p pgtui --test grid_sort_test --test app_preview_test --test screen_preview_test`
 - **P-003:** docker reachable — `docker info >/dev/null`
 - **P-004:** trusted custom-SQL tests present — `test -f crates/pgtui/tests/pg_custom_sql_test.rs`
 - **P-005:** working tree clean — `test -z "$(git status --porcelain)"`
@@ -93,7 +93,7 @@ Observable behaviour plus the exact evidence command. The gate runs these; the h
 | AC-001 | Given a connected `App`, when `x` and editing keys are applied, then the screen opens, input edits correctly, empty `Enter` is inert, `Enter` emits the custom query effect, results build the grid with the decided status, and `Esc` retains the input. | `cargo test -p pgtui --test app_custom_sql_test` | exit 0, `9 passed` |
 | AC-002 | Given a seeded container, when custom statements run, then `SELECT` returns rows, `CommandComplete` reports affected counts, multi-statement input is rejected, rows are capped, and syntax errors map to `DbError::Query`. | `cargo test -p pgtui --test pg_custom_sql_test` | exit 0, `5 passed` |
 | AC-003 | Given custom-SQL state, when the 100x30 buffer is rendered, then the input block, hint, result title, echoed SQL and marker-free grid appear as D-060 states. | `cargo test -p pgtui --test screen_custom_sql_test` | exit 0, `3 passed` |
-| AC-004 | Given the whole task, when all earlier trusted tests run, then they still pass. | `cargo test -p pgtui --test skeleton_test --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test --test app_create_form_test --test runtime_create_test --test screen_create_form_test --test pg_connect_test --test pg_runtime_connect_test --test app_browser_test --test screen_browser_test --test grid_sort_test --test pg_preview_test --test app_preview_test --test screen_preview_test --test app_custom_sql_test --test pg_custom_sql_test --test screen_custom_sql_test` | exit 0, `90 passed` |
+| AC-004 | Given the whole task, when all earlier trusted tests run, then they still pass. | `cargo test -p pgtui --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test --test app_create_form_test --test runtime_create_test --test screen_create_form_test --test pg_connect_test --test pg_runtime_connect_test --test app_browser_test --test screen_browser_test --test grid_sort_test --test pg_preview_test --test app_preview_test --test screen_preview_test --test app_custom_sql_test --test pg_custom_sql_test --test screen_custom_sql_test` | exit 0, `86 passed` |
 | AC-005 | Given the finished task, when the gate runs, then it reports `DONE`. | `taskfmt verify` | exit 0, last line `DONE` |
 
 ## Fixed decisions
@@ -126,7 +126,7 @@ Static plan. Hierarchical IDs, four spaces per level, max depth 4. Every leaf na
     - [ ] **4.1** `ui/custom_sql.rs` per D-060 (`R-005`, `AC-003`) — evidence: `cargo test -p pgtui --test screen_custom_sql_test` prints `3 passed`.
     - [ ] **4.2** Lint is clean (`D-004`) — evidence: `cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings` exits 0.
 - [ ] **5** Gate passes.
-    - [ ] **5.1** Regression `AC-004` holds — evidence: the combined `cargo test -p pgtui --test ...` command of `AC-004` prints `90 passed`.
+    - [ ] **5.1** Regression `AC-004` holds — evidence: the combined `cargo test -p pgtui --test ...` command of `AC-004` prints `86 passed`.
     - [ ] **5.2** Diff reviewed: only `expected_paths` changed, nothing temporary or unrelated (`R-006`, `R-007`) — evidence: `git status --porcelain` and `git diff --no-renames --stat $TASKFMT_BASE` show only in-scope files.
     - [ ] **5.3** `taskfmt verify` exits 0 with last line `DONE` (`AC-005`) — evidence: final full run (with progress check), full output shown in the transcript.
 <!-- checklist:end -->
