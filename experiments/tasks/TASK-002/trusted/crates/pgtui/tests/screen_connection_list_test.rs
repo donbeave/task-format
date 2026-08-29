@@ -48,18 +48,18 @@ fn rows_are_sorted_by_name_with_cursor() {
     let beta_at = rendered.find("beta").expect("beta row");
     assert!(alpha_at < beta_at, "rows in list order: {rendered}");
 
-    let beta_row = lines
-        .iter()
-        .find(|row| row.contains("beta"))
-        .expect("beta row");
-    assert!(beta_row.contains("> beta"), "cursor marker: {beta_row:?}");
     let alpha_row = lines
         .iter()
         .find(|row| row.contains("alpha"))
         .expect("alpha row");
+    assert!(alpha_row.contains("> alpha"), "cursor marker: {alpha_row:?}");
+    let beta_row = lines
+        .iter()
+        .find(|row| row.contains("beta"))
+        .expect("beta row");
     assert!(
-        !alpha_row.contains("> "),
-        "only the selected row is highlighted: {alpha_row:?}"
+        !beta_row.contains("> "),
+        "only the selected row is highlighted: {beta_row:?}"
     );
 
     assert!(
