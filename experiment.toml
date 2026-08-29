@@ -43,7 +43,7 @@ profile = "zai-flash"
 [agents.profiles.zai-flash]
 kind = "claude"
 model = "glm-5.3-flash"
-effort = "low"
+effort = "high"
 image = "harness-claude:latest"
 
 [agents.profiles.zai-flash.env_static]

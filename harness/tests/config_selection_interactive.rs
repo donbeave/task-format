@@ -48,7 +48,13 @@ fn manifest_matches_the_repo_root_file() {
     let zai = cfg.profile("zai-flash").unwrap();
     assert_eq!(zai.kind, "claude");
     assert_eq!(zai.model, "glm-5.3-flash");
-    assert_eq!(zai.effort, "low");
+    // shape, not policy: the operator may retune effort without editing this test. No
+    // validated set exists in `config.rs` (only `default_effort()`), so the list is literal.
+    assert!(
+        ["low", "medium", "high", "max"].contains(&zai.effort.as_str()),
+        "effort must be one of the accepted values, got {}",
+        zai.effort
+    );
     let codex = cfg.profile("codex-default").unwrap();
     assert_eq!(codex.kind, "codex");
     // only references are committed, never values
