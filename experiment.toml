@@ -28,7 +28,7 @@ memory = "4g"
 cpus = 2
 pids_limit = 2048
 prereq_timeout_s = 180
-kill_after_min = 90
+kill_after_min = 180
 
 [prereq]
 image = "postgres:16-alpine"
