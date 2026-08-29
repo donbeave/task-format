@@ -1,0 +1,72 @@
+#!/bin/sh
+# prepare-commit-msg: attribute Claude-agent commits without the agent ever
+# typing a trailer. Not part of taskfmt's execution path (gate/lint/dispatch
+# stay pure Rust, per AGENTS.md's "no executable shell script in the
+# execution path"); this is a client-side git hook that only fires for an
+# interactive/scripted `git commit` on a developer's own clone, invoked by
+# git itself, never by taskfmt or any container entrypoint.
+#
+# One-time setup per clone: git config core.hooksPath .githooks
+set -eu
+
+msg_file="$1"
+msg_source="${2:-}"
+
+# No-op for amends, merges, squashes, reused messages (-c/-C): the message
+# is already final, or a merge commit shouldn't carry agent attribution.
+case "$msg_source" in
+  merge | squash | commit)
+    exit 0
+    ;;
+esac
+
+# No-op for machine-attributed commits (harness/promote.rs stamps these
+# from manifest.json already; never double-stamp).
+committer_email=$(git var GIT_COMMITTER_IDENT 2>/dev/null | sed -n 's/.*<\([^>]*\)>.*/\1/p') || committer_email=""
+if [ "$committer_email" = "harness@localhost" ]; then
+  exit 0
+fi
+if grep -q '^Taskfmt-Run:' "$msg_file" 2>/dev/null; then
+  exit 0
+fi
+
+has_coauthor=0
+grep -q '^Co-Authored-By: Claude' "$msg_file" 2>/dev/null && has_coauthor=1
+has_session=0
+grep -q '^Claude-Session:' "$msg_file" 2>/dev/null && has_session=1
+if [ "$has_coauthor" -eq 1 ] && [ "$has_session" -eq 1 ]; then
+  exit 0
+fi
+
+actor="${CLAUDE_MODEL:-}"
+if [ -z "$actor" ]; then
+  actor=$(git config --get taskfmt.commit.actor 2>/dev/null || true)
+fi
+[ -z "$actor" ] && actor="Claude Opus 5"
+
+session="${CLAUDE_SESSION_URL:-}"
+if [ -z "$session" ]; then
+  session=$(git config --get taskfmt.commit.session 2>/dev/null || true)
+fi
+
+# No configured session: nothing to attribute, don't invent state.
+[ -z "$session" ] && exit 0
+
+tmp=$(mktemp "${msg_file}.XXXXXX")
+trap 'rm -f "$tmp"' EXIT
+
+awk -v has_coauthor="$has_coauthor" -v has_session="$has_session" \
+    -v actor="$actor" -v session="$session" '
+  { lines[NR] = $0 }
+  END {
+    n = NR
+    tail = n
+    while (tail > 0 && lines[tail] ~ /^Signed-off-by: /) tail--
+    for (i = 1; i <= tail; i++) print lines[i]
+    if (has_coauthor == 0) print "Co-Authored-By: " actor " <noreply@anthropic.com>"
+    if (has_session == 0) print "Claude-Session: " session
+    for (i = tail + 1; i <= n; i++) print lines[i]
+  }
+' "$msg_file" > "$tmp"
+
+cat "$tmp" > "$msg_file"
