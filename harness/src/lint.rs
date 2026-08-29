@@ -40,9 +40,17 @@
 //! - `commands`      `cargo test` with two or more positional filters and no ' -- ' (warning)
 //! - `config`        verify.toml parses; ALLOWED_GLOBS == expected_paths; at least one focused
 //!   command; no template placeholders
+//! - `decisions`     the package's own `decisions.md`, when it ships one: every id the
+//!   `In force` declaration puts in force has a body, every id a Fixed-decisions bullet cites
+//!   has a body, no id has two bodies (ERROR); a declaration naming no id, or a `Full text:`
+//!   promise with no `decisions.md` beside the README, is a warning. Absent input is silence
+//! - `oracle`        a decision against this package's `trusted/` tree (warning, and an
+//!   over-approximation on purpose): a negative existence claim a trusted string literal
+//!   falsifies, and a `tests/` path `trusted/` has no home for. Satisfiability is undecidable,
+//!   so the rule asks two decidable questions and reports rather than refuses
 //! - `size`          README.md over 10,000 bytes (~2,500 tokens) is a warning
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use regex::Regex;
@@ -492,6 +500,9 @@ pub fn lint_text(text: &str, readme: &Path) -> Vec<Finding> {
     // ---------- verify.toml ----------
     verify_config_findings(&mut findings, &verify, fm, &ac_cmds);
 
+    // ---------- decisions.md and the trusted oracle ----------
+    decision_findings(&mut findings, &tf, &dir);
+
     // ---------- size ----------
     let bytes = text.len();
     if bytes > 10_000 {
@@ -519,6 +530,14 @@ fn indent(lines: &[String], prefix: &str) -> String {
 fn finding(findings: &mut Vec<Finding>, rule: &'static str, message: String) {
     findings.push(Finding {
         severity: Severity::Error,
+        rule,
+        message,
+    });
+}
+
+fn warning(findings: &mut Vec<Finding>, rule: &'static str, message: String) {
+    findings.push(Finding {
+        severity: Severity::Warn,
         rule,
         message,
     });
@@ -1388,9 +1407,533 @@ fn verify_config_findings(
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// decisions.md and the trusted oracle
+// ---------------------------------------------------------------------------------------------
+//
+// The format admits three normative documents per package plus one normative artifact tree, and
+// until these two rules the lint's input set was README.md and verify.toml. Anything stated only
+// in the unread half was unfalsifiable by the toolchain no matter how decidable it was.
+
+/// The decision file a package ships beside its README; binding when present.
+const DECISIONS_FILE: &str = "decisions.md";
+/// The planner-shipped oracle tree a decision is checked against.
+const TRUSTED_DIR: &str = "trusted";
+/// The closed set of negative existence claims the `oracle` rule tries to falsify. Anything
+/// outside it needs the code read rather than a literal matched, and is deliberately not asked.
+const NEGATIVE_CLAIMS: &[&str] = &["not used", "never used", "does not exist", "do not exist"];
+/// Shortest code span worth looking for inside a string literal: below it a span matches by
+/// accident more often than by meaning.
+const MIN_SPAN_CHARS: usize = 4;
+
+/// One parsed `decisions.md`.
+struct Decisions {
+    /// Decision id -> the 1-based line number of each of its body lines, ascending.
+    bodies: BTreeMap<String, Vec<usize>>,
+    /// Every body in document order as `(id, text)`. A body is a SPAN — from its own line to the
+    /// line before the next body line — never a single line: the clause an oracle falsifies is
+    /// routinely a continuation, not the definition line.
+    spans: Vec<(String, String)>,
+    /// `(1-based line, declared ids)` of the first line beginning `In force`.
+    declaration: Option<(usize, Vec<String>)>,
+}
+
+/// The decision a body line defines: `- **D-001 …` or one to six `#` then a space then `D-001`,
+/// with a boundary after the digits that is not a letter, a digit, `'` or `-`. Both forms are
+/// required by measurement: the research corpus writes bullets, the meta corpus writes headings,
+/// and a rule that knew one form reports the other corpus' whole decision list as missing. The
+/// boundary is what keeps `## D-010's other half` prose and `D-0101` a different id.
+fn body_id(line: &str) -> Option<String> {
+    let rest = match line.strip_prefix("- **") {
+        Some(rest) => rest,
+        None => {
+            let hashes = line.len() - line.trim_start_matches('#').len();
+            if hashes == 0 || hashes > 6 {
+                return None;
+            }
+            line[hashes..].strip_prefix(' ')?
+        }
+    };
+    let digits = rest.strip_prefix("D-")?;
+    let taken = digits.len()
+        - digits
+            .trim_start_matches(|c: char| c.is_ascii_digit())
+            .len();
+    if taken == 0 {
+        return None;
+    }
+    match digits[taken..].chars().next() {
+        Some(c) if c.is_ascii_alphanumeric() || c == '\'' || c == '-' => None,
+        _ => Some(format!("D-{}", &digits[..taken])),
+    }
+}
+
+/// Keep the first occurrence of each id, in the order given.
+fn dedup_ids(ids: Vec<String>) -> Vec<String> {
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    ids.into_iter()
+        .filter(|id| seen.insert(id.clone()))
+        .collect()
+}
+
+fn parse_decisions(text: &str) -> Decisions {
+    let lines: Vec<&str> = text.lines().collect();
+    let starts: Vec<(usize, String)> = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(i, line)| body_id(line).map(|id| (i, id)))
+        .collect();
+    let mut bodies: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    let mut spans: Vec<(String, String)> = Vec::with_capacity(starts.len());
+    for (nth, (start, id)) in starts.iter().enumerate() {
+        let end = starts.get(nth + 1).map_or(lines.len(), |(next, _)| *next);
+        bodies.entry(id.clone()).or_default().push(start + 1);
+        spans.push((id.clone(), lines[*start..end].join("\n")));
+    }
+    // The declaration's ids come from `expand_ids`, the same parser the `requirements` rule uses,
+    // so ranges and the `PR-001`-is-not-`R-001` rule are free and consistent. A line with no `:`
+    // yields no ids, which is the "names no decision id" case and not a parse over the whole line.
+    let declaration = lines
+        .iter()
+        .position(|line| line.starts_with("In force"))
+        .map(|i| {
+            let tail = lines[i].split_once(':').map_or("", |(_, tail)| tail);
+            (i + 1, dedup_ids(expand_ids('D', tail)))
+        });
+    Decisions {
+        bodies,
+        spans,
+        declaration,
+    }
+}
+
+/// The ids the README's `## Fixed decisions` bullets cite. Only the bold definition token is
+/// read, so `- **D-002:** … (see `docs/decisions/D-041.md`)` cites `D-002` and not the file name
+/// `D-041`. Missing a citation is fail-open; inventing one is not.
+fn readme_citations(tf: &TaskFile) -> Vec<String> {
+    let mut ids = Vec::new();
+    for (title, body) in &tf.sections {
+        if title != "Fixed decisions" {
+            continue;
+        }
+        for line in body {
+            if let Some(token) = definition_token(line) {
+                ids.extend(expand_ids('D', token));
+            }
+        }
+    }
+    dedup_ids(ids)
+}
+
+/// Does the `## Fixed decisions` section promise a `Full text:` file?
+fn promises_full_text(tf: &TaskFile) -> bool {
+    tf.sections.iter().any(|(title, body)| {
+        title == "Fixed decisions" && body.iter().any(|line| line.contains("Full text:"))
+    })
+}
+
+/// Both rules. `decisions` compares id sets inside one file and one section, is fully decidable,
+/// and is an ERROR. `oracle` asks two decidable questions of a decision against `trusted/`, is a
+/// sound-in-intent over-approximation rather than a classifier, and is a WARN that never fails a
+/// lint. Absent input is silence: no `decisions.md` silences everything but the broken promise,
+/// no `trusted/` silences the oracle.
+fn decision_findings(findings: &mut Vec<Finding>, tf: &TaskFile, dir: &Path) {
+    let path = dir.join(DECISIONS_FILE);
+    if !path.is_file() {
+        if promises_full_text(tf) {
+            warning(
+                findings,
+                "decisions",
+                format!("README.md cites Full text: {DECISIONS_FILE}, which is not next to it"),
+            );
+        }
+        return;
+    }
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) => {
+            warning(
+                findings,
+                "decisions",
+                format!("{DECISIONS_FILE} is present but unreadable ({err}); nothing checked"),
+            );
+            return;
+        }
+    };
+    let decisions = parse_decisions(&text);
+
+    // The declaration is primary; an id it names and the file does not body is the confirmed
+    // defect class. An unreadable declaration reports and checks nothing rather than refusing the
+    // package: a one-character typo in prose must not block a package whose decisions are present.
+    let mut reported: BTreeSet<String> = BTreeSet::new();
+    match &decisions.declaration {
+        Some((line, ids)) if ids.is_empty() => warning(
+            findings,
+            "decisions",
+            format!("{DECISIONS_FILE}:{line} declaration names no decision id; nothing checked"),
+        ),
+        Some((line, ids)) => {
+            for id in ids {
+                if !decisions.bodies.contains_key(id) && reported.insert(id.clone()) {
+                    finding(
+                        findings,
+                        "decisions",
+                        format!("{id} in force at {DECISIONS_FILE}:{line} has no body"),
+                    );
+                }
+            }
+        }
+        None => {}
+    }
+    // The README list is secondary: an id both declared and cited and bodiless is one finding,
+    // and the declaration's message is the one kept.
+    for id in readme_citations(tf) {
+        if !decisions.bodies.contains_key(&id) && reported.insert(id.clone()) {
+            finding(
+                findings,
+                "decisions",
+                format!("{id} cited by README.md has no body"),
+            );
+        }
+    }
+    for (id, lines) in &decisions.bodies {
+        if let [first, second, ..] = lines[..] {
+            finding(
+                findings,
+                "decisions",
+                format!(
+                    "duplicate body for {id} at {DECISIONS_FILE}:{first} and {DECISIONS_FILE}:{second}"
+                ),
+            );
+        }
+    }
+
+    oracle_findings(findings, &decisions, dir);
+}
+
+/// The two oracle questions, per decision body.
+fn oracle_findings(findings: &mut Vec<Finding>, decisions: &Decisions, dir: &Path) {
+    let trusted = dir.join(TRUSTED_DIR);
+    if !trusted.is_dir() {
+        return;
+    }
+    let mut paths: Vec<String> = Vec::new();
+    collect_trusted(&trusted, TRUSTED_DIR, &mut paths);
+    paths.sort();
+    let sources: Vec<(String, String)> = paths
+        .iter()
+        .filter(|rel| rel.ends_with(".rs"))
+        .filter_map(|rel| {
+            std::fs::read_to_string(dir.join(rel))
+                .ok()
+                .map(|text| (rel.clone(), text))
+        })
+        .collect();
+
+    for (id, body) in &decisions.spans {
+        let prose = prose_of(body);
+
+        // O-1, the falsified negative claim: if the clause asserts a fact the oracle can falsify,
+        // the oracle wins. One warning per (decision, span), first match winning in sorted file
+        // order and then byte order — a body that names a prefix several literals share must not
+        // produce one warning per literal.
+        let mut asked: BTreeSet<&str> = BTreeSet::new();
+        for segment in sentences(&prose) {
+            if !NEGATIVE_CLAIMS.iter().any(|claim| segment.contains(claim)) {
+                continue;
+            }
+            for span in code_spans(segment) {
+                if span.chars().count() < MIN_SPAN_CHARS || !asked.insert(span) {
+                    continue;
+                }
+                if let Some((rel, literal)) = first_literal_containing(&sources, span) {
+                    warning(
+                        findings,
+                        "oracle",
+                        format!("{id} calls {span} unused; {rel} literal \"{literal}\" uses it"),
+                    );
+                }
+            }
+        }
+
+        // O-2, the trusted path with no home: a `tests/` path has exactly one legal home under
+        // every package's own test-placement decision, so "is it under `trusted/`?" has exactly
+        // one right answer. The suffix match is the fail-open direction.
+        let mut named: BTreeSet<&str> = BTreeSet::new();
+        for span in code_spans(&prose) {
+            for token in span.split_whitespace() {
+                let is_path =
+                    token.ends_with(".rs") || token.ends_with(".sql") || token.ends_with(".toml");
+                if !is_path || token.contains('*') || token.contains('?') {
+                    continue;
+                }
+                if !token.contains("tests/") || !named.insert(token) {
+                    continue;
+                }
+                let suffix = format!("/{token}");
+                if !paths
+                    .iter()
+                    .any(|rel| rel == token || rel.ends_with(&suffix))
+                {
+                    warning(
+                        findings,
+                        "oracle",
+                        format!("{id} names {token}, absent from {TRUSTED_DIR}/"),
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Every file under `trusted/`, as package-relative paths keeping the `trusted/` prefix, so a
+/// message names a path the reader can open.
+fn collect_trusted(dir: &Path, rel: &str, out: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let child = format!("{rel}/{name}");
+        let path = entry.path();
+        if path.is_dir() {
+            collect_trusted(&path, &child, out);
+        } else {
+            out.push(child);
+        }
+    }
+}
+
+/// A body's prose: its lines with fenced code blocks dropped. A module map inside a fence is a
+/// plan for a series, not a claim about this package's tree; reading fences was measured and
+/// rejected.
+fn prose_of(body: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    let mut fenced = false;
+    for line in body.lines() {
+        if line.trim_start().starts_with("```") {
+            fenced = !fenced;
+            continue;
+        }
+        if !fenced {
+            out.push(line);
+        }
+    }
+    out.join("\n")
+}
+
+/// Split on a period followed by whitespace. Nothing subtler: a segment that swallowed the next
+/// sentence would match a token that sentence does not talk about.
+fn sentences(text: &str) -> Vec<&str> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    for (i, ch) in text.char_indices() {
+        if ch != '.' {
+            continue;
+        }
+        let next = i + 1;
+        if next < bytes.len() && bytes[next].is_ascii_whitespace() {
+            out.push(&text[start..next]);
+            start = next;
+        }
+    }
+    out.push(&text[start..]);
+    out
+}
+
+/// Inline backticked spans, taken one line at a time so an unbalanced backtick cannot swallow the
+/// rest of the body.
+fn code_spans(text: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let mut rest = line;
+        while let Some(open) = rest.find('`') {
+            let after = &rest[open + 1..];
+            let Some(close) = after.find('`') else {
+                break;
+            };
+            out.push(&after[..close]);
+            rest = &after[close + 1..];
+        }
+    }
+    out
+}
+
+/// The first double-quoted literal, in sorted file order then byte order, that contains `needle`.
+fn first_literal_containing<'a>(
+    sources: &'a [(String, String)],
+    needle: &str,
+) -> Option<(&'a str, &'a str)> {
+    sources.iter().find_map(|(rel, text)| {
+        string_literals(text)
+            .into_iter()
+            .find(|literal| literal.contains(needle))
+            .map(|literal| (rel.as_str(), literal))
+    })
+}
+
+/// Double-quoted spans of a source file, in byte order, with escapes stepped over.
+fn string_literals(text: &str) -> Vec<&str> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] != b'"' {
+            i += 1;
+            continue;
+        }
+        let start = i + 1;
+        let mut end = start;
+        while end < bytes.len() && bytes[end] != b'"' {
+            end += if bytes[end] == b'\\' { 2 } else { 1 };
+        }
+        if end >= bytes.len() {
+            break;
+        }
+        out.push(&text[start..end]);
+        i = end + 1;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decisions_body_grammar_accepts_bullet_and_heading() {
+        assert_eq!(
+            body_id("- **D-001 Workspace and exact pins.**").as_deref(),
+            Some("D-001")
+        );
+        assert_eq!(
+            body_id("## D-001 — compare the packages").as_deref(),
+            Some("D-001")
+        );
+        assert_eq!(body_id("###### D-042.").as_deref(), Some("D-042"));
+        assert_eq!(body_id("- **D-080:** contract").as_deref(), Some("D-080"));
+        assert_eq!(body_id("  - a continuation line about D-080"), None);
+        assert_eq!(body_id("####### D-001 too deep"), None);
+        assert_eq!(body_id("- **R-001 (MUST):** not a decision"), None);
+        assert_eq!(body_id("prose mentioning D-001"), None);
+    }
+
+    #[test]
+    fn decisions_possessive_and_longer_id_are_not_bodies() {
+        // `## D-010's other half` is prose about D-010, not a second D-010; `D-0101` is a
+        // different id. Dropping either exclusion invents a duplicate in a shipped package.
+        assert_eq!(body_id("## D-010's other half — an addendum"), None);
+        assert_eq!(
+            body_id("- **D-0101 different id.**").as_deref(),
+            Some("D-0101")
+        );
+        assert_eq!(body_id("## D-010-b"), None);
+    }
+
+    #[test]
+    fn decisions_body_is_a_span_to_the_next_body_line() {
+        let text = "In force for TASK-042: D-001..D-002.\n\
+                    \n\
+                    - **D-001 first.**\n\
+                    \x20 - a continuation clause\n\
+                    - **D-002 second.**\n";
+        let parsed = parse_decisions(text);
+        assert_eq!(parsed.declaration.as_ref().map(|(line, _)| *line), Some(1));
+        assert_eq!(
+            parsed.declaration.as_ref().map(|(_, ids)| ids.clone()),
+            Some(vec!["D-001".to_string(), "D-002".to_string()])
+        );
+        assert_eq!(parsed.bodies["D-001"], vec![3]);
+        assert_eq!(parsed.bodies["D-002"], vec![5]);
+        assert!(parsed.spans[0].1.contains("a continuation clause"));
+        assert!(!parsed.spans[1].1.contains("a continuation clause"));
+    }
+
+    #[test]
+    fn decisions_declaration_expands_ranges_and_tolerates_a_missing_colon() {
+        let ranged = parse_decisions("In force for TASK-042: D-030..D-032, D-080.\n");
+        assert_eq!(
+            ranged.declaration.map(|(_, ids)| ids),
+            Some(vec![
+                "D-030".to_string(),
+                "D-031".to_string(),
+                "D-032".to_string(),
+                "D-080".to_string()
+            ])
+        );
+        // No colon at all is the zero-id case: warn and check nothing, never parse the whole line.
+        let bare = parse_decisions("In force everything settled so far\n");
+        assert_eq!(
+            bare.declaration.map(|(line, ids)| (line, ids.len())),
+            Some((1, 0))
+        );
+        // No declaration at all is silence, not an empty one.
+        assert!(parse_decisions("- **D-001 a.** x\n").declaration.is_none());
+    }
+
+    #[test]
+    fn decisions_absent_file_is_silent_unless_the_readme_promised_one() {
+        let head = "---\nschema: task/v4\nid: TASK-001\ntitle: t\nkind: bugfix\nverify: \"taskfmt verify\"\nexpected_paths:\n  - \"src/*\"\n---\n";
+        let quiet = format!("{head}\n## Fixed decisions\n\n- **D-001:** a.\n");
+        let tf = TaskFile::parse(quiet, Path::new("/nonexistent/README.md")).expect("parses");
+        let mut findings = Vec::new();
+        decision_findings(&mut findings, &tf, Path::new("/nonexistent"));
+        assert!(findings.is_empty());
+
+        let promised = format!(
+            "{head}\n## Fixed decisions\n\nFull text: `/task/decisions.md`.\n\n- **D-001:** a.\n"
+        );
+        let tf = TaskFile::parse(promised, Path::new("/nonexistent/README.md")).expect("parses");
+        let mut findings = Vec::new();
+        decision_findings(&mut findings, &tf, Path::new("/nonexistent"));
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Warn);
+        assert_eq!(findings[0].rule, "decisions");
+    }
+
+    #[test]
+    fn oracle_reads_prose_not_fences_and_splits_on_sentences() {
+        assert_eq!(code_spans("a `one` b `two` c"), vec!["one", "two"]);
+        assert_eq!(code_spans("unbalanced `open"), Vec::<&str>::new());
+        assert_eq!(
+            prose_of("keep\n```\ndrop `me`\n```\nkeep too"),
+            "keep\nkeep too"
+        );
+        assert_eq!(
+            sentences("one. two.three four"),
+            vec!["one.", " two.three four"]
+        );
+        assert_eq!(sentences("no split"), vec!["no split"]);
+    }
+
+    #[test]
+    fn oracle_first_literal_wins() {
+        // Two literals share the span on one line; the rule reports the first, once. A warning
+        // per matching literal would inflate every count the acceptance commands pin.
+        let sources = vec![
+            (
+                "trusted/b_test.rs".to_string(),
+                "const LATE: &str = \"qq__gamma\";".to_string(),
+            ),
+            (
+                "trusted/a_test.rs".to_string(),
+                "const NAMES: [&str; 2] = [\"qq__alpha\", \"qq__beta\"];".to_string(),
+            ),
+        ];
+        assert_eq!(
+            first_literal_containing(&sources, "qq__"),
+            Some(("trusted/b_test.rs", "qq__gamma"))
+        );
+        assert_eq!(first_literal_containing(&sources, "absent"), None);
+        assert_eq!(
+            string_literals("let a = \"x\\\"y\"; let b = \"z\";"),
+            vec!["x\\\"y", "z"]
+        );
+    }
 
     #[test]
     fn size_warning_above_ten_thousand_bytes() {
