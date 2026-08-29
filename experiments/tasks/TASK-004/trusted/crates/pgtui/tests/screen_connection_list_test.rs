@@ -52,7 +52,10 @@ fn rows_are_sorted_by_name_with_cursor() {
         .iter()
         .find(|row| row.contains("alpha"))
         .expect("alpha row");
-    assert!(alpha_row.contains("> alpha"), "cursor marker: {alpha_row:?}");
+    assert!(
+        alpha_row.contains("> alpha"),
+        "cursor marker: {alpha_row:?}"
+    );
     let beta_row = lines
         .iter()
         .find(|row| row.contains("beta"))

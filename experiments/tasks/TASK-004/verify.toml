@@ -41,7 +41,7 @@ commands = [
 
 [regression]
 commands = [
-  "cargo test -p pgtui --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test --test app_create_form_test --test runtime_create_test --test screen_create_form_test --test pg_connect_test --test pg_runtime_connect_test --test app_browser_test --test screen_browser_test",
+  "cargo test -p pgtui --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test --test app_create_form_test --test runtime_create_test --test screen_create_form_test --test pg_connect_test --test pg_runtime_connect_test --test app_browser_test --test screen_browser_test --test skeleton_test -- --skip pgtui_stub_exits_2",
 ]
 
 [lint]
@@ -78,4 +78,11 @@ paths = [
 regex = 'query_one|query_raw|\.prepare\('
 paths = [
   "crates/pgtui/src/db",
+]
+
+[[forbidden_patterns]]
+# D-042 must-not: the retired TASK-001 stub message never reappears in the real binary (R-005).
+regex = 'error: not implemented'
+paths = [
+  "crates/pgtui/src/main.rs",
 ]
