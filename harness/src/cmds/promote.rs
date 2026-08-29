@@ -60,9 +60,10 @@ pub fn promote_run(ctx: &Ctx, run_dir: &Path, yes: bool) -> anyhow::Result<()> {
         ),
         format!("git push origin main -> {}", manifest.repo_url),
     ];
-    let interaction =
-        crate::interactive::Interaction::new(ctx.interaction.auto, ctx.interaction.auto || yes);
-    interaction.confirm(&format!("promote {}", manifest.run), &plan)?;
+    let interaction = crate::cmds::repo::subcommand_interaction(&ctx.interaction, yes);
+    interaction
+        .confirm(&format!("promote {}", manifest.run), &plan)?
+        .or_decline("promoting")?;
 
     git::add_all(&workspace)?;
     if !git::status_porcelain(&workspace)?.is_empty() {

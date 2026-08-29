@@ -73,9 +73,10 @@ pub fn run(
         .iter()
         .map(|task| format!("run {task} on {repo_url} as {profile_name}, gate, promote on PASS"))
         .collect();
-    if !ctx
+    if ctx
         .interaction
         .confirm(&format!("experiment {experiment_id}"), &plan)?
+        == crate::interactive::Decision::Declined
     {
         redact::eemit("aborted — nothing dispatched");
         return Ok(2);
