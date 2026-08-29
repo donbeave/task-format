@@ -166,8 +166,10 @@ impl Session {
         }
     }
 
-    /// Run a command list under `bash -eo pipefail` (errexit + pipefail: an early failing
-    /// statement or a failing pipe stage fails the check), naming checks `<prefix>.<n>`.
+    /// Run a command list under `bash -eo pipefail`, naming checks `<prefix>.<n>`. Under
+    /// errexit + pipefail a failing command or pipe stage aborts the check, except where bash
+    /// swallows the status: a non-final member of a `&&`/`||` list, the condition of an
+    /// `if`/`while`, or a `!`-inverted command. `false && echo A; echo B` prints B and exits 0.
     fn run_cmd_list(&mut self, prefix: &str, commands: &[String]) {
         for (i, cmd) in commands.iter().enumerate() {
             let name = format!("{prefix}.{}", i + 1);

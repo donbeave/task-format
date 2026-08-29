@@ -66,7 +66,7 @@ In scope:
 
 Out of scope:
 
-- `db/`, `browser.rs`, `custom_sql.rs`, `grid.rs`; later tasks.
+- All of `db/` — the `db/mod.rs` placeholder TASK-002 left as well as `db/postgres.rs` — plus `browser.rs`, `custom_sql.rs`, `grid.rs`; later tasks.
 - `render.rs`, `fonts/`, anything under `crates/pgtui/tests/`.
 - Any change to the D-021/D-022 store contract.
 
@@ -78,7 +78,7 @@ Out of scope:
 - **R-004 (MUST):** On `Msg::Saved(Ok)`: reload the list, return to `Screen::ConnectionList`, put the cursor on the new row (D-032, D-011).
 - **R-005 (MUST):** Rendering per D-060: block title ` New connection `, lines `  <Label>: <value>`, `> ` on the focused line, password masked as `*` per char, help `Tab next  Enter save  Esc cancel`; the password never reaches the rendered buffer.
 - **R-006 (MUST):** Final design directly; no compatibility layer, dual path, deprecated alias, feature flag, or legacy fallback.
-- **R-007 (MUST NOT):** Remove or bump a D-001 pin, or depend on anything outside the D-001 pin list (adding a listed pin is required where trusted tests need it); touch `render.rs`, `fonts/`, or anything under `crates/pgtui/tests/`; change the store schema or API; wire `Enter` on the connection list; create `db/`, `grid.rs`, `justfile`, or `README.md`.
+- **R-007 (MUST NOT):** Remove or bump a D-001 pin, or depend on anything outside the D-001 pin list (adding a listed pin is required where trusted tests need it); touch `render.rs`, `fonts/`, or anything under `crates/pgtui/tests/`; change the store schema or API; wire `Enter` on the connection list; create or edit anything under `db/` (no `db/` path is in this task's scope whitelist); create `grid.rs`, `justfile`, or `README.md`.
 
 ## Acceptance criteria
 

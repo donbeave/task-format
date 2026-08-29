@@ -27,6 +27,19 @@ fn type_text(app: &mut App, text: &str) {
     }
 }
 
+fn fill(app: &mut App, name: &str, host: &str, port: &str, dbname: &str, user: &str) {
+    focus_field(app, Field::Name);
+    type_text(app, name);
+    focus_field(app, Field::Host);
+    type_text(app, host);
+    focus_field(app, Field::Port);
+    type_text(app, port);
+    focus_field(app, Field::Database);
+    type_text(app, dbname);
+    focus_field(app, Field::User);
+    type_text(app, user);
+}
+
 #[test]
 fn blank_form_labels_and_focus_marker() {
     let app = form_app();
@@ -62,8 +75,7 @@ fn filled_form_masks_password() {
 #[test]
 fn saved_list_shows_new_row_selected_and_rasterizes() {
     let mut app = form_app();
-    focus_field(&mut app, Field::Name);
-    type_text(&mut app, "prod");
+    fill(&mut app, "prod", "db.example.com", "5432", "appdb", "alice");
 
     let effects = app.update(support::enter());
     let Effect::SaveConnection(_) = effects[0] else {

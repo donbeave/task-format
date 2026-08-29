@@ -14,6 +14,7 @@ expected_paths:
   - "crates/pgtui/src/keys.rs"
   - "crates/pgtui/src/runtime.rs"
   - "crates/pgtui/src/store/mod.rs"
+  - "crates/pgtui/src/db/mod.rs"
   - "crates/pgtui/src/ui/mod.rs"
   - "crates/pgtui/src/ui/connection_list.rs"
   - "crates/pgtui/src/ui/status.rs"
@@ -66,24 +67,24 @@ If a command fails, stop and report `BLOCKED`. Never work around a precondition.
 
 In scope:
 
-- `app.rs`, `keys.rs`, `runtime.rs`, `store/mod.rs`, `ui/mod.rs`, `ui/connection_list.rs`, `ui/status.rs`.
+- `app.rs`, `keys.rs`, `runtime.rs`, `store/mod.rs`, `db/mod.rs` (D-002 placeholders only), `ui/mod.rs`, `ui/connection_list.rs`, `ui/status.rs`.
 - `lib.rs` module declarations, `main.rs` CLI and loop.
 
 Out of scope:
 
-- `create_form.rs`, `browser.rs`, `custom_sql.rs`, `grid.rs`, `db/`; later tasks.
+- `create_form.rs`, `browser.rs`, `custom_sql.rs`, `grid.rs`, `db/postgres.rs`; later tasks.
 - `render.rs`, `fonts/`, anything under `crates/pgtui/tests/`.
 - `README.md`, keyring, any repository task runner (D-005).
 
 ## Requirements
 
 - **R-001 (MUST):** Store API exactly as D-022, schema exactly as D-021, path precedence exactly as D-020; `list()` is `ORDER BY name ASC`; `insert` on a duplicate name returns `StoreError::DuplicateName`.
-- **R-002 (MUST):** `App`, `Screen`, `Msg`, `Effect`, `QueryKind`, `QueryOutcome` with the exact variant sets of D-010/D-011; types whose task has not landed yet may be empty placeholders, but the field set of `App` is final.
+- **R-002 (MUST):** `App`, `Screen`, `Msg`, `Effect`, `QueryKind`, `QueryOutcome` with the exact variant sets of D-010/D-011; types whose task has not landed yet may be empty placeholders in `db/mod.rs` (D-002), but the field set of `App` is final.
 - **R-003 (MUST):** Keys per D-030/D-031: `j`/`k`/`Up`/`Down` clamped, `n` opens a blank form screen, `q` and `Ctrl+C` quit; `Enter` stays a no-op until TASK-004.
 - **R-004 (MUST):** Rendering per D-060/D-061: 100x30 buffer, list block ` pgtui - connections `, rows `<name>  <display_dsn>`, highlight `> `, empty-list hint, help line, status line per D-013.
 - **R-005 (MUST):** `main.rs` per D-012/D-040: `--db <path>`, store open failure exits 2 with `error: ...` on stderr, `q`/`Ctrl+C` exits 0 after restoring the terminal; stub behaviour (`error: not implemented`, exit 2) is gone.
 - **R-006 (MUST):** Final design directly; no compatibility layer, dual path, deprecated alias, feature flag, or legacy fallback.
-- **R-007 (MUST NOT):** Remove or bump a D-001 pin, or depend on anything outside the D-001 pin list (adding a listed pin is required where trusted tests need it); touch `render.rs`, `fonts/`, or anything under `crates/pgtui/tests/`; introduce `tokio_postgres` in `crates/pgtui/src/`; create `db/`, `grid.rs`, `justfile`, or `README.md`.
+- **R-007 (MUST NOT):** Remove or bump a D-001 pin, or depend on anything outside the D-001 pin list (adding a listed pin is required where trusted tests need it); touch `render.rs`, `fonts/`, or anything under `crates/pgtui/tests/`; introduce `tokio_postgres` in `crates/pgtui/src/`; create `db/postgres.rs`, `grid.rs`, `justfile`, or `README.md`.
 
 ## Acceptance criteria
 

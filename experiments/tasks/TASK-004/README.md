@@ -30,7 +30,7 @@ Execution protocol, progress grammar, report format: `/task/AGENTS.md`. This fil
 
 Current behavior:
 
-- TASK-003 completed the create form; `Enter` on the connection list is still a no-op, there is no `db/` module and no browser screen, and `pgtui` does not link `tokio-postgres` into `src/`.
+- TASK-003 completed the create form; `Enter` on the connection list is still a no-op, `db/` is placeholders only and there is no browser screen, and `pgtui` does not link `tokio-postgres` into `src/`.
 - Trusted tests `pg_connect_test.rs`, `pg_runtime_connect_test.rs`, `app_browser_test.rs`, `screen_browser_test.rs` are committed on the run base commit and fail to compile; `tests/fixtures/seed.sql` and `tests/support/fake_data.rs` are already there.
 
 Desired behavior:
@@ -116,7 +116,7 @@ Static plan. Hierarchical IDs, four spaces per level, max depth 4. Every leaf na
 <!-- checklist:start -->
 - [ ] **1** Baseline and environment are reproduced.
     - [ ] **1.1** Preconditions `P-001..P-005` pass — evidence: each listed command exits 0.
-    - [ ] **1.2** Baseline failure recorded in `progress.md` `BASELINE:` — evidence: `cargo test -p pgtui --test pg_connect_test` fails to compile with `db` unresolved.
+    - [ ] **1.2** Baseline failure recorded in `progress.md` `BASELINE:` — evidence: `cargo test -p pgtui --test pg_connect_test` fails to compile with `PgSession` unresolved.
 - [ ] **2** Database layer is implemented.
     - [ ] **2.1** D-026 types and `quote_ident` in `db/mod.rs` (`R-001`) — evidence: `grep -q 'pub const PREVIEW_LIMIT: usize = 500' crates/pgtui/src/db/mod.rs && grep -q 'pub fn quote_ident' crates/pgtui/src/db/mod.rs` exits 0.
     - [ ] **2.2** `PgSession::connect`/`list_tables` per D-023..D-025 (`R-002`, `R-003`, `R-004`, `AC-001`) — evidence: `cargo test -p pgtui --test pg_connect_test` prints `4 passed`.

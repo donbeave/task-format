@@ -32,7 +32,7 @@ Execution protocol, progress grammar, report format: `/task/AGENTS.md`. This fil
 Current behavior:
 
 - TASK-006 completed the app surface; `d` is inert, disconnect never closes the socket, `gallery` is the TASK-001 exit-2 stub, and there is no `README.md` or `docs/screens/`.
-- Trusted tests `app_disconnect_test.rs`, `pg_disconnect_test.rs`, `cli_exit_test.rs`, `gallery_test.rs` are on the run base commit and fail while the feature is absent.
+- Trusted tests `app_disconnect_test.rs`, `pg_disconnect_test.rs` and `gallery_test.rs` are on the run base commit and fail while the feature is absent. `cli_exit_test.rs` is too, but already passes on an empty store; it only guards.
 
 Desired behavior:
 
@@ -121,7 +121,7 @@ Static plan. Hierarchical IDs, four spaces per level, max depth 4. Every leaf na
     - [ ] **2.2** Teardown closes the backend before replying (`R-002`, `AC-002`) — evidence: `cargo test -p pgtui --test pg_disconnect_test` prints `1 passed`.
 - [ ] **3** Exit behaviour is proven.
     - [ ] **3.1** `q` exits 0 from a live session in a 100x30 pty with the terminal restored (`R-003`, `AC-003`) — evidence: `cargo test -p pgtui --test cli_exit_test -- q` prints `1 passed`.
-    - [ ] **3.2** `Ctrl+C` disconnects before quitting and exits 0 from the same pty (`R-003`, `AC-003`) — evidence: `cargo test -p pgtui --test cli_exit_test -- ctrl_c` prints `1 passed`.
+    - [ ] **3.2** `Ctrl+C` exits 0 from the same pty (`R-003`, `AC-003`; connected ordering is `AC-001`) — evidence: `cargo test -p pgtui --test cli_exit_test -- ctrl_c` prints `1 passed`.
 - [ ] **4** Gallery and repository material are produced.
     - [ ] **4.1** `src/bin/gallery.rs` meets D-080 without its own rendering code (`R-004`, `AC-004`) — evidence: `cargo test -p pgtui --test gallery_test` prints `4 passed`.
     - [ ] **4.2** `docs/screens/` holds the committed run and `README.md` lists the ten names (`R-005`) — evidence: `test "$(ls docs/screens/*.png | wc -l | tr -d ' ')" = 10 && grep -q '## Screens' README.md` exits 0.

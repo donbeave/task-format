@@ -79,7 +79,7 @@ Out of scope:
 
 - **R-001 (MUST):** Workspace per D-001: `resolver = "3"`, `edition = "2024"`, one member `crates/pgtui`, every dependency in `[workspace.dependencies]` at the exact pinned version and features.
 - **R-002 (MUST):** `crates/pgtui/Cargo.toml` uses `workspace = true` for every dependency and declares `[lib]`, `[[bin]] pgtui`, `[[bin]] gallery`.
-- **R-003 (MUST):** `rust-toolchain.toml` pins `1.98.0`; `rustfmt.toml` sets `edition = "2024"`; `.gitignore` lists `target/` and `*.snap.new`; `.cargo/config.toml` sets `TESTCONTAINERS_COMMAND = "remove"`.
+- **R-003 (MUST):** `rust-toolchain.toml` pins `1.98.0`; `rustfmt.toml` sets `edition = "2024"`; `.gitignore` lists `target/`; `.cargo/config.toml` sets `TESTCONTAINERS_COMMAND = "remove"`.
 - **R-004 (MUST):** `crates/pgtui/src/lib.rs` is exactly `pub mod render;`.
 - **R-005 (MUST):** `pgtui` prints `error: not implemented` on stderr, nothing on stdout, exits 2; `gallery` prints usage on stderr, exits 2 (D-040).
 - **R-006 (MUST):** Final design directly: no compatibility layer, dual path, deprecated alias, feature flag, or legacy fallback.
@@ -92,7 +92,7 @@ Observable behaviour plus the exact evidence command. The gate runs these; the h
 | ID | Given / When / Then | Evidence command | Expected |
 | --- | --- | --- | --- |
 | AC-001 | Given the empty repository, when the workspace exists, then everything builds with all targets. | `cargo build --workspace --all-targets` | exit 0 |
-| AC-002 | Given the workspace manifest, when inspected, then D-001 pins are present at `=`. | `grep -q 'ratatui = "=0.30.2"' Cargo.toml && grep -q 'tokio-postgres = "=0.7.18"' Cargo.toml && grep -q 'turso' Cargo.toml` | exit 0 |
+| AC-002 | Given the workspace manifest, when inspected, then D-001 pins are present at `=`. | `grep -qE '^ratatui = "=0\.30\.2"' Cargo.toml && grep -qE '^crossterm = "=0\.29\.0"' Cargo.toml && grep -qE '^tokio-postgres = "=0\.7\.18"' Cargo.toml && grep -qE '^turso = \{ version = "=0\.7\.2"' Cargo.toml && grep -qE '^tokio = \{ version = "=1\.53\.1"' Cargo.toml && grep -qE '^clap = \{ version = "=4\.6\.6"' Cargo.toml && grep -qE '^thiserror = "=2\.0\.20"' Cargo.toml && grep -qE '^directories = "=6\.0\.0"' Cargo.toml && grep -qE '^resvg = "=0\.48\.1"' Cargo.toml && grep -qE '^tempfile = "=3\.27\.0"' Cargo.toml && grep -qE '^testcontainers = "=0\.27\.3"' Cargo.toml && grep -qE '^testcontainers-modules = \{ version = "=0\.15\.0"' Cargo.toml && grep -qE '^nix = \{ version = "=0\.30\.1"' Cargo.toml` | exit 0 |
 | AC-003 | Given the toolchain files, when inspected, then channel, rustfmt edition, container env and ignore list match D-001. | `grep -q '1.98.0' rust-toolchain.toml && grep -q 'edition = "2024"' rustfmt.toml && grep -q 'TESTCONTAINERS_COMMAND' .cargo/config.toml && grep -q 'target/' .gitignore` | exit 0 |
 | AC-004 | Given the two binaries, when run, then both explain themselves on stderr and exit 2. | `cargo test -p pgtui --test skeleton_test -- stub` | exit 0, `2 passed` |
 | AC-005 | Given the planner-shipped render module, when its tests run, then text, SVG and PNG behave as stated. | `cargo test -p pgtui --test skeleton_test -- trims pipeline` | exit 0, `2 passed` |
@@ -120,9 +120,9 @@ Static plan. Hierarchical IDs `N`, `N.N`, `N.N.N`, `N.N.N.N`, four spaces per le
     - [ ] **1.2** Baseline failure recorded in `progress.md` `BASELINE:` — evidence: `cargo test -p pgtui --test skeleton_test` fails with `could not find Cargo.toml`.
 - [ ] **2** Required structure exists.
     - [ ] **2.1** Workspace builds with all targets (`R-001`, `AC-001`, `D-001`) — evidence: `cargo build --workspace --all-targets` exits 0.
-        - [ ] **2.1.1** Workspace manifest with exact pins (`R-001`, `AC-002`) — evidence: `grep -q 'ratatui = "=0.30.2"' Cargo.toml && grep -q 'tokio-postgres = "=0.7.18"' Cargo.toml && grep -q 'turso' Cargo.toml` exits 0.
+        - [ ] **2.1.1** Workspace manifest with exact pins (`R-001`, `AC-002`) — evidence: the `AC-002` pin check exits 0.
         - [ ] **2.1.2** Member manifest declares lib plus two bins with `workspace = true` dependencies (`R-002`) — evidence: `grep -q 'name = "gallery"' crates/pgtui/Cargo.toml && grep -q '\[\[bin\]\]' crates/pgtui/Cargo.toml` exits 0.
-        - [ ] **2.1.3** Toolchain, rustfmt, ignore list and container env per `R-003` (`AC-003`) — evidence: `grep -q '1.98.0' rust-toolchain.toml && grep -q 'edition = "2024"' rustfmt.toml && grep -q 'TESTCONTAINERS_COMMAND' .cargo/config.toml && grep -q 'target/' .gitignore` exits 0.
+        - [ ] **2.1.3** Toolchain, rustfmt, ignore list and container env per `R-003` (`AC-003`) — evidence: the `AC-003` toolchain check exits 0.
         - [ ] **2.1.4** `Cargo.lock` committed and in sync (`R-001`) — evidence: `test -f Cargo.lock && cargo metadata --format-version 1 >/dev/null` exits 0.
     - [ ] **2.2** `lib.rs` exports only the protected render module (`R-004`, `D-002`) — evidence: `test "$(tr -d '[:space:]' < crates/pgtui/src/lib.rs)" = 'pubmodrender;'` exits 0.
     - [ ] **2.3** Both binaries are exit-2 stubs (`R-005`, `AC-004`, `D-040`) — evidence: `cargo test -p pgtui --test skeleton_test -- stub` prints `2 passed`.
