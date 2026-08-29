@@ -32,6 +32,11 @@ pub struct Row {
     pub state: String,
     /// `manifest.json`'s `status_state` — the terminal state `gate` recorded, when it ran.
     pub status: String,
+    /// `out/status.json`'s `terminal_reason` — WHY the harness decided the run had ended
+    /// (`goal-verdict`, `agent-exited`, `container-stopped`, `killed-timeout`,
+    /// `goal-cleared-error`). A state name alone does not say which signal produced it, and that
+    /// is the question an operator asks first when a run ends earlier than it should have.
+    pub reason: String,
     /// The recorded gate verdict, when the gate has run.
     pub gate: String,
     pub run_dir: String,
@@ -64,6 +69,10 @@ impl Row {
                 .as_ref()
                 .map(|m| m.status_state.clone())
                 .unwrap_or_default(),
+            reason: run_dir
+                .as_deref()
+                .and_then(terminal_reason_of)
+                .unwrap_or_default(),
             gate: manifest
                 .as_ref()
                 .and_then(|m| m.gate.as_ref().map(|gate| gate.verdict.clone()))
@@ -82,16 +91,28 @@ impl Row {
     }
 }
 
+/// `terminal_reason` from the run's recorded terminal status, when `gate` wrote one.
+fn terminal_reason_of(run_dir: &std::path::Path) -> Option<String> {
+    let path = run_dir.join("out").join(crate::cmds::run::STATUS_FILE);
+    let value: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    value
+        .get("terminal_reason")?
+        .as_str()
+        .map(std::string::ToString::to_string)
+}
+
 /// One table column: its header, and the field of a row it prints.
 type Column = (&'static str, fn(&Row) -> &str);
 
 /// The table's columns, in order.
-const COLUMNS: [Column; 7] = [
+const COLUMNS: [Column; 8] = [
     ("RUN", |row| &row.run),
     ("TASK", |row| &row.task),
     ("PROFILE", |row| &row.profile),
     ("STATE", |row| &row.state),
     ("STATUS", |row| &row.status),
+    ("REASON", |row| &row.reason),
     ("GATE", |row| &row.gate),
     ("RUN DIR", |row| &row.run_dir),
 ];
@@ -259,7 +280,18 @@ mod tests {
         assert_eq!(row.task, "TASK-002", "read from manifest.json, not a label");
         assert_eq!(row.profile, "zai-flash");
         assert_eq!(row.status, "GOAL_MET");
+        assert_eq!(
+            row.reason, "",
+            "no recorded terminal status yet, and none is invented"
+        );
         assert_eq!(row.gate, "pass");
+        // once `wait_and_gate` has recorded the terminal status, ps says WHY the run ended
+        crate::redact::write_json(
+            &run_dir.join("out").join(crate::cmds::run::STATUS_FILE),
+            &serde_json::json!({"state": "GOAL_MET", "terminal_reason": "goal-verdict"}),
+        )
+        .unwrap();
+        assert_eq!(Row::from_container(&info).reason, "goal-verdict");
         assert_eq!(row.run_dir, run_dir.display().to_string());
         assert_eq!(row.manifest, "", "no label, and none is invented");
     }

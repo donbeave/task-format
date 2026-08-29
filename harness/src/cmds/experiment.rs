@@ -163,8 +163,13 @@ pub fn run(
                 .is_some_and(|gate| gate.passed());
         if !promotable {
             redact::eemit(&format!(
-                "stopping: {task_id} ended {} with gate {} — remaining tasks untouched",
-                status.state, entry.gate
+                "stopping: {task_id} ended {} ({}) with gate {} — remaining tasks untouched",
+                status.state,
+                status
+                    .terminal_reason
+                    .as_deref()
+                    .unwrap_or("no terminal reason"),
+                entry.gate
             ));
             state.record_task(entry);
             state.save(&state_file)?;

@@ -327,6 +327,20 @@ pub fn start(container: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Stop a container and wait for it to exit; `grace_s` is docker's SIGTERM window before SIGKILL.
+/// The container is kept (no `--rm`, hard rule), so `taskfmt attach` restarts it.
+///
+/// This is how the gate gets a workspace that cannot move under it: a stopped container has no
+/// process left to write into the `/work` bind mount. `true` when the container is no longer
+/// running afterwards — including when it was already stopped.
+pub fn stop(container: &str, grace_s: u64) -> bool {
+    let stopped =
+        capture(Command::new("docker").args(["stop", "--time", &grace_s.to_string(), container]))
+            .map(|out| out.ok())
+            .unwrap_or(false);
+    stopped || !is_running(container)
+}
+
 pub fn image_exists(image: &str) -> bool {
     capture(Command::new("docker").args(["image", "inspect", image]))
         .map(|out| out.ok())

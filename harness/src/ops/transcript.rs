@@ -86,14 +86,71 @@ pub fn verdict_count(transcript: &Path) -> usize {
         .count()
 }
 
-/// Last `GOAL_RESULT` line in the raw tui log (CR stripped).
+/// Flatten one line of a raw `script(1)` capture into the text a human sees on that row.
+///
+/// `tui.log` is a terminal *rendering*, not a text stream. The agent's final report reaches it as
+/// `ESC[5G GOAL_RESULT ESC[17G task=TASK-002 ESC[31G status=DONE` — the cursor-column escapes are
+/// what paint the spaces between the tokens, so deleting them outright would weld the tokens
+/// together and a plain `starts_with("GOAL_RESULT")` on the raw line never matches at all. Each
+/// escape sequence and each other control byte therefore becomes a single space, and runs of
+/// whitespace collapse, which reproduces the rendered row well enough to match and to tokenize.
+///
+/// Measured on `experiments/runs/20260829-194052-zai-flash-TASK-002/out/tui.log`: four lines
+/// contain `GOAL_RESULT` and **none of them begins with it**, so before this the harness could not
+/// see an agent's final report in any real run.
+pub fn strip_ansi(line: &str) -> String {
+    let bytes: Vec<char> = line.chars().collect();
+    let mut out = String::with_capacity(line.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let ch = bytes[i];
+        if ch == '\u{1b}' {
+            i += 1;
+            match bytes.get(i) {
+                // CSI: parameters/intermediates, then one final byte in 0x40..=0x7e
+                Some('[') => {
+                    i += 1;
+                    while i < bytes.len() && !matches!(bytes[i], '\u{40}'..='\u{7e}') {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+                // OSC: runs to BEL or to ST (ESC \)
+                Some(']') => {
+                    i += 1;
+                    while i < bytes.len() && bytes[i] != '\u{7}' {
+                        if bytes[i] == '\u{1b}' && bytes.get(i + 1) == Some(&'\\') {
+                            i += 1;
+                            break;
+                        }
+                        i += 1;
+                    }
+                    i += 1;
+                }
+                // any other two-byte escape
+                Some(_) => i += 1,
+                None => {}
+            }
+            out.push(' ');
+            continue;
+        }
+        if ch.is_control() {
+            out.push(' ');
+        } else {
+            out.push(ch);
+        }
+        i += 1;
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Last `GOAL_RESULT` line in the raw tui log, as rendered (see [`strip_ansi`]).
 pub fn goal_result_line(tui_log: &Path) -> Option<String> {
     let text = std::fs::read_to_string(tui_log).ok()?;
     text.lines()
-        .map(|line| line.trim_end_matches('\r'))
         .rev()
+        .map(strip_ansi)
         .find(|line| line.starts_with("GOAL_RESULT"))
-        .map(str::to_string)
 }
 
 /// The agent-authored `STATUS:` in a `GOAL_RESULT` line (`status=<X>` token).
@@ -131,10 +188,14 @@ pub fn report_status(goal_result_line: &str) -> Option<ReportStatus> {
     }
 }
 
-/// Did the goal evaluator die?
+/// Did the goal evaluator die? Matched on the rendered row for [`strip_ansi`]'s reason — the
+/// phrase is painted by the TUI and carries the same column escapes the `GOAL_RESULT` line does.
 pub fn goal_cleared_error(tui_log: &Path) -> bool {
     std::fs::read_to_string(tui_log)
-        .map(|text| text.contains("Goal cleared after an unrecoverable error"))
+        .map(|text| {
+            text.lines()
+                .any(|line| strip_ansi(line).contains("Goal cleared after an unrecoverable error"))
+        })
         .unwrap_or(false)
 }
 
@@ -167,8 +228,15 @@ pub fn recently_active(transcript: &Path, max_age: std::time::Duration) -> bool 
         else {
             continue;
         };
-        let age = chrono::Utc::now().signed_duration_since(ts).to_std().ok();
-        return age.is_some_and(|age| age < max_age);
+        // Signed on purpose. A container clock ahead of the host makes `age` negative, and the
+        // earlier `to_std().ok()` turned that into `None` — i.e. "not active" — so a skew of one
+        // second made every event of every run read as silence. An event stamped in the future is
+        // the freshest evidence there is: treat it as "just now".
+        let age = chrono::Utc::now().signed_duration_since(ts);
+        let Ok(max) = chrono::Duration::from_std(max_age) else {
+            return true;
+        };
+        return age < max;
     }
     false
 }
@@ -254,6 +322,74 @@ mod tests {
         assert!(!goal_cleared_error(&log));
         std::fs::write(&log, "Goal cleared after an unrecoverable error\n").unwrap();
         assert!(goal_cleared_error(&log));
+    }
+
+    #[test]
+    fn strip_ansi_renders_a_row_instead_of_deleting_its_separators() {
+        // CSI cursor-column moves are the spaces: deleting them welds the tokens together.
+        assert_eq!(
+            strip_ansi("\u{1b}[5GGOAL_RESULT\u{1b}[17Gtask=TASK-002\u{1b}[31Gstatus=DONE\r\r"),
+            "GOAL_RESULT task=TASK-002 status=DONE"
+        );
+        // SGR colours, OSC titles and lone escapes all reduce to whitespace
+        assert_eq!(
+            strip_ansi("\u{1b}[38;2;1;2;3mred\u{1b}[39m\u{1b}]0;title\u{7}tail\u{1b}Xz"),
+            "red tail z"
+        );
+        assert_eq!(strip_ansi("plain"), "plain");
+        assert_eq!(strip_ansi(""), "");
+        // a truncated escape at end of line must not panic or loop
+        assert_eq!(strip_ansi("a\u{1b}[38;2"), "a");
+        assert_eq!(strip_ansi("a\u{1b}"), "a");
+    }
+
+    #[test]
+    fn goal_result_line_survives_the_terminal_rendering() {
+        // the exact shape the last row of a real tui.log carries
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("tui.log");
+        std::fs::write(
+            &log,
+            "\u{1b}[2C the goal prompt echoes the words GOAL_RESULT line has been printed\r\n\
+             \u{1b}[5GGOAL_RESULT\u{1b}[17Gtask=TASK-002\u{1b}[31Gstatus=DONE\r\r\n",
+        )
+        .unwrap();
+        assert_eq!(
+            goal_result_line(&log).unwrap(),
+            "GOAL_RESULT task=TASK-002 status=DONE",
+            "a rendered GOAL_RESULT row must be readable; before the strip, none ever was"
+        );
+        assert_eq!(
+            report_status(&goal_result_line(&log).unwrap()),
+            Some(ReportStatus::Done)
+        );
+    }
+
+    #[test]
+    fn goal_cleared_error_is_matched_on_the_rendered_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("tui.log");
+        std::fs::write(
+            &log,
+            "\u{1b}[5GGoal\u{1b}[10Gcleared after an unrecoverable error\r\n",
+        )
+        .unwrap();
+        assert!(goal_cleared_error(&log));
+    }
+
+    #[test]
+    fn a_timestamp_ahead_of_the_host_clock_is_active_not_silent() {
+        // container clock 30 s ahead of the host: a negative age used to read as "not active",
+        // which made every event of every run look like silence.
+        let dir = tempfile::tempdir().unwrap();
+        let tr = dir.path().join("t.jsonl");
+        let future = (chrono::Utc::now() + chrono::Duration::seconds(30)).to_rfc3339();
+        std::fs::write(
+            &tr,
+            format!("{{\"type\":\"assistant\",\"timestamp\":\"{future}\"}}\n"),
+        )
+        .unwrap();
+        assert!(recently_active(&tr, Duration::from_secs(300)));
     }
 
     #[test]

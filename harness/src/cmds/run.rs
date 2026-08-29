@@ -288,8 +288,24 @@ pub fn dispatch_one(
     })
 }
 
-/// `--wait`: poll until the run is terminal, then gate and record the verdict. The gate record
-/// lands in the caller's manifest (and on disk) — the caller gates promotion on it.
+/// `GateRecord::verdict` when the workspace changed while the gate was reading it. Distinct from
+/// `fail` on purpose: a verdict computed over a mutating input is not a verdict about the work,
+/// and recording it as `fail` charges the agent for the harness's timing (§6.1's `ABORT`, and
+/// exactly what happened to TASK-002 on 2026-08-29).
+pub const GATE_ABORT: &str = "abort";
+
+/// `<run>/out/` — the terminal `Status` of record, written once, at gate time.
+pub const STATUS_FILE: &str = "status.json";
+/// `<run>/out/` — the workspace fingerprint taken either side of the gate.
+pub const GATE_FINGERPRINT_FILE: &str = "gate-fingerprint.json";
+
+/// `--wait`: poll until the run is terminal, **stop the agent**, then gate and record the verdict.
+/// The gate record lands in the caller's manifest (and on disk) — the caller gates promotion on it.
+///
+/// The ordering is the fix, and each step is here for a reason that a rearrangement would break:
+/// the status and the screen are captured while the container is still up, the container is then
+/// stopped so the `/work` bind mount has no writer left, and the workspace is fingerprinted either
+/// side of `gate_run` so that a tree which moves anyway is recorded as `abort` and never as `fail`.
 pub fn wait_and_gate(
     manifest: &mut Manifest,
     run_dir: &Path,
@@ -305,13 +321,145 @@ pub fn wait_and_gate(
     // The other half of the promotion decision, recorded beside the gate verdict: `gate_run` saves
     // the manifest, so the terminal state reaches disk through the write that already happens.
     manifest.status_state = status.state.clone();
-    let passed = crate::cmds::gate::gate_run(run_dir, resolved, manifest)?;
+    // Everything that needs a live container happens here, before the stop: the full status
+    // (`status::check` reports CONTAINER_STOPPED for a stopped container) and the screen snapshot.
+    let _ = redact::write_json(&run_dir.join("out").join(STATUS_FILE), &status);
+    herdr::snapshot_screen(manifest, run_dir);
+    quiesce(manifest);
+
+    let workspace = run_dir.join("workspace");
+    let before = workspace_fingerprint(&workspace);
+    let mut passed = crate::cmds::gate::gate_run(run_dir, resolved, manifest)?;
+    let after = workspace_fingerprint(&workspace);
+    if let Some(reason) = tree_moved(&before, &after) {
+        redact::eemit(&format!(
+            "GATE ABORT {}: {reason} — the gate judged a moving tree, so this is not a verdict",
+            manifest.run
+        ));
+        if let Some(gate) = manifest.gate.as_mut() {
+            gate.verdict = GATE_ABORT.to_string();
+        }
+        manifest.save(run_dir)?;
+        passed = false;
+    }
+    let _ = redact::write_json(
+        &run_dir.join("out").join(GATE_FINGERPRINT_FILE),
+        &serde_json::json!({ "before": before, "after": after }),
+    );
     redact::emit(&format!(
         "GATE {} {}",
         manifest.run,
-        if passed { "PASS" } else { "FAIL" }
+        manifest
+            .gate
+            .as_ref()
+            .map(|gate| gate.verdict.to_uppercase())
+            .unwrap_or_else(|| if passed { "PASS".into() } else { "FAIL".into() })
     ));
     Ok(status)
+}
+
+/// Stop the agent so that the tree the gate is about to judge cannot change under it.
+///
+/// `/goal clear` first, so herdr stops re-prompting and the agent is not killed mid-turn, then
+/// `docker stop`, which is what actually removes the writer: the workspace is a bind mount and a
+/// live container is a process with a handle on it. §6.1 already required this on the
+/// `KILLED_TIMEOUT` path — "leaves the agent writing into the bind mount the gate is about to
+/// read" — and the 2026-08-29 TASK-002 race is that same defect reached down the `IDLE` path, so
+/// it is now the rule for every path into the gate rather than a special case of one.
+///
+/// The container is kept, never removed: `taskfmt attach` restarts a stopped one.
+fn quiesce(manifest: &Manifest) {
+    if !docker::is_running(&manifest.container) {
+        return;
+    }
+    if let Err(err) = herdr::prompt(manifest, "/goal clear") {
+        redact::eemit(&format!("could not clear the goal before gating: {err:#}"));
+    }
+    if docker::stop(&manifest.container, QUIESCE_GRACE_S) {
+        redact::emit(&format!(
+            "QUIESCED {} (stopped before gating; `taskfmt attach {}` restarts it)",
+            manifest.container, manifest.run
+        ));
+    } else {
+        redact::eemit(&format!(
+            "WARNING: {} is still running — the gate may read a tree the agent can still write",
+            manifest.container
+        ));
+    }
+}
+
+/// docker's SIGTERM window before SIGKILL when quiescing: long enough for `script(1)` to flush
+/// `tui.log`, short enough not to stall a chain.
+const QUIESCE_GRACE_S: u64 = 20;
+
+/// A cheap description of the judged tree: how many files it has and the newest mtime among them.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct WorkspaceFingerprint {
+    pub files: usize,
+    /// Newest mtime under the workspace, in nanoseconds since the epoch; 0 when there is none.
+    pub newest_mtime_ns: u128,
+}
+
+/// Directory names the fingerprint never descends into, at any depth: build output and git's own
+/// store, both of which the gate itself rewrites by running `cargo` and `git`.
+const FINGERPRINT_SKIP_DIRS: [&str; 2] = ["target", ".git"];
+/// File names the fingerprint ignores, for the same reason: `cargo` owns the lockfile and may
+/// rewrite it on the gate's own first build. An agent write here is therefore not detected — a
+/// stated residue, and the reason it is acceptable is that `quiesce` has already removed the
+/// writer; this detector exists for the case where that failed.
+const FINGERPRINT_SKIP_FILES: [&str; 1] = ["Cargo.lock"];
+
+/// Fingerprint the workspace, or `None` when it cannot be read (never an abort: a missing answer
+/// is not evidence of a change).
+pub fn workspace_fingerprint(workspace: &Path) -> Option<WorkspaceFingerprint> {
+    if !workspace.is_dir() {
+        return None;
+    }
+    let mut files = 0usize;
+    let mut newest = 0u128;
+    for entry in walkdir::WalkDir::new(workspace)
+        .into_iter()
+        .filter_entry(|entry| {
+            let name = entry.file_name().to_string_lossy();
+            !(entry.file_type().is_dir() && FINGERPRINT_SKIP_DIRS.contains(&name.as_ref()))
+        })
+    {
+        let Ok(entry) = entry else { return None };
+        if entry.file_type().is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy();
+        if FINGERPRINT_SKIP_FILES.contains(&name.as_ref()) {
+            continue;
+        }
+        files += 1;
+        if let Ok(meta) = entry.metadata()
+            && let Ok(mtime) = meta.modified()
+            && let Ok(since) = mtime.duration_since(std::time::UNIX_EPOCH)
+        {
+            newest = newest.max(since.as_nanos());
+        }
+    }
+    Some(WorkspaceFingerprint {
+        files,
+        newest_mtime_ns: newest,
+    })
+}
+
+/// Did the judged tree change while the judge was reading it? `Some(reason)` only on a positive
+/// observation: two fingerprints that were both taken and that differ.
+pub fn tree_moved(
+    before: &Option<WorkspaceFingerprint>,
+    after: &Option<WorkspaceFingerprint>,
+) -> Option<String> {
+    let (before, after) = (before.as_ref()?, after.as_ref()?);
+    if before == after {
+        return None;
+    }
+    Some(format!(
+        "the workspace changed during the gate ({} files, newest mtime {} -> {} files, newest mtime {})",
+        before.files, before.newest_mtime_ns, after.files, after.newest_mtime_ns
+    ))
 }
 
 /// Opt-in D13 dispatch precondition (`--selfcheck`): `taskfmt selfcheck` (nop + polarity; oracle
@@ -596,6 +744,100 @@ fn print_summary(manifest: &Manifest, run_dir: &Path, prompt: &str) {
 mod tests {
     use super::*;
     use crate::selfcheck::Phase;
+
+    fn touch(path: &Path, content: &str) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, content).unwrap();
+    }
+
+    #[test]
+    fn the_fingerprint_ignores_what_the_gate_itself_rewrites() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().join("workspace");
+        touch(&ws.join("src/main.rs"), "fn main() {}\n");
+        touch(&ws.join("Cargo.toml"), "[package]\n");
+        let before = workspace_fingerprint(&ws);
+        assert_eq!(before.as_ref().unwrap().files, 2);
+
+        // everything cargo and git own during a gate run: build output, the git store, the lockfile
+        touch(&ws.join("target/debug/pgtui"), "binary");
+        touch(&ws.join("crates/pgtui/target/x"), "nested build output");
+        touch(&ws.join(".git/index"), "gitstuff");
+        touch(&ws.join("Cargo.lock"), "[[package]]\n");
+        let after = workspace_fingerprint(&ws);
+        assert_eq!(
+            before, after,
+            "the gate's own writes must not read as a change"
+        );
+        assert_eq!(tree_moved(&before, &after), None);
+    }
+
+    #[test]
+    fn the_fingerprint_sees_a_source_file_the_agent_added_or_rewrote() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().join("workspace");
+        touch(&ws.join("src/main.rs"), "fn main() {}\n");
+        let before = workspace_fingerprint(&ws);
+
+        // a new file: the count moves
+        touch(&ws.join("src/store/mod.rs"), "pub fn open() {}\n");
+        let added = workspace_fingerprint(&ws);
+        assert_ne!(before, added);
+        let reason = tree_moved(&before, &added).expect("an added file is a moved tree");
+        assert!(reason.contains("changed during the gate"), "{reason}");
+
+        // a rewrite of an existing file: the count holds and the newest mtime moves. This is the
+        // 2026-08-29 TASK-002 shape exactly — `main.rs` gained `interactive_terminal` between
+        // check 2 and check 3 of one gate run.
+        let stamp = std::time::SystemTime::now() + std::time::Duration::from_secs(120);
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(ws.join("src/main.rs"))
+            .unwrap();
+        file.set_modified(stamp).unwrap();
+        let rewritten = workspace_fingerprint(&ws);
+        assert_eq!(
+            rewritten.as_ref().unwrap().files,
+            added.as_ref().unwrap().files
+        );
+        assert!(
+            tree_moved(&added, &rewritten).is_some(),
+            "a rewrite is a moved tree"
+        );
+    }
+
+    #[test]
+    fn a_fingerprint_that_could_not_be_taken_is_never_an_abort() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(workspace_fingerprint(&dir.path().join("gone")), None);
+        let some = Some(WorkspaceFingerprint {
+            files: 1,
+            newest_mtime_ns: 7,
+        });
+        // a missing answer is not evidence of a change: abort only on a positive observation
+        assert_eq!(tree_moved(&None, &some), None);
+        assert_eq!(tree_moved(&some, &None), None);
+        assert_eq!(tree_moved(&None, &None), None);
+        assert_eq!(tree_moved(&some, &some), None);
+    }
+
+    #[test]
+    fn an_aborted_gate_is_not_a_passed_gate() {
+        let record = crate::runstate::GateRecord {
+            verdict: GATE_ABORT.to_string(),
+            exit: 0,
+            last_line: "RESULT PASS".into(),
+            head: "head".into(),
+            log: "/tmp/gate.log".into(),
+            finished: "2026-08-29T19:57:59Z".into(),
+        };
+        assert!(
+            !record.passed(),
+            "abort must never satisfy the promote refusal, even with exit 0"
+        );
+    }
 
     fn report(pass: bool, noverdict: bool) -> Report {
         let phase = |pass: bool, name: &str| Phase {
