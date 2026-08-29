@@ -13,6 +13,7 @@ pub fn run(
     repo: Option<&str>,
     agent: Option<&str>,
     resume: Option<&str>,
+    kill_after: Option<u64>,
     selfcheck: bool,
 ) -> anyhow::Result<i32> {
     let resolved = ctx.load()?;
@@ -43,6 +44,10 @@ pub fn run(
         crate::cmds::repo::ensure_repo(ctx, &resolved, provided)
     })?;
     let mut state = existing.unwrap_or_else(|| ExperimentState::new(&experiment_id, &repo_url));
+    // Before anything is dispatched, and before the confirmation: `ensure_repo` above may already
+    // have minted a live repository, and a failure between there and the first save would leave it
+    // with nothing naming it and `--resume` nothing to resume.
+    state.save(&state_file)?;
 
     let selection =
         crate::selection::resolve(tasks, &resolved.tasks_dir()).context("resolving --tasks")?;
@@ -110,12 +115,32 @@ pub fn run(
         // attached: poll until terminal, gate, promote only on PASS. wait_and_gate records the
         // gate into the outcome's manifest, so the promotable check below sees the real verdict.
         let mut manifest = outcome.manifest;
-        let status = crate::cmds::run::wait_and_gate(
+        let status = match crate::cmds::run::wait_and_gate(
             &mut manifest,
             &outcome.run_dir,
             &resolved,
-            Some(resolved.cfg.runtime.kill_after_min),
-        )?;
+            kill_after,
+        ) {
+            Ok(status) => status,
+            Err(err) => {
+                redact::eemit(&format!("wait or gate failed for {task_id}: {err:#}"));
+                state.record_task(crate::runstate::ExperimentTask {
+                    task: task_id.clone(),
+                    repo_url: repo_url.clone(),
+                    base_sha: manifest.base_sha.clone(),
+                    result_sha: None,
+                    gate: manifest
+                        .gate
+                        .as_ref()
+                        .map(|gate| gate.verdict.clone())
+                        .unwrap_or_else(|| "none".to_string()),
+                    pushed: false,
+                    run_dir: outcome.run_dir.display().to_string(),
+                });
+                state.save(&state_file)?;
+                return Ok(1);
+            }
+        };
         outcome.manifest = manifest;
         let gated = outcome.manifest.gate.as_ref();
         let mut entry = crate::runstate::ExperimentTask {
@@ -141,7 +166,7 @@ pub fn run(
                 "stopping: {task_id} ended {} with gate {} — remaining tasks untouched",
                 status.state, entry.gate
             ));
-            state.tasks.push(entry);
+            state.record_task(entry);
             state.save(&state_file)?;
             return Ok(1);
         }
@@ -154,14 +179,12 @@ pub fn run(
             }
             Err(err) => {
                 redact::eemit(&format!("promote refused for {task_id}: {err:#}"));
-                state.tasks.push(entry);
+                state.record_task(entry);
                 state.save(&state_file)?;
                 return Ok(1);
             }
         }
-        // a re-run of a task replaces its earlier (unpushed) entry instead of stacking a dup
-        state.tasks.retain(|done| done.task != *task_id);
-        state.tasks.push(entry);
+        state.record_task(entry);
         state.save(&state_file)?;
     }
 

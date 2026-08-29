@@ -177,6 +177,7 @@ fn resuming_a_finished_experiment_creates_no_repo() {
         None,
         None,
         Some(&fx.experiment_id),
+        None,
         false,
     )
     .unwrap();
@@ -196,6 +197,7 @@ fn resuming_with_a_conflicting_repo_arg_fails_before_dispatch() {
         Some(OTHER),
         None,
         Some(&fx.experiment_id),
+        None,
         false,
     )
     .unwrap_err()
@@ -215,6 +217,7 @@ fn resuming_a_missing_experiment_says_so_without_creating_a_repo() {
         None,
         None,
         Some("exp-nope"),
+        None,
         false,
     )
     .unwrap_err()

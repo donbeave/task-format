@@ -57,6 +57,7 @@ fn manifest(run: &str, container: &str) -> Manifest {
             log: "/tmp/gate.log".into(),
             finished: "2026-08-28T11:00:00Z".into(),
         }),
+        status_state: String::new(),
         result_sha: None,
     }
 }

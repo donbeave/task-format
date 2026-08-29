@@ -204,6 +204,9 @@ pub enum Command {
         /// Resume an interrupted experiment: skip tasks already recorded passed.
         #[arg(long)]
         resume: Option<String>,
+        /// Minutes after which a still-running run is killed (default: runtime.kill_after_min).
+        #[arg(long)]
+        kill_after: Option<u64>,
         /// Run the D13 gate selfcheck (nop + polarity) before each dispatch; refuse on FAIL or
         /// NOVERDICT. Off by default (host toolchain; container-mode selfcheck is pending).
         #[arg(long)]

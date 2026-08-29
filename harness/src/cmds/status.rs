@@ -403,6 +403,7 @@ mod tests {
             selfcheck: crate::runstate::SELFCHECK_NOT_RUN.into(),
             experiment: None,
             gate: None,
+            status_state: String::new(),
             result_sha: None,
         }
     }

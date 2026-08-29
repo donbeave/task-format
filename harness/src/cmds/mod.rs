@@ -127,6 +127,7 @@ pub fn dispatch(cli: &Cli) -> anyhow::Result<i32> {
             repo,
             agent,
             resume,
+            kill_after,
             selfcheck,
         } => experiment::run(
             &ctx,
@@ -134,6 +135,7 @@ pub fn dispatch(cli: &Cli) -> anyhow::Result<i32> {
             repo.as_deref(),
             agent.as_deref(),
             resume.as_deref(),
+            *kill_after,
             *selfcheck,
         ),
         Command::ContainerEntrypoint => container_entrypoint::run(),

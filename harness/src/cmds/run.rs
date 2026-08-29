@@ -218,6 +218,7 @@ pub fn dispatch_one(
         selfcheck: selfcheck_status.to_string(),
         experiment: exp.map(str::to_string),
         gate: None,
+        status_state: String::new(),
         result_sha: None,
     };
 
@@ -301,6 +302,9 @@ pub fn wait_and_gate(
         run_dir,
         Duration::from_secs(60 * minutes),
     )?;
+    // The other half of the promotion decision, recorded beside the gate verdict: `gate_run` saves
+    // the manifest, so the terminal state reaches disk through the write that already happens.
+    manifest.status_state = status.state.clone();
     let passed = crate::cmds::gate::gate_run(run_dir, resolved, manifest)?;
     redact::emit(&format!(
         "GATE {} {}",
@@ -442,12 +446,13 @@ pub fn build_prompt_from_str(text: &str, kind: &str) -> anyhow::Result<String> {
         .join(" "))
 }
 
-/// Poll `/out/prereqs.ready`; on `prereqs.FAILED` dump the markers, leave the container up, exit 1.
+/// Poll `/out/prereqs.ready`; on `prereqs.FAILED` dump the markers, leave the container up, and
+/// return the error the caller records.
 fn wait_prereqs(manifest: &Manifest, run_dir: &Path, timeout: Duration) -> anyhow::Result<()> {
     let started = Instant::now();
     loop {
         if docker::read_file(&manifest.container, PREREQ_FAILED).is_some() {
-            fail_prereqs(manifest, run_dir);
+            return Err(fail_prereqs(manifest, run_dir));
         }
         if docker::read_file(&manifest.container, PREREQ_READY).is_some() {
             let json =
@@ -458,14 +463,17 @@ fn wait_prereqs(manifest: &Manifest, run_dir: &Path, timeout: Duration) -> anyho
         }
         if started.elapsed() >= timeout {
             redact::eemit(&format!("prereqs not ready after {} s", timeout.as_secs()));
-            fail_prereqs(manifest, run_dir);
+            return Err(fail_prereqs(manifest, run_dir));
         }
         std::thread::sleep(Duration::from_secs(1));
     }
 }
 
-/// Hard rule: never exit on prereq failure without leaving the container up and the logs dumped.
-fn fail_prereqs(manifest: &Manifest, run_dir: &Path) -> ! {
+/// Hard rule: never leave the prereq stage without leaving the container up and the logs dumped.
+/// Returns the error rather than ending the process: this runs three frames below an experiment
+/// batch loop that owns durable state, and a non-local exit here skips every save that loop would
+/// have performed.
+fn fail_prereqs(manifest: &Manifest, run_dir: &Path) -> anyhow::Error {
     redact::eemit(&format!(
         "prereq stage FAILED — container {} left up for inspection",
         manifest.container
@@ -482,7 +490,10 @@ fn fail_prereqs(manifest: &Manifest, run_dir: &Path) -> ! {
         }
     }
     let _ = std::io::stdout().flush();
-    std::process::exit(1);
+    anyhow::anyhow!(
+        "prereq stage FAILED — container {} left up for inspection",
+        manifest.container
+    )
 }
 
 fn wait_pane(manifest: &Manifest, timeout: Duration) -> anyhow::Result<String> {
@@ -739,5 +750,43 @@ mod tests {
             claude.chars().count()
         );
         assert!(build_prompt(&path, "ghost").is_err());
+    }
+
+    /// `fail_prereqs` returns its failure instead of ending the process. The assertion is the
+    /// test binary still being alive to make it: a process-terminating call here would take the
+    /// whole harness down and `cargo test` would report the target as failed, not as red.
+    ///
+    /// No docker is needed. `docker::read_file` shells out and yields `None` when the exec fails,
+    /// so the marker dump runs its whole body against a container no daemon knows.
+    #[test]
+    fn fail_prereqs_returns_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("out")).unwrap();
+        let manifest = Manifest {
+            run: "r".into(),
+            run_dir: dir.path().display().to_string(),
+            container: "taskfmt-no-such-container-106".into(),
+            agent: "p".into(),
+            agent_kind: "claude".into(),
+            model: "m".into(),
+            effort: "low".into(),
+            task: "TASK-001".into(),
+            repo_url: "u".into(),
+            base_sha: "abc".into(),
+            clone_sha: String::new(),
+            session_id: "sid".into(),
+            pane: String::new(),
+            agent_name: "task".into(),
+            start: String::new(),
+            selfcheck: SELFCHECK_NOT_RUN.into(),
+            experiment: None,
+            gate: None,
+            status_state: String::new(),
+            result_sha: None,
+        };
+        let err = fail_prereqs(&manifest, dir.path());
+        println!("FAILPREREQS returned={err}");
+        assert!(err.to_string().starts_with("prereq stage FAILED"), "{err}");
+        assert!(err.to_string().contains(&manifest.container), "{err}");
     }
 }

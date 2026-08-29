@@ -60,6 +60,11 @@ pub struct Manifest {
     pub experiment: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gate: Option<GateRecord>,
+    /// Terminal run state at gate time (`GOAL_MET`, `IDLE`, `AGENT_EXITED`, `KILLED_TIMEOUT`, ...) —
+    /// the other half of the promotion decision, recorded beside the gate verdict. Empty for
+    /// manifests written before this field existed.
+    #[serde(default)]
+    pub status_state: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result_sha: Option<String>,
 }
@@ -174,6 +179,14 @@ impl ExperimentState {
         Ok(())
     }
 
+    /// Record one task's outcome. A re-run REPLACES the entry carrying the same task id instead of
+    /// stacking a second one, so duplicate suppression cannot depend on statement order at any
+    /// call site.
+    pub fn record_task(&mut self, entry: ExperimentTask) {
+        self.tasks.retain(|done| done.task != entry.task);
+        self.tasks.push(entry);
+    }
+
     /// Task ids already gated PASS (and pushed) — what `experiment --resume` skips.
     pub fn passed_tasks(&self) -> Vec<String> {
         self.tasks
@@ -278,6 +291,7 @@ mod tests {
                 log: "/tmp/run/out/gate.log".into(),
                 finished: "2026-08-28T11:00:00Z".into(),
             }),
+            status_state: String::new(),
             result_sha: None,
         };
         manifest.save(dir.path()).unwrap();
@@ -324,5 +338,80 @@ mod tests {
             run_dir_name("20260828-142017", "claude", "TASK-101"),
             "20260828-142017-claude-TASK-101"
         );
+    }
+
+    /// The terminal run state survives a save-then-load round trip, and a manifest written before
+    /// the field existed still loads with it empty. The JSON is printed collapsed onto one line
+    /// because `save` goes through `to_vec_pretty`: the key and its value land on their own line,
+    /// and a line-oriented reader of this output would otherwise never see them together.
+    #[test]
+    fn status_state_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // a manifest that OMITS the key loads with the field empty
+        let legacy = r#"{"run":"r","run_dir":"/tmp/run","container":"c","agent":"p","agent_kind":"claude","model":"m","effort":"low","task":"TASK-001","repo_url":"u","base_sha":"abc","session_id":"sid","pane":"","start":""}"#;
+        std::fs::write(dir.path().join(MANIFEST_FILE), legacy).unwrap();
+        assert_eq!(Manifest::load(dir.path()).unwrap().status_state, "");
+
+        let mut manifest = Manifest {
+            run: "20260828-101010-claude-TASK-101".into(),
+            run_dir: dir.path().display().to_string(),
+            container: "harness-20260828-101010-claude-TASK-101".into(),
+            agent: "zai-flash".into(),
+            agent_kind: "claude".into(),
+            model: "glm-5.3-flash".into(),
+            effort: "low".into(),
+            task: "TASK-101".into(),
+            repo_url: "https://github.com/donbeave/x.git".into(),
+            base_sha: "abc123".into(),
+            clone_sha: "parent0".into(),
+            session_id: "00000000-0000-4000-8000-000000000000".into(),
+            pane: "pane-1".into(),
+            agent_name: default_agent_name(),
+            start: "2026-08-28T10:10:10Z".into(),
+            selfcheck: SELFCHECK_PASS.into(),
+            experiment: Some("EXP-1".into()),
+            gate: None,
+            status_state: String::new(),
+            result_sha: None,
+        };
+        manifest.status_state = "GOAL_MET".into();
+        manifest.save(dir.path()).unwrap();
+
+        let text = std::fs::read_to_string(dir.path().join(MANIFEST_FILE)).unwrap();
+        println!(
+            "ROUNDTRIP-JSON {}",
+            text.split_whitespace().collect::<Vec<_>>().join(" ")
+        );
+        let loaded = Manifest::load(dir.path()).unwrap();
+        println!("ROUNDTRIP-LOADED status_state={}", loaded.status_state);
+        assert_eq!(loaded.status_state, "GOAL_MET");
+    }
+
+    /// Duplicate suppression is a property of the recording function, not of the order in which a
+    /// caller happens to write its statements: recording the same task id twice leaves one entry,
+    /// the later one.
+    #[test]
+    fn record_task_replaces_the_earlier_entry() {
+        let mut state = ExperimentState::new("EXP-1", "https://example.invalid/x.git");
+        for (gate, pushed) in [("fail", false), ("pass", true)] {
+            state.record_task(ExperimentTask {
+                task: "TASK-001".into(),
+                repo_url: state.repo_url.clone(),
+                base_sha: "a".into(),
+                result_sha: None,
+                gate: gate.into(),
+                pushed,
+                run_dir: "run".into(),
+            });
+        }
+        println!(
+            "RECORD-TASK entries={} gate={}",
+            state.tasks.len(),
+            state.tasks[0].gate
+        );
+        assert_eq!(state.tasks.len(), 1);
+        assert_eq!(state.tasks[0].gate, "pass");
+        assert!(state.tasks[0].pushed);
     }
 }
