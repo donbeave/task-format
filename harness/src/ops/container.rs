@@ -14,6 +14,84 @@ use super::docker;
 /// Every run container is named `<CONTAINER_PREFIX><run id>`.
 pub const CONTAINER_PREFIX: &str = "harness-";
 
+/// The run id (`manifest.run`).
+pub const LABEL_RUN_ID: &str = "taskfmt.run_id";
+/// The run directory on the host, absolute.
+pub const LABEL_RUN_DIR: &str = "taskfmt.run_dir";
+/// The absolute path of the `experiment.toml` this run was dispatched with.
+pub const LABEL_MANIFEST: &str = "taskfmt.manifest";
+/// The task id.
+pub const LABEL_TASK: &str = "taskfmt.task";
+/// The agent profile name from that manifest.
+pub const LABEL_PROFILE: &str = "taskfmt.profile";
+/// The experiment id, when the run belongs to one.
+pub const LABEL_EXP: &str = "taskfmt.exp";
+
+/// The labels that make one run's container self-describing: run id, run dir, the manifest that
+/// dispatched it, task, profile, and the experiment when there is one.
+///
+/// A container carrying these can be asked what it is without any file on the host being readable
+/// or any manifest being discoverable — which is the whole point: the run's identity belongs to the
+/// run, not to the directory an operator happens to be standing in.
+pub fn run_labels(manifest: &Manifest, manifest_path: &Path) -> Vec<(String, String)> {
+    let mut labels = vec![
+        (LABEL_RUN_ID.to_string(), manifest.run.clone()),
+        (
+            LABEL_RUN_DIR.to_string(),
+            absolute(Path::new(&manifest.run_dir)),
+        ),
+        (LABEL_MANIFEST.to_string(), absolute(manifest_path)),
+        (LABEL_TASK.to_string(), manifest.task.clone()),
+        (LABEL_PROFILE.to_string(), manifest.agent.clone()),
+    ];
+    if let Some(exp) = manifest.experiment.as_ref().filter(|id| !id.is_empty()) {
+        labels.push((LABEL_EXP.to_string(), exp.clone()));
+    }
+    labels
+}
+
+/// A path as a string, made absolute where the process can (a label read from another machine's
+/// working directory is worthless).
+fn absolute(path: &Path) -> String {
+    std::path::absolute(path)
+        .unwrap_or_else(|_| path.to_path_buf())
+        .display()
+        .to_string()
+}
+
+/// The run directory a container belongs to: its [`LABEL_RUN_DIR`] label, else the parent of its
+/// `/work` bind mount. The second branch is what makes containers launched before these labels
+/// existed still locatable.
+pub fn run_dir_of(info: &docker::ContainerInfo) -> Option<PathBuf> {
+    if let Some(dir) = info.label(LABEL_RUN_DIR) {
+        return Some(PathBuf::from(dir));
+    }
+    info.work_mount
+        .as_deref()
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+}
+
+/// The manifest that dispatched the run, when the container names one that is still on disk.
+pub fn manifest_of(info: &docker::ContainerInfo) -> Option<PathBuf> {
+    info.label(LABEL_MANIFEST)
+        .map(PathBuf::from)
+        .filter(|path| path.is_file())
+}
+
+/// The run id: the [`LABEL_RUN_ID`] label, else the container name with [`CONTAINER_PREFIX`]
+/// stripped (the naming rule this harness has always followed).
+pub fn run_id_of(info: &docker::ContainerInfo) -> String {
+    match info.label(LABEL_RUN_ID) {
+        Some(id) => id.to_string(),
+        None => info
+            .name
+            .strip_prefix(CONTAINER_PREFIX)
+            .unwrap_or(&info.name)
+            .to_string(),
+    }
+}
+
 /// `harness-<run id>` — named and persistent so the operator can re-attach later.
 pub fn container_name(run_id: &str) -> String {
     format!("{CONTAINER_PREFIX}{run_id}")
@@ -88,13 +166,16 @@ pub struct LaunchPlan {
     pub image: String,
     pub mounts: Vec<docker::Mount>,
     pub env: Vec<(String, String)>,
+    /// [`run_labels`] — the run's identity, carried by the container itself.
+    pub labels: Vec<(String, String)>,
     pub memory: String,
     pub cpus: f32,
     pub pids_limit: i64,
 }
 
 /// Build the launch plan for one run: mounts `/work /task:ro /progress /agent-home /out /seed:ro`,
-/// the static env from the profile plus `TASKFMT_BASE`, `AGENT_CMD`, `AGENT_KIND`, `HERDR_SESSION`.
+/// the static env from the profile plus `TASKFMT_BASE`, `AGENT_CMD`, `AGENT_KIND`, `HERDR_SESSION`,
+/// and the `taskfmt.*` labels that let every later command find this run from the container alone.
 pub fn launch_plan(
     cfg: &ExperimentConfig,
     resolved: &Resolved,
@@ -105,7 +186,7 @@ pub fn launch_plan(
 ) -> LaunchPlan {
     let run_dir = PathBuf::from(&manifest.run_dir);
     let mut mounts = vec![
-        docker::Mount::rw(&run_dir.join("workspace"), "/work"),
+        docker::Mount::rw(&run_dir.join("workspace"), docker::WORK_MOUNT),
         docker::Mount::ro(&run_dir.join("task-snapshot"), "/task"),
         docker::Mount::rw(&run_dir.join("progress"), "/progress"),
         docker::Mount::rw(&run_dir.join("agent-home"), "/agent-home"),
@@ -115,7 +196,7 @@ pub fn launch_plan(
     if seed_dir.is_dir() {
         mounts.push(docker::Mount::ro(&seed_dir, "/seed"));
     }
-    let _ = resolved;
+    let labels = run_labels(manifest, &resolved.manifest);
 
     let mut env = vec![
         ("TASKFMT_BASE".to_string(), base_ref.to_string()),
@@ -150,6 +231,7 @@ pub fn launch_plan(
         image: profile.image.clone(),
         mounts,
         env,
+        labels,
         memory: cfg.runtime.memory.clone(),
         cpus: cfg.runtime.cpus,
         pids_limit: cfg.runtime.pids_limit,
@@ -163,6 +245,7 @@ pub fn launch(plan: &LaunchPlan, env_file: &SecretEnvFile) -> anyhow::Result<Str
         image: plan.image.clone(),
         mounts: plan.mounts.clone(),
         env: plan.env.clone(),
+        labels: plan.labels.clone(),
         env_file: env_file.path().map(Path::to_path_buf),
         memory: plan.memory.clone(),
         cpus: plan.cpus,
@@ -307,6 +390,173 @@ mod tests {
         preseed_agent_home(codex_dir.path(), "codex").unwrap();
         assert!(codex_dir.path().join("config.toml").is_file());
         assert!(preseed_agent_home(dir.path(), "ghost").is_err());
+    }
+
+    /// A manifest with every field the label set reads.
+    fn sample_manifest(run_dir: &Path) -> Manifest {
+        Manifest {
+            run: "20260101-000000-p-TASK-001".into(),
+            run_dir: run_dir.display().to_string(),
+            container: "harness-20260101-000000-p-TASK-001".into(),
+            agent: "zai-flash".into(),
+            agent_kind: "claude".into(),
+            model: "m".into(),
+            effort: "high".into(),
+            task: "TASK-001".into(),
+            repo_url: "u".into(),
+            base_sha: "0123456789abcdef0123456789abcdef01234567".into(),
+            clone_sha: String::new(),
+            session_id: "sid".into(),
+            pane: String::new(),
+            agent_name: "task".into(),
+            start: String::new(),
+            selfcheck: crate::runstate::SELFCHECK_NOT_RUN.into(),
+            experiment: None,
+            gate: None,
+            status_state: String::new(),
+            result_sha: None,
+        }
+    }
+
+    #[test]
+    fn run_labels_carry_the_runs_whole_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let run_dir = dir.path().join("runs/20260101-000000-p-TASK-001");
+        let manifest_path = dir.path().join("experiment.toml");
+        let mut manifest = sample_manifest(&run_dir);
+        let labels = run_labels(&manifest, &manifest_path);
+        let get = |key: &str| {
+            labels
+                .iter()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| v.clone())
+                .unwrap_or_default()
+        };
+        assert_eq!(get(LABEL_RUN_ID), "20260101-000000-p-TASK-001");
+        assert_eq!(get(LABEL_RUN_DIR), run_dir.display().to_string());
+        assert_eq!(get(LABEL_MANIFEST), manifest_path.display().to_string());
+        assert_eq!(get(LABEL_TASK), "TASK-001");
+        assert_eq!(get(LABEL_PROFILE), "zai-flash");
+        assert!(
+            !labels.iter().any(|(k, _)| k == LABEL_EXP),
+            "no experiment id, no label"
+        );
+        // a run inside an experiment carries it too
+        manifest.experiment = Some("exp-20260101-000000".into());
+        assert_eq!(
+            run_labels(&manifest, &manifest_path)
+                .iter()
+                .find(|(k, _)| k == LABEL_EXP)
+                .map(|(_, v)| v.clone()),
+            Some("exp-20260101-000000".to_string())
+        );
+        // and no label may carry key material: the label set is manifest fields and paths only
+        assert!(!labels.iter().any(|(_, v)| v.contains("op://")));
+    }
+
+    #[test]
+    fn a_labelled_container_answers_without_touching_a_mount() {
+        let mut labels = std::collections::BTreeMap::new();
+        labels.insert(LABEL_RUN_ID.to_string(), "r".to_string());
+        labels.insert(LABEL_RUN_DIR.to_string(), "/runs/r".to_string());
+        labels.insert(
+            LABEL_MANIFEST.to_string(),
+            "/nowhere/experiment.toml".into(),
+        );
+        let info = docker::ContainerInfo {
+            name: "harness-r".into(),
+            state: "running".into(),
+            // deliberately disagreeing with the label: the label is the run's own statement
+            work_mount: Some(PathBuf::from("/elsewhere/other/workspace")),
+            labels,
+        };
+        assert_eq!(run_dir_of(&info), Some(PathBuf::from("/runs/r")));
+        assert_eq!(run_id_of(&info), "r");
+        assert_eq!(
+            manifest_of(&info),
+            None,
+            "a manifest label pointing at nothing on disk is not a manifest"
+        );
+    }
+
+    #[test]
+    fn a_pre_label_container_is_located_by_its_work_mount() {
+        // the shape of the containers this change was written against: `docker inspect` shows `{}`
+        let info = docker::ContainerInfo {
+            name: "harness-20260829-194052-zai-flash-TASK-002".into(),
+            state: "running".into(),
+            work_mount: Some(PathBuf::from(
+                "/runs/20260829-194052-zai-flash-TASK-002/workspace",
+            )),
+            labels: std::collections::BTreeMap::new(),
+        };
+        assert_eq!(
+            run_dir_of(&info),
+            Some(PathBuf::from("/runs/20260829-194052-zai-flash-TASK-002"))
+        );
+        assert_eq!(run_id_of(&info), "20260829-194052-zai-flash-TASK-002");
+        assert_eq!(manifest_of(&info), None);
+        // nothing at all to go on: no run dir, but still a run id from the name
+        let bare = docker::ContainerInfo {
+            name: "harness-r".into(),
+            state: "exited".into(),
+            ..Default::default()
+        };
+        assert_eq!(run_dir_of(&bare), None);
+        assert_eq!(run_id_of(&bare), "r");
+    }
+
+    #[test]
+    fn a_manifest_label_that_exists_is_returned() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest_path = dir.path().join("experiment.toml");
+        std::fs::write(&manifest_path, "schema = \"experiment/v1\"\n").unwrap();
+        let mut labels = std::collections::BTreeMap::new();
+        labels.insert(
+            LABEL_MANIFEST.to_string(),
+            manifest_path.display().to_string(),
+        );
+        let info = docker::ContainerInfo {
+            name: "harness-r".into(),
+            labels,
+            ..Default::default()
+        };
+        assert_eq!(manifest_of(&info), Some(manifest_path));
+    }
+
+    #[test]
+    fn the_launch_plan_labels_the_container_with_its_run() {
+        let cfg = ExperimentConfig::parse(
+            "schema = \"experiment/v1\"\n[agents.default]\nprofile = \"p\"\n[agents.profiles.p]\nkind = \"claude\"\nimage = \"i\"\n",
+        )
+        .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let resolved = Resolved::new(dir.path(), cfg.clone());
+        let profile = cfg.profile("p").unwrap().clone();
+        let manifest = sample_manifest(&dir.path().join("runs/20260101-000000-p-TASK-001"));
+        let plan = launch_plan(&cfg, &resolved, &manifest, &profile, "claude", "base");
+        let label = |key: &str| {
+            plan.labels
+                .iter()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| v.clone())
+        };
+        assert_eq!(label(LABEL_RUN_ID), Some(manifest.run.clone()));
+        assert_eq!(
+            label(LABEL_MANIFEST),
+            Some(dir.path().join("experiment.toml").display().to_string()),
+            "the container names the manifest that dispatched it"
+        );
+        // the /work mount and the run-dir label must agree: both halves of the locator read them
+        let work = plan
+            .mounts
+            .iter()
+            .find(|mount| mount.container == docker::WORK_MOUNT)
+            .expect("a /work mount");
+        assert_eq!(
+            work.host.parent().map(|p| p.display().to_string()),
+            label(LABEL_RUN_DIR)
+        );
     }
 
     #[test]

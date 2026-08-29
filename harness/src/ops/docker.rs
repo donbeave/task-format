@@ -1,5 +1,6 @@
 //! docker CLI wrapper: image builds, the persistent run container, exec into it.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -68,6 +69,9 @@ pub struct RunSpec {
     pub image: String,
     pub mounts: Vec<Mount>,
     pub env: Vec<(String, String)>,
+    /// `--label key=value` pairs. These are what make the container self-describing: they survive
+    /// the process that launched it, travel with `docker inspect`, and need no file on disk.
+    pub labels: Vec<(String, String)>,
     /// Path to a 0600 env file holding the secrets; deleted right after the run.
     pub env_file: Option<PathBuf>,
     pub memory: String,
@@ -114,6 +118,9 @@ pub fn run_detached(spec: &RunSpec) -> anyhow::Result<String> {
     let mut cmd = Command::new("docker");
     cmd.args(["run", "-d", "--privileged", "--name"])
         .arg(&spec.name);
+    for (key, value) in &spec.labels {
+        cmd.arg("--label").arg(format!("{key}={value}"));
+    }
     for mount in &spec.mounts {
         cmd.arg("-v").arg(mount.flag());
     }
@@ -182,23 +189,125 @@ pub fn exec_ok(
     Ok(captured)
 }
 
-/// The host source of a bind mount at `destination` (e.g. `/work`), or `None` when the container
-/// does not exist or has no such mount. Used to find a run's directory from its container alone,
-/// when no manifest is discoverable from the cwd (`cmds::load_for_run`).
-pub fn inspect_mount_source(container: &str, destination: &str) -> Option<PathBuf> {
-    let template = format!(
-        "{{{{range .Mounts}}}}{{{{if eq .Destination \"{destination}\"}}}}{{{{.Source}}}}{{{{end}}}}{{{{end}}}}"
-    );
-    let out = capture(Command::new("docker").args(["inspect", "-f", &template, container])).ok()?;
-    if !out.ok() {
+/// The workspace bind mount. Its host source is `<run dir>/workspace`, so its parent is the run
+/// directory — the only self-description a container launched before the `taskfmt.*` labels has.
+pub const WORK_MOUNT: &str = "/work";
+
+/// What one container says about itself: enough to find its run without reading any manifest.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ContainerInfo {
+    /// Container name, without docker's leading `/`.
+    pub name: String,
+    /// `created` | `running` | `paused` | `restarting` | `removing` | `exited` | `dead`.
+    pub state: String,
+    /// Host source of the [`WORK_MOUNT`] bind mount, when it has one.
+    pub work_mount: Option<PathBuf>,
+    /// `--label` values by name (empty for a container launched before the labels existed).
+    pub labels: BTreeMap<String, String>,
+}
+
+impl ContainerInfo {
+    /// A label's value, treating an empty value as absent.
+    pub fn label(&self, key: &str) -> Option<&str> {
+        self.labels
+            .get(key)
+            .map(String::as_str)
+            .filter(|value| !value.is_empty())
+    }
+
+    pub fn is_running(&self) -> bool {
+        self.state == "running"
+    }
+}
+
+/// The `docker inspect -f` template behind [`inspect_containers`]: four tab-separated fields, with
+/// the labels rendered as JSON last, so no value can be confused for a field separator (`json` of a
+/// nil label map renders `null`, which parses to no labels rather than erroring).
+fn inspect_template() -> String {
+    format!(
+        "{{{{.Name}}}}\t{{{{.State.Status}}}}\t\
+         {{{{range .Mounts}}}}{{{{if eq .Destination \"{WORK_MOUNT}\"}}}}{{{{.Source}}}}{{{{end}}}}{{{{end}}}}\t\
+         {{{{json .Config.Labels}}}}"
+    )
+}
+
+/// Parse one line of [`inspect_template`]'s output. `None` for a line docker did not produce for a
+/// real container (an empty line, or the blank line docker emits for a name it could not find).
+fn parse_inspect_line(line: &str) -> Option<ContainerInfo> {
+    let mut fields = line.split('\t');
+    let name = fields.next()?.trim().trim_start_matches('/').to_string();
+    if name.is_empty() {
         return None;
     }
-    let source = out.stdout.trim();
-    if source.is_empty() {
-        None
-    } else {
-        Some(PathBuf::from(source))
+    let state = fields.next().unwrap_or_default().trim().to_string();
+    let work = fields.next().unwrap_or_default().trim().to_string();
+    let labels = fields
+        .next()
+        .and_then(|json| serde_json::from_str::<BTreeMap<String, String>>(json.trim()).ok())
+        .unwrap_or_default();
+    Some(ContainerInfo {
+        name,
+        state,
+        work_mount: (!work.is_empty()).then(|| PathBuf::from(work)),
+        labels,
+    })
+}
+
+/// `docker inspect` every named container in one call. Names docker does not know are simply
+/// absent from the result: it reports them on stderr and exits non-zero while still printing a
+/// line for each name it *did* find, so the parsed lines are the answer and the exit code is not.
+pub fn inspect_containers(names: &[String]) -> Vec<ContainerInfo> {
+    if names.is_empty() {
+        return Vec::new();
     }
+    let Ok(out) = capture(
+        Command::new("docker")
+            .args(["inspect", "-f", &inspect_template()])
+            .args(names),
+    ) else {
+        return Vec::new();
+    };
+    out.stdout.lines().filter_map(parse_inspect_line).collect()
+}
+
+/// [`inspect_containers`] for one name.
+pub fn inspect_container(name: &str) -> Option<ContainerInfo> {
+    inspect_containers(&[name.to_string()])
+        .into_iter()
+        .find(|info| info.name == name)
+}
+
+/// Every container whose name starts with `prefix`, running or not, in docker's own order
+/// (newest first). Empty when docker cannot be reached — callers that need to tell "no runs" from
+/// "no daemon" ask [`available`] first.
+pub fn list_containers(prefix: &str) -> Vec<String> {
+    let filter = format!("name=^{prefix}");
+    capture(Command::new("docker").args([
+        "ps",
+        "-a",
+        "--filter",
+        &filter,
+        "--format",
+        "{{.Names}}",
+    ]))
+    .ok()
+    .filter(Captured::ok)
+    .map(|out| {
+        out.stdout
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+/// Whether the docker daemon answers at all.
+pub fn available() -> bool {
+    capture(Command::new("docker").args(["version", "--format", "{{.Server.Version}}"]))
+        .map(|out| out.ok())
+        .unwrap_or(false)
 }
 
 pub fn is_running(container: &str) -> bool {
@@ -252,4 +361,71 @@ pub fn wait_for_file(
         std::thread::sleep(std::time::Duration::from_millis(500));
     }
     Ok(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inspect_lines_parse_name_state_mount_and_labels() {
+        let info = parse_inspect_line(
+            "/harness-r\trunning\t/runs/r/workspace\t{\"taskfmt.run_id\":\"r\",\"empty\":\"\"}",
+        )
+        .unwrap();
+        assert_eq!(info.name, "harness-r", "docker's leading slash is dropped");
+        assert!(info.is_running());
+        assert_eq!(info.work_mount, Some(PathBuf::from("/runs/r/workspace")));
+        assert_eq!(info.label("taskfmt.run_id"), Some("r"));
+        assert_eq!(info.label("empty"), None, "an empty label value is absent");
+        assert_eq!(info.label("nope"), None);
+    }
+
+    #[test]
+    fn a_container_without_labels_or_a_work_mount_still_parses() {
+        // `{{json .Config.Labels}}` renders a nil map as `null`; a container with no /work mount
+        // leaves the third field empty. Both are the pre-label containers' shape.
+        let info = parse_inspect_line("/harness-r\texited\t\tnull").unwrap();
+        assert_eq!(info.state, "exited");
+        assert!(!info.is_running());
+        assert!(info.work_mount.is_none());
+        assert!(info.labels.is_empty());
+        let empty = parse_inspect_line("/harness-r\trunning\t\t{}").unwrap();
+        assert!(empty.labels.is_empty());
+    }
+
+    #[test]
+    fn blank_inspect_lines_are_not_containers() {
+        assert!(parse_inspect_line("").is_none());
+        assert!(parse_inspect_line("/").is_none());
+    }
+
+    #[test]
+    fn the_inspect_template_asks_for_the_work_mount_and_json_labels() {
+        let template = inspect_template();
+        assert!(
+            template.contains(&format!("eq .Destination \"{WORK_MOUNT}\"")),
+            "{template}"
+        );
+        assert!(template.contains("{{json .Config.Labels}}"), "{template}");
+        assert_eq!(template.matches('\t').count(), 3, "{template}");
+    }
+
+    #[test]
+    fn a_run_spec_puts_every_label_on_the_command_line() {
+        // the spec is what `run_detached` renders; no docker needed to prove the pairs survive
+        let spec = RunSpec {
+            name: "harness-r".into(),
+            image: "harness-claude:latest".into(),
+            mounts: vec![Mount::rw(Path::new("/runs/r/workspace"), WORK_MOUNT)],
+            env: vec![],
+            labels: vec![("taskfmt.run_id".into(), "r".into())],
+            env_file: None,
+            memory: "4g".into(),
+            cpus: 2.0,
+            pids_limit: 2048,
+        };
+        assert_eq!(spec.mounts[0].flag(), "/runs/r/workspace:/work");
+        assert_eq!(spec.labels[0].1, "r");
+    }
 }

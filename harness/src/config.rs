@@ -357,6 +357,14 @@ impl ExperimentConfig {
         Ok((cfg, root))
     }
 
+    /// [`Self::load`] plus the path resolver, keeping the manifest's own path so it can be handed
+    /// to the container as a label.
+    pub fn load_resolved(path: &Path) -> anyhow::Result<Resolved> {
+        let path = Self::resolve_path(path)?;
+        let (cfg, _root) = Self::load(&path)?;
+        Ok(Resolved::from_manifest(&path, cfg))
+    }
+
     pub fn profile(&self, name: &str) -> anyhow::Result<&AgentProfile> {
         self.agents
             .profiles
@@ -370,8 +378,14 @@ impl ExperimentConfig {
 }
 
 /// The manifest plus every path it names, resolved against the manifest's directory.
+#[derive(Debug, Clone)]
 pub struct Resolved {
     pub root: PathBuf,
+    /// The manifest file this was loaded from: `<root>/experiment.toml` unless `--config` named
+    /// another. Recorded on every launched container as the `taskfmt.manifest` label, so a run
+    /// carries the identity of the manifest that dispatched it and no later command has to
+    /// rediscover one from wherever the operator happens to be standing.
+    pub manifest: PathBuf,
     pub cfg: ExperimentConfig,
 }
 
@@ -379,6 +393,21 @@ impl Resolved {
     pub fn new(root: &Path, cfg: ExperimentConfig) -> Self {
         Self {
             root: root.to_path_buf(),
+            manifest: root.join(MANIFEST_NAME),
+            cfg,
+        }
+    }
+
+    /// [`Self::new`] from the manifest's own path, which need not be named `experiment.toml`:
+    /// `--config` may name any file. The root stays the manifest's directory.
+    pub fn from_manifest(manifest: &Path, cfg: ExperimentConfig) -> Self {
+        let root = manifest
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+        Self {
+            root,
+            manifest: manifest.to_path_buf(),
             cfg,
         }
     }
@@ -594,6 +623,25 @@ ANTHROPIC_AUTH_TOKEN = "op://vault/item/section/field"
                 .unwrap_err()
                 .to_string()
                 .contains("cannot read experiment manifest")
+        );
+    }
+
+    #[test]
+    fn a_resolved_config_remembers_the_manifest_it_came_from() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        // a manifest that is not named `experiment.toml`: the label must carry the real path
+        let named = root.join("elsewhere.toml");
+        std::fs::write(&named, EXAMPLE).unwrap();
+        let resolved = ExperimentConfig::load_resolved(&named).unwrap();
+        assert_eq!(resolved.manifest, named);
+        assert_eq!(resolved.root, root);
+        // and the discovered default still resolves to the file that was found
+        std::fs::write(root.join(MANIFEST_NAME), EXAMPLE).unwrap();
+        let (cfg, found_root) = ExperimentConfig::load(&root.join(MANIFEST_NAME)).unwrap();
+        assert_eq!(
+            Resolved::new(&found_root, cfg).manifest,
+            root.join(MANIFEST_NAME)
         );
     }
 

@@ -167,10 +167,16 @@ pub enum Command {
     },
 
     /// Host gate for one run: re-run verify on the workspace with trusted copies.
-    Gate { run: String },
+    Gate {
+        /// Run id, its container name (`harness-<run id>`), its run directory, or the path of that
+        /// directory's manifest.json. `taskfmt ps` lists them.
+        run: String,
+    },
 
     /// Push a gated run's workspace to the experiment repo. Never pushes on gate FAIL.
     Promote {
+        /// Run id, its container name (`harness-<run id>`), its run directory, or the path of that
+        /// directory's manifest.json. `taskfmt ps` lists them.
         run: String,
         /// Skip the confirmation (still refuses on gate FAIL).
         #[arg(long)]
@@ -179,6 +185,8 @@ pub enum Command {
 
     /// Completion detection for one run, from outside the container.
     Status {
+        /// Run id, its container name (`harness-<run id>`), its run directory, or the path of that
+        /// directory's manifest.json. `taskfmt ps` lists them.
         run: String,
         /// Poll until the run reaches a terminal state.
         #[arg(long)]
@@ -189,7 +197,18 @@ pub enum Command {
     },
 
     /// Re-attach to a run's live agent TUI (detach: ctrl+b q — never ctrl+c).
-    Attach { run: String },
+    Attach {
+        /// Run id, its container name (`harness-<run id>`), its run directory, or the path of that
+        /// directory's manifest.json. `taskfmt ps` lists them.
+        run: String,
+    },
+
+    /// List the run containers on this host. Read-only, and needs no manifest: it asks docker.
+    Ps {
+        /// One JSON object per line instead of the table.
+        #[arg(long)]
+        json: bool,
+    },
 
     /// Full experiment loop: repo, then run -> gate -> promote per selected task.
     Experiment {

@@ -108,8 +108,7 @@ pub const RUNNING: &str = "RUNNING";
 pub const KILLED_TIMEOUT: &str = "KILLED_TIMEOUT";
 
 pub fn run(ctx: &Ctx, run_id: &str, wait: bool, kill_after: Option<u64>) -> anyhow::Result<i32> {
-    let resolved = crate::cmds::load_for_run(ctx, run_id)?;
-    let run_dir = crate::cmds::resolve_run_arg(&resolved, run_id)?;
+    let (resolved, run_dir) = crate::cmds::load_run(ctx, run_id)?;
     let manifest = Manifest::load(&run_dir)?;
 
     let status = if wait {
