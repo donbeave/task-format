@@ -59,7 +59,7 @@ taskfmt experiment [--tasks 1-3,5|all] [--repo URL] [--agent PROFILE] [--auto] [
                                       #   [--selfcheck]
 ```
 
-Globals: `--config PATH` (default `experiment.toml`), `--auto`, `--yes`, `-v`. Interactive by default: every mutating/expensive step prints what it will do and asks `[y/N]`; `--auto` prints the plan and proceeds; no TTY without `--auto`/`--yes` is a hard error for mutating commands.
+Globals: `--config PATH`, `--auto`, `--yes`, `-v`. The manifest is `--config` > `$TASKFMT_CONFIG` > the nearest `experiment.toml` at or above the current directory (discovery walks up to `/`; not finding one names every directory searched). An explicit `--config`/`$TASKFMT_CONFIG` path is resolved against the cwd and used as given — never discovered. `paths.*` always resolve against the manifest's own directory, so every command works from any subdirectory of the checkout. Interactive by default: every mutating/expensive step prints what it will do and asks `[y/N]`; `--auto` prints the plan and proceeds; no TTY without `--auto`/`--yes` is a hard error for mutating commands.
 
 ## Lifecycle (one experiment, gate-protected)
 

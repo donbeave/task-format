@@ -6,10 +6,32 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, bail};
+use anyhow::{Context, anyhow, bail};
 use serde::{Deserialize, Serialize};
 
 pub const SCHEMA: &str = "experiment/v1";
+
+/// The manifest's file name, and the repo-relative path `--config` defaults to.
+pub const MANIFEST_NAME: &str = "experiment.toml";
+
+/// Walk `start` and its ancestors looking for `rel`; return the first hit and every directory
+/// searched, in order.
+///
+/// The manifest belongs to a checkout, not to the process's working directory. Resolving a
+/// repo-relative default against the cwd made every command that needs the manifest — including
+/// read-only, config-independent ones like `attach`, `status` and `gate` — usable only from the
+/// repo root. Discovery removes that coupling instead of exempting individual commands.
+pub fn discover_upward(start: &Path, rel: &Path) -> (Option<PathBuf>, Vec<PathBuf>) {
+    let mut searched = Vec::new();
+    for dir in start.ancestors() {
+        searched.push(dir.to_path_buf());
+        let candidate = dir.join(rel);
+        if candidate.is_file() {
+            return (Some(candidate), searched);
+        }
+    }
+    (None, searched)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExperimentConfig {
@@ -285,13 +307,46 @@ impl ExperimentConfig {
         Ok(cfg)
     }
 
-    /// Load a manifest and resolve the repository root it lives in.
+    /// Resolve the path a manifest is read from.
+    ///
+    /// Absolute: taken as given. An explicit `--config` (or `$TASKFMT_CONFIG`) is made absolute
+    /// before it reaches here, so absolute means "the operator named this file" and keeps the
+    /// original semantics exactly. Relative: the repo-relative default, discovered by walking up
+    /// from the current directory.
+    pub fn resolve_path(path: &Path) -> anyhow::Result<PathBuf> {
+        if path.is_absolute() {
+            return Ok(path.to_path_buf());
+        }
+        let cwd = std::env::current_dir().context("cannot read the current directory")?;
+        Self::resolve_path_from(&cwd, path)
+    }
+
+    /// `resolve_path` with the starting directory passed in (the cwd-free half, so it is testable
+    /// without mutating process state).
+    pub fn resolve_path_from(start: &Path, path: &Path) -> anyhow::Result<PathBuf> {
+        if path.is_absolute() {
+            return Ok(path.to_path_buf());
+        }
+        let (found, searched) = discover_upward(start, path);
+        found.ok_or_else(|| {
+            anyhow!(
+                "cannot find the experiment manifest {} in {} or any ancestor; searched: {}. \
+                 Run from inside the task-format checkout or pass --config <path>",
+                path.display(),
+                start.display(),
+                searched
+                    .iter()
+                    .map(|dir| dir.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })
+    }
+
+    /// Load a manifest and resolve the repository root it lives in. The root is the manifest's own
+    /// directory, so `Resolved`'s `paths.*` follow the manifest discovery found, never the cwd.
     pub fn load(path: &Path) -> anyhow::Result<(Self, PathBuf)> {
-        let path = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            std::env::current_dir()?.join(path)
-        };
+        let path = Self::resolve_path(path)?;
         let text = std::fs::read_to_string(&path)
             .with_context(|| format!("cannot read experiment manifest {}", path.display()))?;
         let root = path
@@ -471,6 +526,74 @@ ANTHROPIC_AUTH_TOKEN = "op://vault/item/section/field"
         assert!(
             format!("{err:#}").contains("image") || format!("{err:#}").contains("missing field"),
             "{err:#}"
+        );
+    }
+
+    #[test]
+    fn manifest_is_discovered_in_the_start_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::write(root.join(MANIFEST_NAME), EXAMPLE).unwrap();
+        let found = ExperimentConfig::resolve_path_from(&root, Path::new(MANIFEST_NAME)).unwrap();
+        assert_eq!(found, root.join(MANIFEST_NAME));
+        // and the root the manifest resolves paths against is its own directory, not the start dir
+        let (_, resolved_root) = ExperimentConfig::load(&found).unwrap();
+        assert_eq!(resolved_root, root);
+    }
+
+    #[test]
+    fn manifest_is_discovered_in_an_ancestor() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::write(root.join(MANIFEST_NAME), EXAMPLE).unwrap();
+        let deep = root.join("experiments").join("runs").join("some-run");
+        std::fs::create_dir_all(&deep).unwrap();
+        let found = ExperimentConfig::resolve_path_from(&deep, Path::new(MANIFEST_NAME)).unwrap();
+        assert_eq!(found, root.join(MANIFEST_NAME));
+        // paths.* stay anchored on the manifest's directory, so a subdirectory start is harmless
+        let (cfg, resolved_root) = ExperimentConfig::load(&found).unwrap();
+        assert_eq!(resolved_root, root);
+        assert_eq!(
+            Resolved::new(&resolved_root, cfg).runs_dir(),
+            root.join("experiments/runs")
+        );
+    }
+
+    #[test]
+    fn a_missing_manifest_names_every_directory_searched() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let deep = root.join("a").join("b");
+        std::fs::create_dir_all(&deep).unwrap();
+        let err = ExperimentConfig::resolve_path_from(&deep, Path::new(MANIFEST_NAME)).unwrap_err();
+        let msg = format!("{err:#}");
+        for searched in [deep.as_path(), root.join("a").as_path(), root.as_path()] {
+            assert!(
+                msg.contains(&searched.display().to_string()),
+                "{searched:?} missing from {msg}"
+            );
+        }
+        assert!(msg.contains("--config <path>"), "{msg}");
+    }
+
+    #[test]
+    fn an_absolute_manifest_path_bypasses_discovery() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::write(root.join(MANIFEST_NAME), EXAMPLE).unwrap();
+        let deep = root.join("sub");
+        std::fs::create_dir_all(&deep).unwrap();
+        // an explicit path is used as given, even when it does not exist: no ancestor is consulted
+        let named = deep.join("elsewhere.toml");
+        assert_eq!(
+            ExperimentConfig::resolve_path_from(&deep, &named).unwrap(),
+            named
+        );
+        assert!(
+            ExperimentConfig::load(&named)
+                .unwrap_err()
+                .to_string()
+                .contains("cannot read experiment manifest")
         );
     }
 

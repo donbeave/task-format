@@ -33,16 +33,34 @@ pub struct Ctx {
     pub interaction: Interaction,
 }
 
+/// The manifest to read: `--config` > `$TASKFMT_CONFIG` > the repo-relative default.
+///
+/// An explicit choice is made absolute here, so `Ctx::load` reads an absolute `config_path` as
+/// "the operator named this file" (original semantics: relative to the cwd at the time it was
+/// given) and a relative one as "discover it by walking up from the cwd". `TASKFMT_CONFIG` joins
+/// the `TASKFMT_ROOT` / `TASKFMT_TASK_DIR` / `TASKFMT_BASE` convention already used by `verify`,
+/// and lets an operator pin one manifest for a whole session without a flag on every command.
+fn config_path(explicit: Option<PathBuf>, env: Option<PathBuf>) -> PathBuf {
+    match explicit.or(env) {
+        Some(path) => std::path::absolute(&path).unwrap_or(path),
+        None => PathBuf::from(crate::config::MANIFEST_NAME),
+    }
+}
+
 impl Ctx {
     pub fn from_cli(cli: &Cli) -> Self {
+        let env = std::env::var_os("TASKFMT_CONFIG")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from);
         Self {
-            config_path: cli.config.clone(),
+            config_path: config_path(cli.config.clone(), env),
             verbose: cli.verbose,
             interaction: Interaction::new(cli.auto, cli.yes),
         }
     }
 
-    /// Load the experiment manifest and the path resolver rooted at its directory.
+    /// Load the experiment manifest and the path resolver rooted at its directory. A relative
+    /// `config_path` is discovered by walking up from the cwd (`ExperimentConfig::resolve_path`).
     pub fn load(&self) -> anyhow::Result<Resolved> {
         let (cfg, root) = ExperimentConfig::load(&self.config_path)?;
         Ok(Resolved::new(&root, cfg))
@@ -259,6 +277,55 @@ pub fn all_task_dirs(tasks_dir: &std::path::Path) -> anyhow::Result<Vec<PathBuf>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn config_precedence_is_flag_then_env_then_discovery() {
+        let cwd = std::env::current_dir().unwrap();
+        // no choice at all: the relative default, which `Ctx::load` discovers by walking up
+        assert_eq!(
+            config_path(None, None),
+            PathBuf::from(crate::config::MANIFEST_NAME)
+        );
+        // the env var is a choice, and is absolutized so discovery is bypassed
+        assert_eq!(
+            config_path(None, Some(PathBuf::from("env.toml"))),
+            cwd.join("env.toml")
+        );
+        // the flag wins over the env var
+        assert_eq!(
+            config_path(
+                Some(PathBuf::from("/flag/experiment.toml")),
+                Some(PathBuf::from("/env/experiment.toml"))
+            ),
+            PathBuf::from("/flag/experiment.toml")
+        );
+    }
+
+    #[test]
+    fn an_explicit_config_flag_bypasses_discovery() {
+        use clap::Parser as _;
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let named = root.join("elsewhere.toml");
+        let cli = crate::cli::Cli::try_parse_from([
+            "taskfmt",
+            "--config",
+            named.to_str().unwrap(),
+            "status",
+            "some-run",
+        ])
+        .unwrap();
+        let ctx = Ctx::from_cli(&cli);
+        assert_eq!(ctx.config_path, named);
+        // and it is read as named: no ancestor of the cwd is consulted
+        let err = ctx
+            .load()
+            .err()
+            .map(|err| format!("{err:#}"))
+            .expect("a named manifest that does not exist must not fall back to discovery");
+        assert!(err.contains("cannot read experiment manifest"), "{err}");
+        assert!(err.contains(&named.display().to_string()), "{err}");
+    }
 
     #[test]
     fn task_arg_resolves_id_or_path() {

@@ -14,9 +14,10 @@ use clap::{Parser, Subcommand, ValueEnum};
                   preload, build-images) need --auto or --yes when stdin is not a terminal."
 )]
 pub struct Cli {
-    /// Path to the experiment manifest.
-    #[arg(long, global = true, default_value = "experiment.toml")]
-    pub config: PathBuf,
+    /// Path to the experiment manifest. Default: $TASKFMT_CONFIG, else the nearest
+    /// `experiment.toml` at or above the current directory.
+    #[arg(long, global = true)]
+    pub config: Option<PathBuf>,
 
     /// Assume yes for every confirmation and print the plan line.
     #[arg(long, global = true)]
