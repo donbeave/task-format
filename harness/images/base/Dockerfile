@@ -5,7 +5,7 @@
 #
 # debian slim + tools + docker.io (inner daemon, DinD) + postgresql-client-16 (pgdg, matches the
 # postgres:16-alpine prereq server) + node 22 (nodesource) + rustup (user `agent`, pinned
-# toolchain) + herdr (static release binary) + the `taskfmt` binary.
+# toolchain + rustfmt/clippy) + herdr (static release binary) + the `taskfmt` binary.
 #
 # The container-side tooling is `taskfmt` only: container-entrypoint (PID 1: inner dockerd →
 # prereqs → agent), prereqs (postgres + seeds) and agent-launch (herdr supervisor). No shell
@@ -61,12 +61,18 @@ RUN case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
 COPY --from=harness-taskfmt:latest /usr/local/bin/taskfmt /usr/local/bin/taskfmt
 RUN /usr/local/bin/taskfmt --version
 
-# --- unprivileged agent user + pinned rust toolchain (minimal profile, owned by `agent`) ---
+# --- unprivileged agent user + pinned rust toolchain (minimal profile PLUS the two components the
+#     corpus gate's own `[lint]` block invokes; `--profile minimal` omits them and rustup installs a
+#     PATH shim for each regardless, so their absence is only observable by running them) ---
 RUN useradd -m -s /bin/bash agent
 RUN curl -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh \
  && gosu agent env HOME=/home/agent sh /tmp/rustup-init.sh -y \
       --default-toolchain "${RUST_TOOLCHAIN}" --profile minimal \
+ && gosu agent env HOME=/home/agent /home/agent/.cargo/bin/rustup \
+      component add --toolchain "${RUST_TOOLCHAIN}" rustfmt clippy \
  && gosu agent env HOME=/home/agent /home/agent/.cargo/bin/rustc --version \
+ && gosu agent env HOME=/home/agent /home/agent/.cargo/bin/cargo fmt --version \
+ && gosu agent env HOME=/home/agent /home/agent/.cargo/bin/cargo clippy --version \
  && rm -f /tmp/rustup-init.sh
 ENV RUSTUP_HOME=/home/agent/.rustup \
     CARGO_HOME=/home/agent/.cargo \
