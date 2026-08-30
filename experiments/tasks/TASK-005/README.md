@@ -96,7 +96,7 @@ Observable behaviour plus the exact evidence command. The gate runs these; the h
 | AC-002 | Given a seeded container, when previews run, then rows match `fake_data` cell-for-cell, NULLs survive, the 500 limit applies on a 600-row table, and an unknown table yields `DbError::Query`. | `cargo test -p pgtui --test pg_preview_test` | exit 0, `4 passed` |
 | AC-003 | Given a connected `App`, when `Enter` and grid keys are applied, then the preview effect, grid build, cursor clamping, sort cycling and error path behave as decided. | `cargo test -p pgtui --test app_preview_test` | exit 0, `8 passed` |
 | AC-004 | Given grid state, when the 100x30 buffer is rendered, then headers, `[cursor column]`, sort arrows, rows, status and help appear as D-060 states. | `cargo test -p pgtui --test screen_preview_test` | exit 0, `5 passed` |
-| AC-005 | Given the whole task, when all earlier trusted tests run, then they still pass. | `cargo test -p pgtui --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test --test app_create_form_test --test runtime_create_test --test screen_create_form_test --test pg_connect_test --test pg_runtime_connect_test --test app_browser_test --test screen_browser_test --test grid_sort_test --test pg_preview_test --test app_preview_test --test screen_preview_test --test skeleton_test -- --skip pgtui_stub_exits_2` | exit 0, `72 passed` |
+| AC-005 | Given the whole task, when all earlier trusted tests run, then they still pass. | `cargo test -p pgtui --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test --test app_create_form_test --test runtime_create_test --test screen_create_form_test --test pg_connect_test --test pg_runtime_connect_test --test app_browser_test --test screen_browser_test --test grid_sort_test --test pg_preview_test --test app_preview_test --test screen_preview_test --test skeleton_test -- --skip pgtui_stub_exits_2` | exit 0, 16 `test result: ok.` lines (one per target), no `FAILED` |
 | AC-006 | Given the finished task, when the gate runs, then it reports `DONE`. | `taskfmt verify` | exit 0, last line `DONE` |
 
 ## Fixed decisions
@@ -129,7 +129,7 @@ Static plan. Hierarchical IDs, four spaces per level, max depth 4. Every leaf na
     - [ ] **4.1** `ui/grid.rs` and browser main pane per D-060 (`R-006`, `AC-004`) — evidence: `cargo test -p pgtui --test screen_preview_test` prints `5 passed`.
     - [ ] **4.2** Lint is clean (`D-004`) — evidence: `cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings` exits 0.
 - [ ] **5** Gate passes.
-    - [ ] **5.1** Regression `AC-005` holds — evidence: the combined `cargo test -p pgtui --test ...` command of `AC-005` prints `72 passed`.
+    - [ ] **5.1** Regression `AC-005` holds — evidence: the `AC-005` command exits 0 and prints 16 `test result: ok.` lines, one per `--test` target, and no `FAILED`.
     - [ ] **5.2** Diff reviewed: only `expected_paths` changed, nothing temporary or unrelated (`R-007`) — evidence: `git status --porcelain` and `git diff --no-renames --stat $TASKFMT_BASE` show only in-scope files.
     - [ ] **5.3** `taskfmt verify` exits 0 with last line `DONE` (`AC-006`) — evidence: final full run (with progress check), full output shown in the transcript.
 <!-- checklist:end -->

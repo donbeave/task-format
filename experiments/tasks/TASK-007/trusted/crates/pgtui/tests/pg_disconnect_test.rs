@@ -6,8 +6,13 @@ use pgtui::db::{Cell, PgSession, QueryOutcome};
 use std::time::{Duration, Instant};
 
 async fn pgtui_backends(admin: &PgSession) -> u64 {
+    // The observing session is itself a `PgSession` and so announces `application_name = 'pgtui'`
+    // (D-024); exclude the backend that is running this count, by identity and not by arithmetic.
     let outcome = admin
-        .query("SELECT count(*) FROM pg_stat_activity WHERE application_name = 'pgtui'")
+        .query(
+            "SELECT count(*) FROM pg_stat_activity \
+             WHERE application_name = 'pgtui' AND pid <> pg_backend_pid()",
+        )
         .await
         .expect("count query");
     let QueryOutcome::Rows(rows) = outcome else {

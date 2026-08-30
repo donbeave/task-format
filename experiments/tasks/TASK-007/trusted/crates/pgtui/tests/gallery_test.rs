@@ -89,7 +89,9 @@ fn screen_content_matches_the_named_state() {
         "two-connection state renders the second row"
     );
     assert!(
-        svg_of(&out, "screen__create_form_blank").contains("> Name:"),
+        // The SVG writer XML-escapes cell text (D-080), so the focus marker reaches this artifact
+        // as its escaped form; the raw form is only ever seen in the text render.
+        svg_of(&out, "screen__create_form_blank").contains("&gt; Name:"),
         "blank form state"
     );
     assert!(
@@ -130,7 +132,14 @@ fn output_is_deterministic() {
 
 #[test]
 fn readme_lists_all_ten_screens() {
-    let readme = fs::read_to_string("README.md").expect("README.md at the repository root");
+    // The test runner's working directory is the package root (`CARGO_MANIFEST_DIR`), not the
+    // repository root that `verify.toml` declares for the gate; anchor the path to the manifest
+    // directory, which the build system guarantees, instead of to the process CWD.
+    let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..");
+    let readme =
+        fs::read_to_string(repo_root.join("README.md")).expect("README.md at the repository root");
     assert!(
         readme.contains("## Screens"),
         "README screen section: {readme}"

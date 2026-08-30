@@ -32,7 +32,7 @@ Execution protocol, progress grammar, report format: `/task/AGENTS.md`. This fil
 Current behavior:
 
 - TASK-006 completed the app surface; `d` is inert, disconnect never closes the socket, `gallery` is the TASK-001 exit-2 stub, and there is no `README.md` or `docs/screens/`.
-- Trusted tests `app_disconnect_test.rs`, `pg_disconnect_test.rs` and `gallery_test.rs` are on the run base commit and fail while the feature is absent. `cli_exit_test.rs` is too, but already passes on an empty store; it only guards.
+- Trusted tests `app_disconnect_test.rs`, `pg_disconnect_test.rs`, `gallery_test.rs` and `cli_exit_test.rs` are on the run base commit and none of them passes there: two of the four do not build at base (`cli_exit_test` for want of the `nix` dev-dependency line; `pg_disconnect_test` for want of `PgSession::disconnect`), the other two fail while the feature is absent. Adding the `nix` D-001 dev pin to `crates/pgtui/Cargo.toml` is part of this task (`R-007`).
 
 Desired behavior:
 
@@ -78,7 +78,7 @@ Out of scope:
 ## Requirements
 
 - **R-001 (MUST):** Disconnect per D-033/D-024: `d` from the browser emits `Effect::Disconnect`; `Msg::Disconnected` sets `session = None`, `grid = None`, `sql_grid = None`, returns to `Screen::ConnectionList`, keeps `connections` and `list_cursor`, and clears `sql_input`.
-- **R-002 (MUST):** Teardown closes the backend: the `Client` is dropped and the spawned connection task is awaited before `Msg::Disconnected` is returned, so `pg_stat_activity` shows no `application_name = 'pgtui'` backend afterwards.
+- **R-002 (MUST):** Teardown closes the backend: the `Client` is dropped and the spawned connection task is awaited before `Msg::Disconnected` is returned, so `pg_stat_activity` shows no `application_name = 'pgtui'` backend other than the observing connection's own afterwards.
 - **R-003 (MUST):** `Ctrl+C` emits `Disconnect` before `Quit` when connected, from every screen (D-030); `q` and `Ctrl+C` exit 0 with the terminal restored (D-040, D-012).
 - **R-004 (MUST):** Gallery per D-080: `--out <dir>` defaulting to `docs/screens`, the ten fixed names, SVG plus PNG per name, deterministic bytes, exit 0 on success, 2 on bad arguments or unwritable output, 1 on render failure, no rendering code of its own, nothing `#[path]`-included from `tests/`.
 - **R-005 (MUST):** `docs/screens/` holds one committed run with the default `--out`, and `README.md` gets a `## Screens` section listing the ten names with their `docs/screens/<name>.png` paths (D-005: this is the only task creating `README.md`).
@@ -95,7 +95,7 @@ Observable behaviour plus the exact evidence command. The gate runs these; the h
 | AC-002 | Given a live session in a container, when disconnect runs, then the `pgtui` backend disappears from `pg_stat_activity`. | `cargo test -p pgtui --test pg_disconnect_test` | exit 0, `1 passed` |
 | AC-003 | Given the binary in a 100x30 pty, when `q` then `Ctrl+C` are sent, then the alternate screen is left and the process exits 0 both times. | `cargo test -p pgtui --test cli_exit_test` | exit 0, `2 passed` |
 | AC-004 | Given the gallery binary, when it runs twice, then it writes the ten SVG+PNG pairs with the named content, byte-identical across runs, and `README.md` lists all ten. | `cargo test -p pgtui --test gallery_test` | exit 0, `4 passed` |
-| AC-005 | Given the whole series, when the 23 trusted targets run, then all pass. | `cargo test -p pgtui --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test --test app_create_form_test --test runtime_create_test --test screen_create_form_test --test pg_connect_test --test pg_runtime_connect_test --test app_browser_test --test screen_browser_test --test grid_sort_test --test pg_preview_test --test app_preview_test --test screen_preview_test --test app_custom_sql_test --test pg_custom_sql_test --test screen_custom_sql_test --test app_disconnect_test --test pg_disconnect_test --test cli_exit_test --test gallery_test --test skeleton_test -- --skip stub_exits_2` | exit 0, `100 passed` |
+| AC-005 | Given the whole series, when the 23 trusted targets run, then all pass. | `cargo test -p pgtui --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test --test app_create_form_test --test runtime_create_test --test screen_create_form_test --test pg_connect_test --test pg_runtime_connect_test --test app_browser_test --test screen_browser_test --test grid_sort_test --test pg_preview_test --test app_preview_test --test screen_preview_test --test app_custom_sql_test --test pg_custom_sql_test --test screen_custom_sql_test --test app_disconnect_test --test pg_disconnect_test --test cli_exit_test --test gallery_test --test skeleton_test -- --skip stub_exits_2` | exit 0, 23 `test result: ok.` lines (one per target), no `FAILED` |
 | AC-006 | Given the finished task, when the gate runs, then it reports `DONE`. | `taskfmt verify` | exit 0, last line `DONE` |
 
 ## Fixed decisions
@@ -124,10 +124,10 @@ Static plan. Hierarchical IDs, four spaces per level, max depth 4. Every leaf na
     - [ ] **3.2** `Ctrl+C` exits 0 from the same pty (`R-003`, `AC-003`; connected ordering is `AC-001`) — evidence: `cargo test -p pgtui --test cli_exit_test -- ctrl_c` prints `1 passed`.
 - [ ] **4** Gallery and repository material are produced.
     - [ ] **4.1** `src/bin/gallery.rs` meets D-080 without its own rendering code (`R-004`, `AC-004`) — evidence: `cargo test -p pgtui --test gallery_test` prints `4 passed`.
-    - [ ] **4.2** `docs/screens/` holds the committed run and `README.md` lists the ten names (`R-005`) — evidence: `test "$(ls docs/screens/*.png | wc -l | tr -d ' ')" = 10 && grep -q '## Screens' README.md` exits 0.
+    - [ ] **4.2** `docs/screens/` holds the committed default-`--out` run and `README.md` carries its `## Screens` section (`R-005`) — evidence: `test "$(ls docs/screens/*.png | wc -l | tr -d ' ')" = 10 && test "$(ls docs/screens/*.svg | wc -l | tr -d ' ')" = 10 && grep -q '## Screens' README.md` exits 0. The ten NAMES and their paths are `AC-004`'s (`readme_lists_all_ten_screens`); this leaf owns the committed run and the section, and nothing that another oracle decides.
     - [ ] **4.3** Lint is clean (`D-004`) — evidence: `cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings` exits 0.
 - [ ] **5** Gate passes.
-    - [ ] **5.1** Full series `AC-005` holds — evidence: the combined `cargo test -p pgtui --test ...` command of `AC-005` prints `100 passed`.
+    - [ ] **5.1** Full series `AC-005` holds — evidence: the `AC-005` command exits 0 and prints 23 `test result: ok.` lines, one per `--test` target, and no `FAILED`.
     - [ ] **5.2** Diff reviewed: only `expected_paths` changed, nothing temporary or unrelated (`R-006`, `R-007`) — evidence: `git status --porcelain` and `git diff --no-renames --stat $TASKFMT_BASE` show only in-scope files.
     - [ ] **5.3** `taskfmt verify` exits 0 with last line `DONE` (`AC-006`) — evidence: final full run (with progress check), full output shown in the transcript.
 <!-- checklist:end -->
