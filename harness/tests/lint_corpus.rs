@@ -1,6 +1,6 @@
 //! Lint corpus: the v4 example must pass, broken variants must not, the template must not.
 //! Every rule C1–C9 has one negative case built by mutating the example text, plus the positive
-//! twins (an AC cited on an evidence-bearing parent; `<...>` inside a code span; a gate row and
+//! twins (an AC cited on exactly one owning leaf; `<...>` inside a code span; a gate row and
 //! an order-shuffled `cargo test` for C6; kind scoping, filter tolerance and suite suppression
 //! for C9).
 
@@ -20,21 +20,11 @@ fn example() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/example")
 }
 
-fn legacy_example() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/legacy")
-}
-
 fn lint_text(text: &str, readme: &Path) -> Vec<Finding> {
     lint::lint_text(text, readme)
 }
 
 fn example_text() -> (String, PathBuf) {
-    let readme = legacy_example().join("README.md");
-    let text = std::fs::read_to_string(&readme).unwrap();
-    (text, readme)
-}
-
-fn typed_example_text() -> (String, PathBuf) {
     let readme = example().join("README.md");
     let text = std::fs::read_to_string(&readme).unwrap();
     (text, readme)
@@ -50,7 +40,7 @@ fn lint_with_verify(readme: &str, verify_toml: &str) -> Vec<Finding> {
 }
 
 fn example_verify_toml() -> String {
-    std::fs::read_to_string(legacy_example().join("verify.toml")).unwrap()
+    std::fs::read_to_string(example().join("verify.toml")).unwrap()
 }
 
 fn errors(findings: &[Finding]) -> Vec<&Finding> {
@@ -70,6 +60,26 @@ fn has(findings: &[Finding], severity: Severity, rule: &str, needle: &str) -> bo
 fn mutate(text: &str, from: &str, to: &str) -> String {
     assert_eq!(text.matches(from).count(), 1, "mutation anchor: {from:?}");
     text.replacen(from, to, 1)
+}
+
+fn remove_gherkin_bodies(text: &str) -> String {
+    let mut in_fence = false;
+    text.lines()
+        .filter(|line| {
+            if *line == "```gherkin" {
+                in_fence = true;
+                false
+            } else if in_fence {
+                if *line == "```" {
+                    in_fence = false;
+                }
+                false
+            } else {
+                true
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[test]
@@ -102,7 +112,7 @@ fn example_package_passes_clean() {
 
 #[test]
 fn typed_example_package_passes_clean() {
-    let (text, readme) = typed_example_text();
+    let (text, readme) = example_text();
     let task = TaskFile::parse(text.clone(), &readme).unwrap();
     assert!(task.typed_acceptance.detected);
     assert_eq!(task.typed_acceptance.criteria.len(), 4);
@@ -116,20 +126,6 @@ fn typed_example_package_passes_clean() {
             .any(|finding| finding.rule == "acceptance"
                 && finding.message.contains("AC-003 evidence command")),
         "typed example should retain the intentional command-gating warning:\n{}",
-        report.render()
-    );
-}
-
-#[test]
-fn legacy_table_package_remains_a_green_control() {
-    let report = lint::lint_path(&legacy_example());
-    assert!(report.passed(), "{}", report.render());
-    assert!(
-        !report
-            .findings
-            .iter()
-            .any(|finding| finding.rule == "acceptance" && finding.message.contains("typed")),
-        "{}",
         report.render()
     );
 }
@@ -325,15 +321,19 @@ fn c2_duplicate_definitions_and_ac_rows() {
         "{findings:?}"
     );
 
-    let row = text
-        .lines()
-        .find(|line| line.starts_with("| AC-002 |"))
-        .unwrap()
-        .to_string();
-    let dup_ac = mutate(&text, &row, &format!("{row}\n{row}"));
+    let dup_ac = mutate(
+        &text,
+        "### AC-002 — Valid refresh still rotates",
+        "### AC-001 — Valid refresh still rotates",
+    );
     let findings = lint_text(&dup_ac, &readme);
     assert!(
-        has(&findings, Severity::Error, "ids", "duplicate AC row AC-002"),
+        has(
+            &findings,
+            Severity::Error,
+            "ids",
+            "duplicate AC block AC-001"
+        ),
         "{findings:?}"
     );
 }
@@ -343,8 +343,12 @@ fn c2_duplicate_definitions_and_ac_rows() {
 fn c3_every_requirement_is_cited() {
     let (text, readme) = example_text();
 
-    // R-003 is cited only on 2.1
-    let uncited = mutate(&text, "(`R-001`, `R-003`, `AC-001`)", "(`R-001`, `AC-001`)");
+    // R-003 is cited only by AC-001
+    let uncited = mutate(
+        &mutate(&text, "Covers: R-001, R-003", "Covers: R-001"),
+        "(`R-001`, `R-003`)",
+        "(`R-001`)",
+    );
     let findings = lint_text(&uncited, &readme);
     assert!(
         has(
@@ -451,43 +455,56 @@ fn c4_placeholders_derived_from_the_template() {
     );
 }
 
-// ---------- C5: AC coverage and identical evidence ----------
+// ---------- C5: typed AC ownership and identical evidence ----------
 #[test]
-fn c5_ac_cited_on_leaf_or_evidence_bearing_parent() {
+fn c5_typed_ac_has_one_owning_leaf() {
     let (text, readme) = example_text();
     let leaf_24 = "    - [ ] **2.4** Valid refresh path unchanged (`AC-002`) — evidence: `cargo test -p auth valid_refresh_rotation` → `1 passed`.";
-    let parent_2 = "- [ ] **2** Required behavior is implemented.";
+    let leaf_211 = "        - [ ] **2.1.1** `TokenStore::validate` called before `begin_transaction` in `rotate` — evidence: `grep -n \"validate\\|begin_transaction\" src/auth/session/rotate.rs` shows validate on an earlier line.";
 
-    // positive twin: the citation moves to a parent that carries its own evidence
-    let on_parent = mutate(
+    // positive: the citation moves to another leaf, leaving exactly one owner
+    let on_other_leaf = mutate(
         &mutate(
             &text,
             leaf_24,
             "    - [ ] **2.4** Valid refresh path unchanged — evidence: `cargo test -p auth valid_refresh_rotation` exits 0.",
         ),
-        parent_2,
-        "- [ ] **2** Required behavior is implemented (`AC-002`) — evidence: `cargo test -p auth valid_refresh_rotation` → `1 passed`.",
+        leaf_211,
+        "        - [ ] **2.1.1** `TokenStore::validate` called before `begin_transaction` in `rotate` (`AC-002`) — evidence: `grep -n \"validate\\|begin_transaction\" src/auth/session/rotate.rs` shows validate on an earlier line.",
     );
-    let findings = lint_text(&on_parent, &readme);
+    let findings = lint_text(&on_other_leaf, &readme);
     assert!(errors(&findings).is_empty(), "{findings:?}");
 
-    // negative: the parent cites the AC but has no evidence of its own
-    let on_bare_parent = mutate(
-        &mutate(
-            &text,
-            leaf_24,
-            "    - [ ] **2.4** Valid refresh path unchanged — evidence: `cargo test -p auth valid_refresh_rotation` exits 0.",
-        ),
-        parent_2,
-        "- [ ] **2** Required behavior is implemented (`AC-002`).",
+    // negative: an AC with no owning leaf is rejected
+    let no_owner = mutate(
+        &text,
+        leaf_24,
+        "    - [ ] **2.4** Valid refresh path unchanged — evidence: `cargo test -p auth valid_refresh_rotation` exits 0.",
     );
-    let findings = lint_text(&on_bare_parent, &readme);
+    let findings = lint_text(&no_owner, &readme);
     assert!(
         has(
             &findings,
             Severity::Error,
             "checklist",
-            "AC-002 is not cited by any leaf or evidence-bearing parent"
+            "AC-002 must have exactly one owning checklist leaf (found 0)"
+        ),
+        "{findings:?}"
+    );
+
+    // negative: two owning leaves are rejected
+    let duplicate_owner = mutate(
+        &text,
+        leaf_211,
+        "        - [ ] **2.1.1** `TokenStore::validate` called before `begin_transaction` in `rotate` (`AC-002`) — evidence: `grep -n \"validate\\|begin_transaction\" src/auth/session/rotate.rs` shows validate on an earlier line.",
+    );
+    let findings = lint_text(&duplicate_owner, &readme);
+    assert!(
+        has(
+            &findings,
+            Severity::Error,
+            "checklist",
+            "AC-002 must have exactly one owning checklist leaf (found 2)"
         ),
         "{findings:?}"
     );
@@ -556,11 +573,11 @@ fn c6_ac_command_absent_from_verify_toml_warns() {
 #[test]
 fn c6_gate_row_is_exempt() {
     let (text, readme) = example_text();
-    // the gate cannot list itself: an AC row running `taskfmt verify` never warns
+    // an acceptance criterion running `taskfmt verify` never warns
     let gate_row = mutate(
         &text,
-        "| `! grep -rn legacy_expiry_check src tests` |",
-        "| `taskfmt verify` |",
+        "Evidence: `! grep -rn legacy_expiry_check src tests`",
+        "Evidence: `taskfmt verify`",
     );
     let findings = lint_text(&gate_row, &readme);
     assert!(errors(&findings).is_empty(), "{findings:?}");
@@ -573,7 +590,7 @@ fn c6_gate_row_is_exempt() {
 #[test]
 fn c6_cargo_test_matches_by_target_set_not_token_order() {
     let (text, _) = example_text();
-    let row = "| `cargo test -p auth valid_refresh_rotation` |";
+    let evidence = "Evidence: `cargo test -p auth valid_refresh_rotation`";
     let verify = example_verify_toml().replace(
         "\"cargo test -p auth valid_refresh_rotation\",",
         "\"cargo test -p auth --test rotation --test expiry -- valid\",",
@@ -582,8 +599,8 @@ fn c6_cargo_test_matches_by_target_set_not_token_order() {
     // positive: same package, same targets, same trailing args, every token shuffled
     let shuffled = mutate(
         &text,
-        row,
-        "| `cargo test --test expiry --package auth --test rotation -- valid` |",
+        evidence,
+        "Evidence: `cargo test --test expiry --package auth --test rotation -- valid`",
     );
     let findings = lint_with_verify(&shuffled, &verify);
     assert!(errors(&findings).is_empty(), "{findings:?}");
@@ -595,8 +612,8 @@ fn c6_cargo_test_matches_by_target_set_not_token_order() {
     // negative: a target the config never runs
     let extra = mutate(
         &text,
-        row,
-        "| `cargo test -p auth --test rotation --test expiry --test other -- valid` |",
+        evidence,
+        "Evidence: `cargo test -p auth --test rotation --test expiry --test other -- valid`",
     );
     let findings = lint_with_verify(&extra, &verify);
     assert!(
@@ -612,8 +629,8 @@ fn c6_cargo_test_matches_by_target_set_not_token_order() {
     // negative: same targets, different trailing args
     let other_filter = mutate(
         &text,
-        row,
-        "| `cargo test -p auth --test rotation --test expiry -- other` |",
+        evidence,
+        "Evidence: `cargo test -p auth --test rotation --test expiry -- other`",
     );
     let findings = lint_with_verify(&other_filter, &verify);
     assert!(
@@ -753,7 +770,7 @@ fn c9_baseline_command_must_match_ac_001() {
     );
 
     // the structural warning survives regardless of kind
-    let none = mutate(&text, &format!("{BASELINE_FENCE}\n"), "");
+    let none = remove_gherkin_bodies(&mutate(&text, &format!("{BASELINE_FENCE}\n"), ""));
     let findings = lint_text(&none, &readme);
     assert!(
         has(
@@ -835,8 +852,8 @@ fn c9_tolerates_a_narrower_or_broader_filter_on_the_ac_001_suite() {
     // `--test` subset of a multi-target AC-001 (tokens shuffled)
     let multi = text
         .replacen(
-            "| `cargo test -p auth expired_refresh_token` |",
-            "| `cargo test -p auth --test expiry --test rotation` |",
+            "Evidence: `cargo test -p auth expired_refresh_token`",
+            "Evidence: `cargo test -p auth --test expiry --test rotation`",
             1,
         )
         .replacen(
@@ -886,8 +903,8 @@ fn c9_baseline_matching_a_gate_suite_is_not_a_warning() {
             BASELINE_FENCE,
             "```sh\ncargo test --package auth\n```",
         ),
-        "| `cargo test -p auth expired_refresh_token` |",
-        "| `cargo build -p auth --all-targets` |",
+        "Evidence: `cargo test -p auth expired_refresh_token`",
+        "Evidence: `cargo build -p auth --all-targets`",
     );
     let findings = lint_text(&regression, &readme);
     assert!(
@@ -987,7 +1004,9 @@ fn taskfile_round_trip() {
         tf.frontmatter.expected_paths,
         vec!["src/auth/session/*", "tests/auth/*", "Cargo.lock"]
     );
-    assert_eq!(tf.ac_rows.len(), 3);
+    assert!(tf.typed_acceptance.detected);
+    assert_eq!(tf.typed_acceptance.criteria.len(), 4);
+    assert!(tf.ac_rows.is_empty());
     assert_eq!(
         tf.h1.as_deref(),
         Some("TASK-042 — Reject expired refresh tokens before session rotation")

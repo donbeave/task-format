@@ -4,6 +4,7 @@ Research project: which markdown task structure gives coding agents the most pre
 
 ## Hard rules
 
+- Keep only the latest task/acceptance format in the working tree; use Git history for legacy format.
 - Terminal multiplexer for headed agent runs is **herdr** (https://herdr.dev/) only. Never use or propose tmux, zellij, screen, or any other multiplexer.
 - Agents run headed (interactive TUI) inside persistent Docker containers (no `--rm`); the operator re-attaches later to inspect the live session and container state.
 - **One task = one fresh container = one fresh clone.** Every task run starts from a newly fetched `origin/main` of the experiment repo (a disposable GitHub repo whose `main` begins as one allow-empty bootstrap commit); leftover workspace state is never reused.
