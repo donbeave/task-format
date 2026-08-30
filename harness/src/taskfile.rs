@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, bail};
 use regex::Regex;
 
+use crate::acceptance::{self, AcceptanceDocument};
+
 pub const CHECKLIST_START: &str = "<!-- checklist:start -->";
 pub const CHECKLIST_END: &str = "<!-- checklist:end -->";
 
@@ -40,6 +42,8 @@ pub struct TaskFile {
     pub checklist: Vec<String>,
     /// Acceptance rows in document order.
     pub ac_rows: Vec<AcRow>,
+    /// Typed AC blocks, when the acceptance section uses the experimental block form.
+    pub typed_acceptance: AcceptanceDocument,
     /// Body lines of the `Preconditions` section.
     pub preconditions: Vec<String>,
     /// The first `# H1` line, if any.
@@ -80,6 +84,7 @@ impl TaskFile {
                 .cloned()
                 .unwrap_or_default(),
         );
+        let typed_acceptance = acceptance::parse(&text);
         let h1 = text.lines().find_map(|line| {
             let trimmed = line.trim_end();
             trimmed.strip_prefix("# ").map(str::to_string)
@@ -91,6 +96,7 @@ impl TaskFile {
             sections,
             checklist,
             ac_rows,
+            typed_acceptance,
             preconditions,
             h1,
         })

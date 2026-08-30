@@ -10,6 +10,7 @@ use std::process::Command;
 
 use regex::Regex;
 
+use crate::acceptance;
 use crate::ops;
 use crate::progress::ProgressFile;
 use crate::taskfile::{self};
@@ -263,6 +264,40 @@ fn run_inner(opts: GateOpts) -> anyhow::Result<GateOutput> {
         name: "config".to_string(),
         pass: true,
         rc: 0,
+    });
+
+    // Typed acceptance blocks are part of the direct gate contract. Legacy table packages remain
+    // governed by their existing checks and do not enter this path.
+    let typed_readme = task_file.clone();
+    session.check("typed_acceptance", move || {
+        if !typed_readme.is_file() {
+            return Ok(Vec::new());
+        }
+        let text = std::fs::read_to_string(&typed_readme).map_err(|err| {
+            (
+                vec![format!("cannot read {}: {err}", typed_readme.display())],
+                1,
+            )
+        })?;
+        let doc = acceptance::parse(&text);
+        if !doc.detected {
+            return Ok(Vec::new());
+        }
+        let errors = acceptance::validate_shape(&doc);
+        if errors.is_empty() {
+            Ok(vec![format!(
+                "typed acceptance blocks={}",
+                doc.criteria.len()
+            )])
+        } else {
+            Err((
+                errors
+                    .into_iter()
+                    .map(|e| format!("line {}: {}", e.line, e.message))
+                    .collect(),
+                1,
+            ))
+        }
     });
 
     // ---------- scope ----------

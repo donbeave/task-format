@@ -16,6 +16,12 @@ Your goal is to fully implement this task: `/task/README.md`.
 
 The completion gate is `taskfmt verify` (binary baked into the image, read-only). Run it from `/work`; never modify or bypass it. `$TASKFMT_BASE` is the scope base commit.
 
+The task README uses canonical typed acceptance blocks. Each non-gate `AC-*` block has `Type`,
+`Class`, real `Covers` requirement IDs, exact `Evidence` and `Expected` fields, and one exact
+` ```gherkin ` fence containing only constrained Given/When/Then-shaped behavior. A gate block
+has `Type: gate`, exact `Evidence`/`Expected`, and no body. These are task metadata, not Cucumber
+feature files and have no runtime step definitions.
+
 ## Protocol
 
 1. Read `/task/README.md` fully (and `/task/decisions.md` if present), then the files listed under "Read before editing".

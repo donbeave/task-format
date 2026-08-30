@@ -73,13 +73,55 @@ Out of scope:
 
 ## Acceptance criteria
 
-Each row is observable behavior with the exact evidence command; every command exits 0 on pass (negate absence checks: `! grep ...`). The gate (`taskfmt verify`) runs these commands or a superset of their test targets; the harness re-runs them.
+Canonical typed acceptance blocks use taskfmt's Markdown profile. Each non-gate block has
+`Type`, `Class`, `Covers`, `Evidence`, and `Expected` metadata plus one exact `gherkin` fence.
+`Covers` names real `R-*` requirements. `Evidence` is the exact command; `Expected` is its exact
+passing result. A gate has no `Class`, `Covers`, or Gherkin body. These blocks are task metadata,
+not Cucumber feature files and have no runtime step definitions.
 
-| ID | Given / When / Then | Evidence command | Expected |
-| --- | --- | --- | --- |
-| AC-001 | Given <state>, when <action>, then <observable result>. | `<command>` | `<exit 0 / output>` |
-| AC-002 | Given <state>, when <edge or failure>, then <error or preserved invariant>. | `<command>` | `<expected>` |
-| AC-003 | Given <old path>, when <changed path exercised>, then <preserved behavior or old path absent>. | `! <grep command>` | exit 0, no output |
+### AC-001 — <primary success scenario>
+Type: scenario
+Class: delta
+Covers: R-001
+Evidence: `<focused command>`
+Expected: `<exit 0 / output>`
+
+```gherkin
+Given the starting state described by the task
+When the primary action occurs
+Then the required observable outcome is true
+```
+
+### AC-002 — <important edge or failure scenario>
+Type: scenario
+Class: failure
+Covers: R-002
+Evidence: `<focused command>`
+Expected: `<expected result>`
+
+```gherkin
+Given the edge or failure state described by the task
+When the action is applied
+Then the required error or preserved invariant is observable
+```
+
+### AC-003 — <non-regression or removal scenario>
+Type: invariant
+Class: regression
+Covers: R-003
+Evidence: `! <grep command>`
+Expected: exit 0, no output
+
+```gherkin
+Given an existing supported behavior or superseded path
+When the changed path is exercised
+Then the required behavior is preserved or the old path is absent
+```
+
+### AC-004 — Completion gate passes
+Type: gate
+Evidence: `taskfmt verify`
+Expected: exit 0, last line `DONE`
 
 ## Fixed decisions
 
@@ -106,5 +148,5 @@ Static plan (grammar and state handling: see AGENTS.md). Every leaf names what b
     - [ ] **2.3** Superseded path removed (`R-003`, `R-004`, `AC-003`) — evidence: `! <grep command>` exits 0.
 - [ ] **3** Gate passes.
     - [ ] **3.1** Diff reviewed: only `expected_paths` changed, nothing temporary or unrelated — evidence: `git status --porcelain` and `git diff --no-renames --stat $TASKFMT_BASE` show only in-scope files.
-    - [ ] **3.2** `taskfmt verify` exits 0 with last line `DONE` — evidence: final full run (with progress check), full output shown in the transcript.
+    - [ ] **3.2** `taskfmt verify` exits 0 with last line `DONE` (`AC-004`) — evidence: final full run (with progress check), full output shown in the transcript.
 <!-- checklist:end -->

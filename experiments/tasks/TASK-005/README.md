@@ -88,16 +88,113 @@ Out of scope:
 
 ## Acceptance criteria
 
-Observable behaviour plus the exact evidence command. The gate runs these; the harness re-runs them.
+Canonical typed acceptance blocks use taskfmt's Markdown profile. They are task metadata, not
+Cucumber feature files and have no runtime step definitions.
 
-| ID | Given / When / Then | Evidence command | Expected |
-| --- | --- | --- | --- |
-| AC-001 | Given result sets from the seed and synthetic tables, when `Grid` sorts them, then the D-051/D-052 ordering, stability, reset and empty cases hold exactly. | `cargo test -p pgtui --test grid_sort_test` | exit 0, `8 passed` |
-| AC-002 | Given a seeded container, when previews run, then rows match `fake_data` cell-for-cell, NULLs survive, the 500 limit applies on a 600-row table, and an unknown table yields `DbError::Query`. | `cargo test -p pgtui --test pg_preview_test` | exit 0, `4 passed` |
-| AC-003 | Given a connected `App`, when `Enter` and grid keys are applied, then the preview effect, grid build, cursor clamping, sort cycling and error path behave as decided. | `cargo test -p pgtui --test app_preview_test` | exit 0, `8 passed` |
-| AC-004 | Given grid state, when the 100x30 buffer is rendered, then headers, `[cursor column]`, sort arrows, rows, status and help appear as D-060 states. | `cargo test -p pgtui --test screen_preview_test` | exit 0, `5 passed` |
-| AC-005 | Given the whole task, when all earlier trusted tests run, then they still pass. | `cargo test -p pgtui --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test --test app_create_form_test --test runtime_create_test --test screen_create_form_test --test pg_connect_test --test pg_runtime_connect_test --test app_browser_test --test screen_browser_test --test grid_sort_test --test pg_preview_test --test app_preview_test --test screen_preview_test --test skeleton_test -- --skip pgtui_stub_exits_2` | exit 0, 16 `test result: ok.` lines (one per target), no `FAILED` |
-| AC-006 | Given the finished task, when the gate runs, then it reports `DONE`. | `taskfmt verify` | exit 0, last line `DONE` |
+### AC-001 — Grid ordering and null placement are correct
+Type: scenario
+Class: delta
+Covers: R-001, R-002, R-003
+Evidence: `cargo test -p pgtui --test grid_sort_test`
+Expected: exit 0, `8 passed`
+
+```gherkin
+Given result sets from seed and synthetic tables
+When Grid sorts the fetched rows
+Then numeric and byte-wise ordering, stable ties, and D-052 null placement match the contract
+```
+
+### AC-002 — Grid reset and empty cases are safe
+Type: invariant
+Class: invariant
+Covers: R-001, R-002, R-003
+Evidence: `cargo test -p pgtui --test grid_sort_test`
+Expected: exit 0, `8 passed`
+
+```gherkin
+The grid resets sort and cursors for a new preview and handles an empty result without mutation.
+```
+
+### AC-003 — Preview rows preserve data and apply the cap
+Type: scenario
+Class: delta
+Covers: R-004
+Evidence: `cargo test -p pgtui --test pg_preview_test`
+Expected: exit 0, `4 passed`
+
+```gherkin
+Given a seeded database and a previewable table
+When a preview query runs
+Then rows match the fixture cell-for-cell, NULLs survive, and 600 rows are capped at 500
+```
+
+### AC-004 — Unknown preview tables return a query error
+Type: scenario
+Class: failure
+Covers: R-004
+Evidence: `cargo test -p pgtui --test pg_preview_test`
+Expected: exit 0, `4 passed`
+
+```gherkin
+Given a table name that does not exist
+When a preview query runs
+Then the database failure maps to DbError::Query
+```
+
+### AC-005 — Preview results build and focus the grid
+Type: scenario
+Class: delta
+Covers: R-005
+Evidence: `cargo test -p pgtui --test app_preview_test`
+Expected: exit 0, `8 passed`
+
+```gherkin
+Given a connected App and a selected table
+When Enter completes a preview query
+Then the result builds the grid, focuses it, and clamps its row cursor
+```
+
+### AC-006 — Grid keys and failures preserve state
+Type: scenario
+Class: invariant
+Covers: R-005
+Evidence: `cargo test -p pgtui --test app_preview_test`
+Expected: exit 0, `8 passed`
+
+```gherkin
+Given a loaded grid or a previous grid with a query failure
+When grid navigation, sort, Tab, or the error result is applied
+Then sorting cycles as decided and a failed query keeps the previous grid with an error status
+```
+
+### AC-007 — Preview rendering follows D-060
+Type: scenario
+Class: delta
+Covers: R-006
+Evidence: `cargo test -p pgtui --test screen_preview_test`
+Expected: exit 0, `5 passed`
+
+```gherkin
+Given grid state with rows and a selected column
+When the 100x30 preview buffer is rendered
+Then headers, cursor and sort markers, rows, status, and help appear as decided
+```
+
+### AC-008 — Earlier trusted behavior remains green
+Type: invariant
+Class: regression
+Covers: R-001, R-002, R-003, R-004, R-005, R-006
+Evidence: `cargo test -p pgtui --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test --test app_create_form_test --test runtime_create_test --test screen_create_form_test --test pg_connect_test --test pg_runtime_connect_test --test app_browser_test --test screen_browser_test --test grid_sort_test --test pg_preview_test --test app_preview_test --test screen_preview_test --test skeleton_test -- --skip pgtui_stub_exits_2`
+Expected: exit 0, 16 `test result: ok.` lines (one per target), no `FAILED`
+
+```gherkin
+The complete trusted suite for the task remains green.
+```
+
+### AC-009 — Completion gate passes
+Type: gate
+Evidence: `taskfmt verify`
+Expected: exit 0, last line `DONE`
 
 ## Fixed decisions
 
@@ -120,16 +217,20 @@ Static plan. Hierarchical IDs, four spaces per level, max depth 4. Every leaf na
     - [ ] **1.1** Preconditions `P-001..P-005` pass — evidence: each listed command exits 0.
     - [ ] **1.2** Baseline failure recorded in `progress.md` `BASELINE:` — evidence: `cargo test -p pgtui --test grid_sort_test` fails to compile with `pgtui::grid` unresolved.
 - [ ] **2** Grid model is implemented.
-    - [ ] **2.1** D-050 model with order-preserving `from` and `visible_rows` (`R-001`, `R-003`, `AC-001`) — evidence: `cargo test -p pgtui --test grid_sort_test` prints `8 passed`.
-    - [ ] **2.2** D-051/D-052 comparison, stability and null placement, stable sort only (`R-002`, `R-003`, `R-007`) — evidence: `grep -q 'sort_by' crates/pgtui/src/grid.rs && ! grep -q 'sort_unstable' crates/pgtui/src` exits 0.
+    - [ ] **2.1** Grid ordering and null placement are correct (`R-001`, `R-002`, `R-003`, `AC-001`) — evidence: `cargo test -p pgtui --test grid_sort_test` prints `8 passed` for ordering.
+    - [ ] **2.2** D-051/D-052 comparison, stability and null placement, stable sort only (`R-002`, `R-003`, `R-007`, `AC-002`) — evidence: `grep -q 'sort_by' crates/pgtui/src/grid.rs && ! grep -q 'sort_unstable' crates/pgtui/src` exits 0.
 - [ ] **3** Preview path is implemented.
-    - [ ] **3.1** `PgSession::query` with the exact D-025 preview SQL (`R-004`, `AC-002`) — evidence: `cargo test -p pgtui --test pg_preview_test` prints `4 passed`.
-    - [ ] **3.2** `Effect::Query`/`Msg::QueryDone` handling and grid keys (`R-005`, `AC-003`) — evidence: `cargo test -p pgtui --test app_preview_test` prints `8 passed`.
+    - [ ] **3.1** Preview data behavior is complete (`R-004`).
+        - [ ] **3.1.1** Preview rows preserve data and apply the cap (`AC-003`) — evidence: `cargo test -p pgtui --test pg_preview_test` prints `4 passed` for rows and cap.
+        - [ ] **3.1.2** Unknown preview tables return a query error (`AC-004`) — evidence: `cargo test -p pgtui --test pg_preview_test` prints `4 passed` for error mapping.
+    - [ ] **3.2** Preview app behavior is complete (`R-005`).
+        - [ ] **3.2.1** Preview results build and focus the grid (`AC-005`) — evidence: `cargo test -p pgtui --test app_preview_test` prints `8 passed` for result state.
+        - [ ] **3.2.2** Grid keys and failures preserve state (`AC-006`) — evidence: `cargo test -p pgtui --test app_preview_test` prints `8 passed` for keys and errors.
 - [ ] **4** Rendering is implemented.
-    - [ ] **4.1** `ui/grid.rs` and browser main pane per D-060 (`R-006`, `AC-004`) — evidence: `cargo test -p pgtui --test screen_preview_test` prints `5 passed`.
+    - [ ] **4.1** `ui/grid.rs` and browser main pane per D-060 (`R-006`, `AC-007`) — evidence: `cargo test -p pgtui --test screen_preview_test` prints `5 passed`.
     - [ ] **4.2** Lint is clean (`D-004`) — evidence: `cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings` exits 0.
 - [ ] **5** Gate passes.
-    - [ ] **5.1** Regression `AC-005` holds — evidence: the `AC-005` command exits 0 and prints 16 `test result: ok.` lines, one per `--test` target, and no `FAILED`.
+    - [ ] **5.1** Regression `AC-008` holds — evidence: the `AC-008` command exits 0 and prints 16 `test result: ok.` lines, one per `--test` target, and no `FAILED`.
     - [ ] **5.2** Diff reviewed: only `expected_paths` changed, nothing temporary or unrelated (`R-007`) — evidence: `git status --porcelain` and `git diff --no-renames --stat $TASKFMT_BASE` show only in-scope files.
-    - [ ] **5.3** `taskfmt verify` exits 0 with last line `DONE` (`AC-006`) — evidence: final full run (with progress check), full output shown in the transcript.
+    - [ ] **5.3** `taskfmt verify` exits 0 with last line `DONE` (`AC-009`) — evidence: final full run (with progress check), full output shown in the transcript.
 <!-- checklist:end -->

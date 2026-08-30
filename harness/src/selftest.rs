@@ -435,7 +435,9 @@ fn lint_mutants(readme: &str) -> Vec<(&'static str, String)> {
     ));
     out.push((
         "uncited requirement (C3)",
-        readme.replacen("(`R-001`, `R-003`, `AC-001`)", "(`R-001`, `AC-001`)", 1),
+        readme
+            .replacen("Covers: R-001, R-003", "Covers: R-001", 1)
+            .replacen("(`R-001`, `R-003`)", "(`R-001`)", 1),
     ));
     out.push((
         "template placeholder left (C4)",

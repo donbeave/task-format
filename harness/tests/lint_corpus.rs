@@ -20,11 +20,21 @@ fn example() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/example")
 }
 
+fn legacy_example() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/legacy")
+}
+
 fn lint_text(text: &str, readme: &Path) -> Vec<Finding> {
     lint::lint_text(text, readme)
 }
 
 fn example_text() -> (String, PathBuf) {
+    let readme = legacy_example().join("README.md");
+    let text = std::fs::read_to_string(&readme).unwrap();
+    (text, readme)
+}
+
+fn typed_example_text() -> (String, PathBuf) {
     let readme = example().join("README.md");
     let text = std::fs::read_to_string(&readme).unwrap();
     (text, readme)
@@ -40,7 +50,7 @@ fn lint_with_verify(readme: &str, verify_toml: &str) -> Vec<Finding> {
 }
 
 fn example_verify_toml() -> String {
-    std::fs::read_to_string(example().join("verify.toml")).unwrap()
+    std::fs::read_to_string(legacy_example().join("verify.toml")).unwrap()
 }
 
 fn errors(findings: &[Finding]) -> Vec<&Finding> {
@@ -85,6 +95,40 @@ fn example_package_passes_clean() {
             "acceptance",
             "AC-003 evidence command is not run by verify.toml"
         ),
+        "{}",
+        report.render()
+    );
+}
+
+#[test]
+fn typed_example_package_passes_clean() {
+    let (text, readme) = typed_example_text();
+    let task = TaskFile::parse(text.clone(), &readme).unwrap();
+    assert!(task.typed_acceptance.detected);
+    assert_eq!(task.typed_acceptance.criteria.len(), 4);
+    let report = lint::lint_path(&example());
+    assert!(report.passed(), "{}", report.render());
+    assert_eq!(report.errors(), 0, "{}", report.render());
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|finding| finding.rule == "acceptance"
+                && finding.message.contains("AC-003 evidence command")),
+        "typed example should retain the intentional command-gating warning:\n{}",
+        report.render()
+    );
+}
+
+#[test]
+fn legacy_table_package_remains_a_green_control() {
+    let report = lint::lint_path(&legacy_example());
+    assert!(report.passed(), "{}", report.render());
+    assert!(
+        !report
+            .findings
+            .iter()
+            .any(|finding| finding.rule == "acceptance" && finding.message.contains("typed")),
         "{}",
         report.render()
     );

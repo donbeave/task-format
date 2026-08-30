@@ -87,16 +87,89 @@ Out of scope:
 
 ## Acceptance criteria
 
-Observable behaviour plus the exact evidence command. The gate runs these; the harness re-runs them.
+Canonical typed acceptance blocks use taskfmt's Markdown profile. The blocks are task metadata, not
+Cucumber feature files and have no runtime step definitions.
 
-| ID | Given / When / Then | Evidence command | Expected |
-| --- | --- | --- | --- |
-| AC-001 | Given the empty repository, when the workspace exists, then everything builds with all targets. | `cargo build --workspace --all-targets` | exit 0 |
-| AC-002 | Given the workspace manifest, when inspected, then D-001 pins are present at `=`. | `grep -qE '^ratatui = "=0\.30\.2"' Cargo.toml && grep -qE '^crossterm = "=0\.29\.0"' Cargo.toml && grep -qE '^tokio-postgres = "=0\.7\.18"' Cargo.toml && grep -qE '^turso = \{ version = "=0\.7\.2"' Cargo.toml && grep -qE '^tokio = \{ version = "=1\.53\.1"' Cargo.toml && grep -qE '^clap = \{ version = "=4\.6\.6"' Cargo.toml && grep -qE '^thiserror = "=2\.0\.20"' Cargo.toml && grep -qE '^directories = "=6\.0\.0"' Cargo.toml && grep -qE '^resvg = "=0\.48\.1"' Cargo.toml && grep -qE '^tempfile = "=3\.27\.0"' Cargo.toml && grep -qE '^testcontainers = "=0\.27\.3"' Cargo.toml && grep -qE '^testcontainers-modules = \{ version = "=0\.15\.0"' Cargo.toml && grep -qE '^nix = \{ version = "=0\.30\.1"' Cargo.toml` | exit 0 |
-| AC-003 | Given the toolchain files, when inspected, then channel, rustfmt edition, container env and ignore list match D-001. | `grep -q '1.98.0' rust-toolchain.toml && grep -q 'edition = "2024"' rustfmt.toml && grep -q 'TESTCONTAINERS_COMMAND' .cargo/config.toml && grep -q 'target/' .gitignore` | exit 0 |
-| AC-004 | Given the two binaries, when run, then both explain themselves on stderr and exit 2. | `cargo test -p pgtui --test skeleton_test -- stub` | exit 0, `2 passed` |
-| AC-005 | Given the planner-shipped render module, when its tests run, then text, SVG and PNG behave as stated. | `cargo test -p pgtui --test skeleton_test -- trims pipeline` | exit 0, `2 passed` |
-| AC-006 | Given the finished scaffold, when the gate runs, then it reports `DONE`. | `taskfmt verify` | exit 0, last line `DONE` |
+### AC-001 — Workspace builds
+Type: scenario
+Class: delta
+Covers: R-001
+Evidence: `cargo build --workspace --all-targets`
+Expected: exit 0
+
+```gherkin
+Given the repository starts with the trusted scaffold
+When the workspace is built with every target
+Then the workspace compiles successfully
+```
+
+### AC-002 — Dependency pins are exact
+Type: invariant
+Class: policy
+Covers: R-001
+Evidence: `grep -qE '^ratatui = "=0\.30\.2"' Cargo.toml && grep -qE '^crossterm = "=0\.29\.0"' Cargo.toml && grep -qE '^tokio-postgres = "=0\.7\.18"' Cargo.toml && grep -qE '^turso = \{ version = "=0\.7\.2"' Cargo.toml && grep -qE '^tokio = \{ version = "=1\.53\.1"' Cargo.toml && grep -qE '^clap = \{ version = "=4\.6\.6"' Cargo.toml && grep -qE '^thiserror = "=2\.0\.20"' Cargo.toml && grep -qE '^directories = "=6\.0\.0"' Cargo.toml && grep -qE '^resvg = "=0\.48\.1"' Cargo.toml && grep -qE '^tempfile = "=3\.27\.0"' Cargo.toml && grep -qE '^testcontainers = "=0\.27\.3"' Cargo.toml && grep -qE '^testcontainers-modules = \{ version = "=0\.15\.0"' Cargo.toml && grep -qE '^nix = \{ version = "=0\.30\.1"' Cargo.toml`
+Expected: exit 0
+
+```gherkin
+Given the workspace manifest
+When its dependency declarations are inspected
+Then every D-001 dependency uses its exact pinned version
+```
+
+### AC-003 — Toolchain metadata is configured
+Type: invariant
+Class: policy
+Covers: R-003
+Evidence: `grep -q '1.98.0' rust-toolchain.toml && grep -q 'edition = "2024"' rustfmt.toml && grep -q 'TESTCONTAINERS_COMMAND' .cargo/config.toml && grep -q 'target/' .gitignore`
+Expected: exit 0
+
+```gherkin
+The channel, rustfmt edition, container environment, and ignore list match D-001.
+```
+
+### AC-004 — The pgtui stub has its exit contract
+Type: scenario
+Class: delta
+Covers: R-005
+Evidence: `cargo test -p pgtui --test skeleton_test -- stub`
+Expected: exit 0, `2 passed`
+
+```gherkin
+Given the pgtui binary before later application tasks land
+When its stub test runs
+Then pgtui explains that it is not implemented on stderr and returns exit code 2
+```
+
+### AC-005 — The gallery stub has its exit contract
+Type: scenario
+Class: delta
+Covers: R-005
+Evidence: `cargo test -p pgtui --test skeleton_test -- stub`
+Expected: exit 0, `2 passed`
+
+```gherkin
+Given the gallery binary before the gallery task lands
+When its stub test runs
+Then gallery prints usage on stderr and returns exit code 2
+```
+
+### AC-006 — The protected render pipeline works
+Type: scenario
+Class: invariant
+Covers: R-004
+Evidence: `cargo test -p pgtui --test skeleton_test -- trims pipeline`
+Expected: exit 0, `2 passed`
+
+```gherkin
+Given the planner-shipped render module
+When its text, SVG, and PNG pipeline tests run
+Then all three representations behave as specified
+```
+
+### AC-007 — Completion gate passes
+Type: gate
+Evidence: `taskfmt verify`
+Expected: exit 0, last line `DONE`
 
 ## Fixed decisions
 
@@ -119,17 +192,17 @@ Static plan. Hierarchical IDs `N`, `N.N`, `N.N.N`, `N.N.N.N`, four spaces per le
     - [ ] **1.1** Preconditions `P-001..P-005` pass — evidence: each listed command exits 0.
     - [ ] **1.2** Baseline failure recorded in `progress.md` `BASELINE:` — evidence: `cargo test -p pgtui --test skeleton_test` fails with `could not find Cargo.toml`.
 - [ ] **2** Required structure exists.
-    - [ ] **2.1** Workspace builds with all targets (`R-001`, `AC-001`, `D-001`) — evidence: `cargo build --workspace --all-targets` exits 0.
+    - [ ] **2.1** Workspace builds with all targets (`R-001`, `D-001`) — evidence: `cargo build --workspace --all-targets --locked` exits 0.
         - [ ] **2.1.1** Workspace manifest with exact pins (`R-001`, `AC-002`) — evidence: the `AC-002` pin check exits 0.
         - [ ] **2.1.2** Member manifest declares lib plus two bins with `workspace = true` dependencies (`R-002`) — evidence: `grep -q 'name = "gallery"' crates/pgtui/Cargo.toml && grep -q '\[\[bin\]\]' crates/pgtui/Cargo.toml` exits 0.
         - [ ] **2.1.3** Toolchain, rustfmt, ignore list and container env per `R-003` (`AC-003`) — evidence: the `AC-003` toolchain check exits 0.
-        - [ ] **2.1.4** `Cargo.lock` committed and in sync (`R-001`) — evidence: `test -f Cargo.lock && cargo metadata --format-version 1 >/dev/null` exits 0.
+        - [ ] **2.1.4** Workspace build succeeds (`AC-001`) — evidence: `cargo build --workspace --all-targets` exits 0.
     - [ ] **2.2** `lib.rs` exports only the protected render module (`R-004`, `D-002`) — evidence: `test "$(tr -d '[:space:]' < crates/pgtui/src/lib.rs)" = 'pubmodrender;'` exits 0.
-    - [ ] **2.3** Both binaries are exit-2 stubs (`R-005`, `AC-004`, `D-040`) — evidence: `cargo test -p pgtui --test skeleton_test -- stub` prints `2 passed`.
+    - [ ] **2.3** The pgtui stub is exit 2 (`R-005`, `AC-004`, `D-040`) — evidence: `cargo test -p pgtui --test skeleton_test -- stub` prints `2 passed` for pgtui.
 - [ ] **3** Trusted material is untouched and proven.
-    - [ ] **3.1** `render.rs` and `fonts/` unmodified (`R-007`, `D-003`) — evidence: `git diff --stat -- crates/pgtui/src/render.rs crates/pgtui/src/fonts` prints nothing.
-    - [ ] **3.2** Render pipeline behaves as stated (`AC-005`) — evidence: `cargo test -p pgtui --test skeleton_test -- trims pipeline` prints `2 passed`.
+    - [ ] **3.1** The gallery stub is exit 2 (`R-005`, `AC-005`, `D-040`) — evidence: `cargo test -p pgtui --test skeleton_test -- stub` prints `2 passed` for gallery.
+    - [ ] **3.2** Render pipeline behaves as stated (`AC-006`) — evidence: `cargo test -p pgtui --test skeleton_test -- trims pipeline` prints `2 passed`.
 - [ ] **4** Gate passes.
     - [ ] **4.1** Diff reviewed: only `expected_paths` changed, nothing temporary or unrelated (`R-006`, `R-007`) — evidence: `git status --porcelain` and `git diff --no-renames --stat $TASKFMT_BASE` show only in-scope files.
-    - [ ] **4.2** `taskfmt verify` exits 0 with last line `DONE` (`AC-006`) — evidence: final full run (with progress check), full output shown in the transcript.
+    - [ ] **4.2** `taskfmt verify` exits 0 with last line `DONE` (`AC-007`) — evidence: final full run (with progress check), full output shown in the transcript.
 <!-- checklist:end -->

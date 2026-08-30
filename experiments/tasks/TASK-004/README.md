@@ -86,16 +86,89 @@ Out of scope:
 
 ## Acceptance criteria
 
-Observable behaviour plus the exact evidence command. The gate runs these; the harness re-runs them.
+Canonical typed acceptance blocks use taskfmt's Markdown profile. They are task metadata, not
+Cucumber feature files and have no runtime step definitions.
 
-| ID | Given / When / Then | Evidence command | Expected |
-| --- | --- | --- | --- |
-| AC-001 | Given a seeded `postgres:16-alpine` container, when `PgSession` connects and lists tables, then the four seed tables come back in schema order and refused ports/bad passwords map to the decided errors. | `cargo test -p pgtui --test pg_connect_test` | exit 0, `4 passed` |
-| AC-002 | Given a live session, when `Effect::Connect` is executed, then it replies `Msg::Connected(Ok(tables))` with the same four tables. | `cargo test -p pgtui --test pg_runtime_connect_test` | exit 0, `1 passed` |
-| AC-003 | Given the list screen, when connection effects and browser keys are applied, then `Connected(Ok)` enters the browser, `Connected(Err)` stays on the list, and sidebar cursors clamp. | `cargo test -p pgtui --test app_browser_test` | exit 0, `6 passed` |
-| AC-004 | Given a connected `App`, when the 100x30 buffer is rendered, then the sidebar lists `schema.name` rows with the `> ` marker and focused-pane `*` as D-060 states. | `cargo test -p pgtui --test screen_browser_test` | exit 0, `2 passed` |
-| AC-005 | Given the whole task, when all earlier trusted tests run, then they still pass. | `cargo test -p pgtui --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test --test app_create_form_test --test runtime_create_test --test screen_create_form_test --test pg_connect_test --test pg_runtime_connect_test --test app_browser_test --test screen_browser_test --test skeleton_test -- --skip pgtui_stub_exits_2` | exit 0, 12 `test result: ok.` lines (one per target), no `FAILED` |
-| AC-006 | Given the finished task, when the gate runs, then it reports `DONE`. | `taskfmt verify` | exit 0, last line `DONE` |
+### AC-001 — Seed tables are listed in order
+Type: scenario
+Class: delta
+Covers: R-001, R-002, R-003, R-004
+Evidence: `cargo test -p pgtui --test pg_connect_test`
+Expected: exit 0, `4 passed`
+
+```gherkin
+Given a seeded postgres:16-alpine container
+When PgSession connects and lists tables
+Then the four seed tables are returned in schema order through the decided query path
+```
+
+### AC-002 — Connection failures map to decided errors
+Type: scenario
+Class: failure
+Covers: R-003
+Evidence: `cargo test -p pgtui --test pg_connect_test`
+Expected: exit 0, `4 passed`
+
+```gherkin
+Given a refused port or an invalid database password
+When PgSession attempts to connect
+Then the corresponding decided error is returned without terminating the list flow
+```
+
+### AC-003 — Runtime connection returns tables
+Type: scenario
+Class: delta
+Covers: R-003
+Evidence: `cargo test -p pgtui --test pg_runtime_connect_test`
+Expected: exit 0, `1 passed`
+
+```gherkin
+Given a live database session
+When Effect::Connect is executed
+Then runtime replies with Msg::Connected(Ok(tables)) containing the listed tables
+```
+
+### AC-004 — Browser transitions and navigation behave
+Type: scenario
+Class: delta
+Covers: R-005
+Evidence: `cargo test -p pgtui --test app_browser_test`
+Expected: exit 0, `6 passed`
+
+```gherkin
+Given the connection list receives a successful or failed connection result
+When browser keys and connection effects are applied
+Then success enters the browser, failure stays on the list, and sidebar cursors clamp
+```
+
+### AC-005 — Browser rendering follows D-060
+Type: scenario
+Class: delta
+Covers: R-005
+Evidence: `cargo test -p pgtui --test screen_browser_test`
+Expected: exit 0, `2 passed`
+
+```gherkin
+Given a connected App with table rows
+When the 100x30 browser buffer is rendered
+Then schema.name rows, the selected marker, and the focused-pane marker appear as decided
+```
+
+### AC-006 — Earlier trusted behavior remains green
+Type: invariant
+Class: regression
+Covers: R-001, R-002, R-003, R-004, R-005
+Evidence: `cargo test -p pgtui --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test --test app_create_form_test --test runtime_create_test --test screen_create_form_test --test pg_connect_test --test pg_runtime_connect_test --test app_browser_test --test screen_browser_test --test skeleton_test -- --skip pgtui_stub_exits_2`
+Expected: exit 0, 12 `test result: ok.` lines (one per target), no `FAILED`
+
+```gherkin
+The complete trusted suite for the task remains green.
+```
+
+### AC-007 — Completion gate passes
+Type: gate
+Evidence: `taskfmt verify`
+Expected: exit 0, last line `DONE`
 
 ## Fixed decisions
 
@@ -119,16 +192,18 @@ Static plan. Hierarchical IDs, four spaces per level, max depth 4. Every leaf na
     - [ ] **1.2** Baseline failure recorded in `progress.md` `BASELINE:` — evidence: `cargo test -p pgtui --test pg_connect_test` fails to compile with `PgSession` unresolved.
 - [ ] **2** Database layer is implemented.
     - [ ] **2.1** D-026 types and `quote_ident` in `db/mod.rs` (`R-001`) — evidence: `grep -q 'pub const PREVIEW_LIMIT: usize = 500' crates/pgtui/src/db/mod.rs && grep -q 'pub fn quote_ident' crates/pgtui/src/db/mod.rs` exits 0.
-    - [ ] **2.2** `PgSession::connect`/`list_tables` per D-023..D-025 (`R-002`, `R-003`, `R-004`, `AC-001`) — evidence: `cargo test -p pgtui --test pg_connect_test` prints `4 passed`.
+    - [ ] **2.2** Connection setup is complete.
+        - [ ] **2.2.1** Seed tables are listed in order (`R-002`, `R-004`, `AC-001`) — evidence: `cargo test -p pgtui --test pg_connect_test` prints `4 passed` for table order.
+        - [ ] **2.2.2** Connection failures map to decided errors (`R-003`, `AC-002`) — evidence: `cargo test -p pgtui --test pg_connect_test` prints `4 passed` for failure mapping.
     - [ ] **2.3** Only `simple_query` is used under `db/` (`R-002`) — evidence: `! grep -rnE 'query_one|query_raw|\.prepare\(' crates/pgtui/src/db` exits 0.
 - [ ] **3** Connect flow is wired.
-    - [ ] **3.1** `Effect::Connect` executes and replies `Msg::Connected` (`AC-002`) — evidence: `cargo test -p pgtui --test pg_runtime_connect_test` prints `1 passed`.
-    - [ ] **3.2** Browser state transitions and sidebar cursors per D-033/D-010 (`AC-003`) — evidence: `cargo test -p pgtui --test app_browser_test` prints `6 passed`.
+    - [ ] **3.1** `Effect::Connect` executes and replies `Msg::Connected` (`AC-003`) — evidence: `cargo test -p pgtui --test pg_runtime_connect_test` prints `1 passed`.
+    - [ ] **3.2** Browser state transitions and sidebar cursors per D-033/D-010 (`AC-004`) — evidence: `cargo test -p pgtui --test app_browser_test` prints `6 passed`.
 - [ ] **4** Rendering is implemented.
-    - [ ] **4.1** `ui/browser.rs` sidebar per D-060 (`R-005`, `AC-004`) — evidence: `cargo test -p pgtui --test screen_browser_test` prints `2 passed`.
+    - [ ] **4.1** `ui/browser.rs` sidebar per D-060 (`R-005`, `AC-005`) — evidence: `cargo test -p pgtui --test screen_browser_test` prints `2 passed`.
     - [ ] **4.2** Lint is clean (`D-004`) — evidence: `cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings` exits 0.
 - [ ] **5** Gate passes.
-    - [ ] **5.1** Regression `AC-005` holds — evidence: the `AC-005` command exits 0 and prints 12 `test result: ok.` lines, one per `--test` target, and no `FAILED`.
+    - [ ] **5.1** Regression `AC-006` holds — evidence: the `AC-006` command exits 0 and prints 12 `test result: ok.` lines, one per `--test` target, and no `FAILED`.
     - [ ] **5.2** Diff reviewed: only `expected_paths` changed, nothing temporary or unrelated (`R-006`, `R-007`) — evidence: `git status --porcelain` and `git diff --no-renames --stat $TASKFMT_BASE` show only in-scope files.
-    - [ ] **5.3** `taskfmt verify` exits 0 with last line `DONE` (`AC-006`) — evidence: final full run (with progress check), full output shown in the transcript.
+    - [ ] **5.3** `taskfmt verify` exits 0 with last line `DONE` (`AC-007`) — evidence: final full run (with progress check), full output shown in the transcript.
 <!-- checklist:end -->

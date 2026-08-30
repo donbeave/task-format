@@ -86,15 +86,102 @@ Out of scope:
 
 ## Acceptance criteria
 
-Observable behaviour plus the exact evidence command. The gate runs these; the harness re-runs them.
+Canonical typed acceptance blocks use taskfmt's Markdown profile. They are task metadata, not
+Cucumber feature files and have no runtime step definitions.
 
-| ID | Given / When / Then | Evidence command | Expected |
-| --- | --- | --- | --- |
-| AC-001 | Given a connected `App`, when `x` and editing keys are applied, then the screen opens, input edits correctly, empty `Enter` is inert, `Enter` emits the custom query effect, results build the grid with the decided status, and `Esc` retains the input. | `cargo test -p pgtui --test app_custom_sql_test` | exit 0, `9 passed` |
-| AC-002 | Given a seeded container, when custom statements run, then `SELECT` returns rows, `CommandComplete` reports affected counts, multi-statement input is rejected, rows are capped, and syntax errors map to `DbError::Query`. | `cargo test -p pgtui --test pg_custom_sql_test` | exit 0, `5 passed` |
-| AC-003 | Given custom-SQL state, when the 100x30 buffer is rendered, then the input block, hint, result title, echoed SQL and marker-free grid appear as D-060 states. | `cargo test -p pgtui --test screen_custom_sql_test` | exit 0, `3 passed` |
-| AC-004 | Given the whole task, when all earlier trusted tests run, then they still pass. | `cargo test -p pgtui --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test --test app_create_form_test --test runtime_create_test --test screen_create_form_test --test pg_connect_test --test pg_runtime_connect_test --test app_browser_test --test screen_browser_test --test grid_sort_test --test pg_preview_test --test app_preview_test --test screen_preview_test --test app_custom_sql_test --test pg_custom_sql_test --test screen_custom_sql_test --test skeleton_test -- --skip pgtui_stub_exits_2` | exit 0, 19 `test result: ok.` lines (one per target), no `FAILED` |
-| AC-005 | Given the finished task, when the gate runs, then it reports `DONE`. | `taskfmt verify` | exit 0, last line `DONE` |
+### AC-001 — Custom SQL opens and edits
+Type: scenario
+Class: delta
+Covers: R-001
+Evidence: `cargo test -p pgtui --test app_custom_sql_test`
+Expected: exit 0, `9 passed`
+
+```gherkin
+Given a connected App on the browser screen
+When x opens CustomSql and editing keys are applied
+Then printable input, Backspace, and the empty-Enter no-op behave as decided
+```
+
+### AC-002 — Custom SQL runs and builds results
+Type: scenario
+Class: delta
+Covers: R-001, R-003, R-004
+Evidence: `cargo test -p pgtui --test app_custom_sql_test`
+Expected: exit 0, `9 passed`
+
+```gherkin
+Given a non-empty custom SQL input
+When Enter runs the query
+Then the custom query effect is emitted and returned rows build the decided grid and status
+```
+
+### AC-003 — Escape retains custom SQL input
+Type: scenario
+Class: invariant
+Covers: R-001, R-004
+Evidence: `cargo test -p pgtui --test app_custom_sql_test`
+Expected: exit 0, `9 passed`
+
+```gherkin
+Given CustomSql contains input and a prior result
+When Esc returns to the browser
+Then the session, grid, and SQL input are retained
+```
+
+### AC-004 — Single-statement results follow D-025
+Type: scenario
+Class: delta
+Covers: R-002, R-003
+Evidence: `cargo test -p pgtui --test pg_custom_sql_test`
+Expected: exit 0, `5 passed`
+
+```gherkin
+Given a seeded database and a custom statement
+When the statement executes
+Then SELECT rows, affected counts, trimming, and the 500-row cap follow D-025
+```
+
+### AC-005 — Invalid custom SQL is rejected safely
+Type: scenario
+Class: failure
+Covers: R-002
+Evidence: `cargo test -p pgtui --test pg_custom_sql_test`
+Expected: exit 0, `5 passed`
+
+```gherkin
+Given multi-statement or syntactically invalid custom SQL
+When the database receives it
+Then multi-statement input is rejected and syntax errors map to DbError::Query
+```
+
+### AC-006 — Custom SQL rendering follows D-060
+Type: scenario
+Class: delta
+Covers: R-005
+Evidence: `cargo test -p pgtui --test screen_custom_sql_test`
+Expected: exit 0, `3 passed`
+
+```gherkin
+Given empty and populated CustomSql states
+When the 100x30 buffer is rendered
+Then the SQL input, result title, hint, echoed SQL, and marker-free grid match D-060
+```
+
+### AC-007 — Earlier trusted behavior remains green
+Type: invariant
+Class: regression
+Covers: R-001, R-002, R-003, R-004, R-005
+Evidence: `cargo test -p pgtui --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test --test app_create_form_test --test runtime_create_test --test screen_create_form_test --test pg_connect_test --test pg_runtime_connect_test --test app_browser_test --test screen_browser_test --test grid_sort_test --test pg_preview_test --test app_preview_test --test screen_preview_test --test app_custom_sql_test --test pg_custom_sql_test --test screen_custom_sql_test --test skeleton_test -- --skip pgtui_stub_exits_2`
+Expected: exit 0, 19 `test result: ok.` lines (one per target), no `FAILED`
+
+```gherkin
+The complete trusted suite for the task remains green.
+```
+
+### AC-008 — Completion gate passes
+Type: gate
+Evidence: `taskfmt verify`
+Expected: exit 0, last line `DONE`
 
 ## Fixed decisions
 
@@ -117,16 +204,20 @@ Static plan. Hierarchical IDs, four spaces per level, max depth 4. Every leaf na
     - [ ] **1.1** Preconditions `P-001..P-005` pass — evidence: each listed command exits 0.
     - [ ] **1.2** Baseline failure recorded in `progress.md` `BASELINE:` — evidence: `cargo test -p pgtui --test pg_custom_sql_test` fails to compile or reports `CustomSql` unreachable.
 - [ ] **2** Screen state is implemented.
-    - [ ] **2.1** `x` opens CustomSql and editing keys behave per D-034 (`R-001`, `AC-001`) — evidence: `cargo test -p pgtui --test app_custom_sql_test` prints `9 passed`.
-    - [ ] **2.2** `sql_grid` uses the frozen D-050 model with no sort and no column cursor (`R-004`, `R-007`) — evidence: `grep -q 'sql_grid' crates/pgtui/src/app.rs && ! grep -q 'sort_unstable' crates/pgtui/src` exits 0.
+    - [ ] **2.1** Custom SQL opens and edits (`R-001`, `AC-001`) — evidence: `cargo test -p pgtui --test app_custom_sql_test` prints `9 passed` for input editing.
+    - [ ] **2.2** Custom SQL app behavior is complete (`R-001`, `R-003`, `R-004`).
+        - [ ] **2.2.1** Custom SQL runs and builds results (`AC-002`) — evidence: `cargo test -p pgtui --test app_custom_sql_test` prints `9 passed` for run and result behavior.
+        - [ ] **2.2.2** Escape retains custom SQL input (`AC-003`) — evidence: `cargo test -p pgtui --test app_custom_sql_test` prints `9 passed` for retention.
 - [ ] **3** Query semantics are implemented.
-    - [ ] **3.1** D-025 custom-SQL handling in `db/postgres.rs` (`R-002`, `R-003`, `AC-002`) — evidence: `cargo test -p pgtui --test pg_custom_sql_test` prints `5 passed`.
+    - [ ] **3.1** Query semantics are complete (`R-002`, `R-003`).
+        - [ ] **3.1.1** Single-statement results follow D-025 (`AC-004`) — evidence: `cargo test -p pgtui --test pg_custom_sql_test` prints `5 passed` for results and cap.
+        - [ ] **3.1.2** Invalid custom SQL is rejected safely (`AC-005`) — evidence: `cargo test -p pgtui --test pg_custom_sql_test` prints `5 passed` for rejection and errors.
     - [ ] **3.2** Cap and affected-row status strings match D-025 exactly (`R-003`) — evidence: `grep -q 'showing first 500 rows' crates/pgtui/src && grep -q 'rows affected' crates/pgtui/src` exits 0.
 - [ ] **4** Rendering is implemented.
-    - [ ] **4.1** `ui/custom_sql.rs` per D-060 (`R-005`, `AC-003`) — evidence: `cargo test -p pgtui --test screen_custom_sql_test` prints `3 passed`.
+    - [ ] **4.1** `ui/custom_sql.rs` per D-060 (`R-005`, `AC-006`) — evidence: `cargo test -p pgtui --test screen_custom_sql_test` prints `3 passed`.
     - [ ] **4.2** Lint is clean (`D-004`) — evidence: `cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings` exits 0.
 - [ ] **5** Gate passes.
-    - [ ] **5.1** Regression `AC-004` holds — evidence: the `AC-004` command exits 0 and prints 19 `test result: ok.` lines, one per `--test` target, and no `FAILED`.
+    - [ ] **5.1** Regression `AC-007` holds — evidence: the `AC-007` command exits 0 and prints 19 `test result: ok.` lines, one per `--test` target, and no `FAILED`.
     - [ ] **5.2** Diff reviewed: only `expected_paths` changed, nothing temporary or unrelated (`R-006`, `R-007`) — evidence: `git status --porcelain` and `git diff --no-renames --stat $TASKFMT_BASE` show only in-scope files.
-    - [ ] **5.3** `taskfmt verify` exits 0 with last line `DONE` (`AC-005`) — evidence: final full run (with progress check), full output shown in the transcript.
+    - [ ] **5.3** `taskfmt verify` exits 0 with last line `DONE` (`AC-008`) — evidence: final full run (with progress check), full output shown in the transcript.
 <!-- checklist:end -->

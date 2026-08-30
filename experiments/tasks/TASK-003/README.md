@@ -82,15 +82,102 @@ Out of scope:
 
 ## Acceptance criteria
 
-Observable behaviour plus the exact evidence command. The gate runs these; the harness re-runs them.
+Canonical typed acceptance blocks use taskfmt's Markdown profile. They are task metadata, not
+Cucumber feature files and have no runtime step definitions.
 
-| ID | Given / When / Then | Evidence command | Expected |
-| --- | --- | --- | --- |
-| AC-001 | Given the list screen, when `n` and then form keys are sent, then fields cycle with wrap, typing appends, backspace pops, port filters non-digits, and `Esc` discards. | `cargo test -p pgtui --test app_create_form_test` | exit 0, `9 passed` |
-| AC-002 | Given a valid form, when `Enter` is pressed and the runtime runs, then a row is inserted and `Msg::Saved(Ok)` reloads the list with the new row selected; a duplicate name reports the decided error. | `cargo test -p pgtui --test runtime_create_test` | exit 0, `3 passed` |
-| AC-003 | Given form state, when the 100x30 buffer is rendered, then labels, focus marker, masked password and help line appear as D-060 states. | `cargo test -p pgtui --test screen_create_form_test` | exit 0, `3 passed` |
-| AC-004 | Given the whole task, when the earlier tasks' trusted tests run, then they still pass. | `cargo test -p pgtui --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test --test app_create_form_test --test runtime_create_test --test screen_create_form_test --test skeleton_test -- --skip pgtui_stub_exits_2` | exit 0, 8 `test result: ok.` lines (one per target), no `FAILED` |
-| AC-005 | Given the finished task, when the gate runs, then it reports `DONE`. | `taskfmt verify` | exit 0, last line `DONE` |
+### AC-001 — Form navigation wraps
+Type: scenario
+Class: delta
+Covers: R-001, R-002
+Evidence: `cargo test -p pgtui --test app_create_form_test`
+Expected: exit 0, `9 passed`
+
+```gherkin
+Given the connection list screen
+When n opens the new-connection form and Tab or BackTab is pressed
+Then the six fields cycle with wraparound and the blank form has the D-010 field order
+```
+
+### AC-002 — Form editing applies field rules
+Type: scenario
+Class: delta
+Covers: R-002
+Evidence: `cargo test -p pgtui --test app_create_form_test`
+Expected: exit 0, `9 passed`
+
+```gherkin
+Given a focused form field
+When printable characters, Backspace, or a non-digit port character are entered
+Then text appends, Backspace removes the last character, and the port keeps digits only
+```
+
+### AC-003 — Escape discards the form
+Type: scenario
+Class: invariant
+Covers: R-002
+Evidence: `cargo test -p pgtui --test app_create_form_test`
+Expected: exit 0, `9 passed`
+
+```gherkin
+Given a form containing unsaved values
+When Esc is pressed
+Then the values are discarded and the connection list returns
+```
+
+### AC-004 — A valid form is saved and selected
+Type: scenario
+Class: delta
+Covers: R-003, R-004
+Evidence: `cargo test -p pgtui --test runtime_create_test`
+Expected: exit 0, `3 passed`
+
+```gherkin
+Given a valid new-connection form
+When Enter saves it through the runtime
+Then the row is inserted, the list reloads, and the new row is selected
+```
+
+### AC-005 — Duplicate names stay on the form
+Type: scenario
+Class: failure
+Covers: R-003
+Evidence: `cargo test -p pgtui --test runtime_create_test`
+Expected: exit 0, `3 passed`
+
+```gherkin
+Given a connection name already exists
+When a form with that name is saved
+Then the decided duplicate-name error is shown and the form remains open
+```
+
+### AC-006 — Form rendering masks passwords
+Type: scenario
+Class: delta
+Covers: R-005
+Evidence: `cargo test -p pgtui --test screen_create_form_test`
+Expected: exit 0, `3 passed`
+
+```gherkin
+Given a populated form with one focused field
+When the 100x30 form buffer is rendered
+Then labels, focus, masked password characters, and the D-060 help line appear
+```
+
+### AC-007 — Earlier trusted behavior remains green
+Type: invariant
+Class: regression
+Covers: R-001, R-002, R-003, R-004, R-005
+Evidence: `cargo test -p pgtui --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test --test app_create_form_test --test runtime_create_test --test screen_create_form_test --test skeleton_test -- --skip pgtui_stub_exits_2`
+Expected: exit 0, 8 `test result: ok.` lines (one per target), no `FAILED`
+
+```gherkin
+The complete trusted suite for the task remains green.
+```
+
+### AC-008 — Completion gate passes
+Type: gate
+Evidence: `taskfmt verify`
+Expected: exit 0, last line `DONE`
 
 ## Fixed decisions
 
@@ -114,15 +201,18 @@ Static plan. Hierarchical IDs, four spaces per level, max depth 4. Every leaf na
     - [ ] **1.2** Baseline failure recorded in `progress.md` `BASELINE:` — evidence: `cargo test -p pgtui --test app_create_form_test` fails with `CreateForm`/`Field` unresolved.
 - [ ] **2** Form state is implemented.
     - [ ] **2.1** `CreateForm`/`Field` per D-010 with `blank()` and `validate()` (`R-001`) — evidence: `grep -q 'pub enum Field' crates/pgtui/src/app.rs && grep -q 'pub fn validate' crates/pgtui/src/app.rs` exits 0.
-    - [ ] **2.2** D-032 key handling: cycling with wrap, typing, backspace, port filter, `Esc` (`R-002`, `AC-001`) — evidence: `cargo test -p pgtui --test app_create_form_test` prints `9 passed`.
-- [ ] **3** Save flow is implemented.
-    - [ ] **3.1** `Effect::SaveConnection` -> store insert -> `Msg::Saved` in `runtime.rs` (`R-003`, `AC-002`) — evidence: `cargo test -p pgtui --test runtime_create_test` prints `3 passed`.
-    - [ ] **3.2** `Saved(Ok)` reloads the list with the new row selected; duplicate stays on the form (`R-003`, `R-004`) — evidence: `grep -q 'LoadConnections' crates/pgtui/src/app.rs && grep -q 'already exists' crates/pgtui/src/app.rs` exits 0.
-- [ ] **4** Rendering is implemented.
-    - [ ] **4.1** `ui/create_form.rs` per D-060 with masked password (`R-005`, `AC-003`) — evidence: `cargo test -p pgtui --test screen_create_form_test` prints `3 passed`.
-    - [ ] **4.2** Lint is clean (`D-004`) — evidence: `cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings` exits 0.
-- [ ] **5** Gate passes.
-    - [ ] **5.1** Regression `AC-004` holds — evidence: the `AC-004` command exits 0 and prints 8 `test result: ok.` lines, one per `--test` target, and no `FAILED`.
-    - [ ] **5.2** Diff reviewed: only `expected_paths` changed, nothing temporary or unrelated (`R-006`, `R-007`) — evidence: `git status --porcelain` and `git diff --no-renames --stat $TASKFMT_BASE` show only in-scope files.
-    - [ ] **5.3** `taskfmt verify` exits 0 with last line `DONE` (`AC-005`) — evidence: final full run (with progress check), full output shown in the transcript.
+    - [ ] **2.2** Form navigation wraps (`R-002`, `AC-001`) — evidence: `cargo test -p pgtui --test app_create_form_test` prints `9 passed` for navigation.
+- [ ] **3** Form editing and cancellation are implemented.
+    - [ ] **3.1** Form editing applies field rules (`R-002`, `AC-002`) — evidence: `cargo test -p pgtui --test app_create_form_test` prints `9 passed` for editing.
+    - [ ] **3.2** Escape discards the form (`R-002`, `AC-003`) — evidence: `cargo test -p pgtui --test app_create_form_test` prints `9 passed` for cancellation.
+- [ ] **4** Save flow is implemented.
+    - [ ] **4.1** A valid form saves and selects the new row (`R-003`, `R-004`, `AC-004`) — evidence: `cargo test -p pgtui --test runtime_create_test` prints `3 passed` for the success path.
+    - [ ] **4.2** Duplicate names keep the form open (`R-003`, `AC-005`) — evidence: `cargo test -p pgtui --test runtime_create_test` prints `3 passed` for duplicate handling.
+- [ ] **5** Rendering and verification are complete.
+    - [ ] **5.1** Form rendering and lint are complete.
+        - [ ] **5.1.1** Form rendering masks passwords (`R-005`, `AC-006`) — evidence: `cargo test -p pgtui --test screen_create_form_test` prints `3 passed`.
+        - [ ] **5.1.2** Lint is clean (`D-004`) — evidence: `cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings` exits 0.
+    - [ ] **5.2** Regression `AC-007` holds — evidence: the `AC-007` command exits 0 and prints 8 `test result: ok.` lines, one per `--test` target, and no `FAILED`.
+    - [ ] **5.3** Diff reviewed: only `expected_paths` changed, nothing temporary or unrelated (`R-006`, `R-007`) — evidence: `git status --porcelain` and `git diff --no-renames --stat $TASKFMT_BASE` show only in-scope files.
+    - [ ] **5.4** `taskfmt verify` exits 0 with last line `DONE` (`AC-008`) — evidence: final full run (with progress check), full output shown in the transcript.
 <!-- checklist:end -->

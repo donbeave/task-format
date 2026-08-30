@@ -6,7 +6,7 @@
 
 Same task. Same machine gate. Fresh container, fresh clone, fresh agent. Only the way the task is written changes. That is the whole project — everything else exists to make the answer trustworthy.
 
-The artifact under study is the **task package** the agent receives: task content in `README.md`, the agent protocol in `AGENTS.md`, and declarative gate config in `verify.toml`.
+The artifact under study is the **task package** the agent receives: task content in `README.md` (including typed acceptance blocks), the agent protocol in `AGENTS.md`, and declarative gate config in `verify.toml`.
 
 ## Why it matters
 

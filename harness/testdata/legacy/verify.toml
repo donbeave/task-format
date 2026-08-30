@@ -1,0 +1,36 @@
+# TASK-042 verify.toml — declarative gate inputs (`taskfmt verify`). Data only, no shell.
+# Paths are relative to the repository root (the gate's working directory).
+# Top-level keys stay above the tables: in TOML every later key would nest into the table.
+
+schema = "verify/v1"
+required_paths = ["tests/auth/expired_refresh_token.rs"]
+allowed_globs = ["src/auth/session/*", "tests/auth/*", "Cargo.lock"]
+
+[focused]
+commands = [
+  "cargo test -p auth expired_refresh_token",
+  "cargo test -p auth expired_error_code",
+  "cargo test -p auth valid_refresh_rotation",
+]
+
+[regression]
+commands = [
+  "cargo test -p auth",
+]
+
+[lint]
+commands = [
+  "cargo fmt --check",
+  "cargo clippy -p auth -- -D warnings",
+]
+
+[[forbidden_patterns]]
+regex = 'legacy_expiry_check'
+paths = ["src", "tests"]
+
+[[forbidden_patterns]]
+regex = '#\[ignore\]'
+paths = ["tests"]
+
+[[forbidden_patterns]]
+regex = 'TODO\(TASK-042\)'

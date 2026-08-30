@@ -55,6 +55,7 @@ use std::path::{Path, PathBuf};
 
 use regex::Regex;
 
+use crate::acceptance::{self, AcceptanceType};
 use crate::taskfile::{self, CheckItem, TaskFile};
 use crate::verifycfg::{self, FILE_NAME};
 
@@ -346,8 +347,69 @@ pub fn lint_text(text: &str, readme: &Path) -> Vec<Finding> {
         );
     }
 
-    // ---------- acceptance table ----------
-    if tf.ac_rows.is_empty() {
+    // ---------- acceptance: legacy table or typed blocks ----------
+    let mut ac_cmds: Vec<(String, String)> = Vec::new();
+    if tf.typed_acceptance.detected {
+        for error in acceptance::validate_shape(&tf.typed_acceptance) {
+            finding(
+                &mut findings,
+                "acceptance",
+                format!("line {}: {}", error.line, error.message),
+            );
+        }
+        let mut seen = BTreeSet::new();
+        let mut gate_count = 0;
+        for ac in &tf.typed_acceptance.criteria {
+            if !seen.insert(&ac.id) {
+                finding(
+                    &mut findings,
+                    "ids",
+                    format!("duplicate AC block {}", ac.id),
+                );
+            }
+            if matches!(ac.kind, AcceptanceType::Gate) {
+                gate_count += 1;
+                if ac.evidence != fm.verify && ac.evidence != DEFAULT_GATE {
+                    finding(
+                        &mut findings,
+                        "acceptance",
+                        format!(
+                            "{} gate Evidence must match the frontmatter verify command: {}",
+                            ac.id, ac.evidence
+                        ),
+                    );
+                }
+            }
+            if !ac.evidence.is_empty() {
+                ac_cmds.push((ac.id.clone(), ac.evidence.clone()));
+            }
+        }
+        if gate_count != 1 {
+            finding(
+                &mut findings,
+                "acceptance",
+                format!("typed acceptance needs exactly one gate block (found {gate_count})"),
+            );
+        } else if !tf
+            .typed_acceptance
+            .criteria
+            .last()
+            .is_some_and(|ac| matches!(ac.kind, AcceptanceType::Gate))
+        {
+            finding(
+                &mut findings,
+                "acceptance",
+                "typed gate block must be last".to_string(),
+            );
+        }
+        if tf.typed_acceptance.criteria.is_empty() {
+            finding(
+                &mut findings,
+                "acceptance",
+                "typed AC headings found but no blocks parsed".to_string(),
+            );
+        }
+    } else if tf.ac_rows.is_empty() {
         finding(&mut findings, "acceptance", "no AC-NNN rows".to_string());
     }
     {
@@ -360,9 +422,11 @@ pub fn lint_text(text: &str, readme: &Path) -> Vec<Finding> {
         }
     }
     let backtick_cmd = Regex::new(r"`[^`]+`").expect("static regex");
-    // (AC id, evidence command) for every row that names one
-    let mut ac_cmds: Vec<(String, String)> = Vec::new();
+    // (AC id, evidence command) for every legacy row that names one
     for row in &tf.ac_rows {
+        if tf.typed_acceptance.detected {
+            break;
+        }
         match taskfile::first_code_span(&row.evidence) {
             Some(cmd) if backtick_cmd.is_match(&row.evidence) => {
                 ac_cmds.push((row.id.clone(), cmd.to_string()));
@@ -809,9 +873,35 @@ fn requirement_findings(
         finding(findings, "requirements", "no R-NNN entries".to_string());
         return;
     }
+    if tf.typed_acceptance.detected {
+        let requirement = Regex::new(r"^R-[0-9]+$").expect("static regex");
+        for ac in &tf.typed_acceptance.criteria {
+            for covered in &ac.covers {
+                if !requirement.is_match(covered) {
+                    finding(
+                        findings,
+                        "acceptance",
+                        format!("{} Covers contains invalid requirement {}", ac.id, covered),
+                    );
+                } else if !defined.contains(covered) {
+                    finding(
+                        findings,
+                        "acceptance",
+                        format!("{} Covers undefined requirement {}", ac.id, covered),
+                    );
+                }
+            }
+        }
+    }
     let mut cited_text = String::new();
-    for row in &tf.ac_rows {
-        cited_text.push_str(&format!("{} {} {}\n", row.gwt, row.evidence, row.expected));
+    if tf.typed_acceptance.detected {
+        for ac in &tf.typed_acceptance.criteria {
+            cited_text.push_str(&format!("{}\n", ac.covers.join(" ")));
+        }
+    } else {
+        for row in &tf.ac_rows {
+            cited_text.push_str(&format!("{} {} {}\n", row.gwt, row.evidence, row.expected));
+        }
     }
     // a leaf plus its ancestors: a citation on a parent covers every leaf below it
     let mut ancestors: Vec<String> = Vec::new();
@@ -1200,16 +1290,38 @@ fn checklist_findings(findings: &mut Vec<Finding>, tf: &TaskFile) -> Vec<CheckIt
             }
         }
     }
-    for ac in &tf.ac_rows {
-        if !ac_text.contains(&format!("`{}`", ac.id)) {
+    let ac_ids: Vec<String> = if tf.typed_acceptance.detected {
+        tf.typed_acceptance
+            .criteria
+            .iter()
+            .map(|ac| ac.id.clone())
+            .collect()
+    } else {
+        tf.ac_rows.iter().map(|ac| ac.id.clone()).collect()
+    };
+    for ac in &ac_ids {
+        if !ac_text.contains(&format!("`{ac}`")) {
             finding(
                 findings,
                 "checklist",
-                format!(
-                    "{} is not cited by any leaf or evidence-bearing parent",
-                    ac.id
-                ),
+                format!("{} is not cited by any leaf or evidence-bearing parent", ac),
             );
+        }
+    }
+    if tf.typed_acceptance.detected {
+        for ac in &ac_ids {
+            let owners = items
+                .iter()
+                .zip(&leaves)
+                .filter(|(item, leaf)| **leaf && item.raw.contains(&format!("`{ac}`")))
+                .count();
+            if owners != 1 {
+                finding(
+                    findings,
+                    "checklist",
+                    format!("{ac} must have exactly one owning checklist leaf (found {owners})"),
+                );
+            }
         }
     }
     items

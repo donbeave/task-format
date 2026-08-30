@@ -75,54 +75,11 @@ Out of scope:
 
 ## Acceptance criteria
 
-Typed acceptance uses the taskfmt Markdown profile: each `AC-*` block has metadata, a fenced
-Gherkin-shaped behavior description, and separate `Evidence`/`Expected` proof fields. It is not a
-Cucumber document and has no runtime step definitions.
-
-### AC-001 — Expired refresh is rejected
-Type: scenario
-Class: delta
-Covers: R-001, R-003
-Evidence: `cargo test -p auth expired_refresh_token`
-Expected: exit 0, `1 passed`; response is 401 and session state is unchanged
-
-```gherkin
-Given an existing session and an expired refresh token
-When the refresh endpoint receives the token
-Then it returns 401 with error code refresh_token_expired
-And no session state is changed
-```
-
-### AC-002 — Valid refresh still rotates
-Type: scenario
-Class: invariant
-Covers: R-002
-Evidence: `cargo test -p auth valid_refresh_rotation`
-Expected: exit 0, `1 passed`; rotation succeeds as before
-
-```gherkin
-Given a valid refresh token
-When the refresh endpoint receives the token
-Then rotation succeeds exactly as before
-```
-
-### AC-003 — Legacy helper is absent
-Type: scenario
-Class: removal
-Covers: R-004
-Evidence: `! grep -rn legacy_expiry_check src tests`
-Expected: exit 0, no output; no reference remains
-
-```gherkin
-Given the repository after the change
-When the source tree is inspected
-Then the legacy expiry helper is absent
-```
-
-### AC-004 — Completion gate passes
-Type: gate
-Evidence: `taskfmt verify`
-Expected: exit 0 and the last line is DONE
+| ID | Given / When / Then | Evidence command | Expected |
+| --- | --- | --- | --- |
+| AC-001 | Given an existing session and an expired refresh token, when the refresh endpoint receives it, then it returns 401 `refresh_token_expired` and session state is unchanged. | `cargo test -p auth expired_refresh_token` | exit 0, `1 passed` |
+| AC-002 | Given a valid refresh token, when the endpoint receives it, then rotation succeeds exactly as before. | `cargo test -p auth valid_refresh_rotation` | exit 0, `1 passed` |
+| AC-003 | Given the repository after the change, when searched for the legacy helper, then no reference remains. | `! grep -rn legacy_expiry_check src tests` | exit 0, no output |
 
 ## Fixed decisions
 
@@ -139,13 +96,13 @@ Static plan (grammar and state handling: see AGENTS.md). Each `AC-*` is cited on
     - [ ] **1.1** Preconditions `P-001..P-002` pass — evidence: both commands exit 0.
     - [ ] **1.2** Baseline failure recorded in `progress.md` `BASELINE:` — evidence: `cargo test -p auth expired_refresh_token` shows `1 failed` — `rotation_counter == 1, want 0`.
 - [ ] **2** Required behavior is implemented.
-    - [ ] **2.1** Expiry validated before the transaction (`R-001`, `R-003`) — evidence: `cargo test -p auth expired_refresh_token` exits 0.
+    - [ ] **2.1** Expiry validated before the transaction (`R-001`, `R-003`, `AC-001`) — evidence: `cargo test -p auth expired_refresh_token` exits 0.
         - [ ] **2.1.1** `TokenStore::validate` called before `begin_transaction` in `rotate` — evidence: `grep -n "validate\|begin_transaction" src/auth/session/rotate.rs` shows validate on an earlier line.
-        - [ ] **2.1.2** Counter increment moved inside the post-validation branch (`AC-001`) — evidence: `cargo test -p auth expired_refresh_token` → `1 passed` (the `rotation_counter == 0` assertion holds).
+        - [ ] **2.1.2** Counter increment moved inside the post-validation branch — evidence: `cargo test -p auth expired_refresh_token` → `1 passed` (the `rotation_counter == 0` assertion holds).
     - [ ] **2.2** Handler maps `TokenError::Expired` to 401 `refresh_token_expired` (`R-002`, `D-002`) — evidence: `cargo test -p auth expired_error_code` exits 0.
     - [ ] **2.3** `legacy_expiry_check` removed (`R-004`, `D-003`, `AC-003`) — evidence: `! grep -rn legacy_expiry_check src tests` exits 0.
     - [ ] **2.4** Valid refresh path unchanged (`AC-002`) — evidence: `cargo test -p auth valid_refresh_rotation` → `1 passed`.
 - [ ] **3** Gate passes.
     - [ ] **3.1** Diff reviewed: only `expected_paths` changed, nothing temporary or unrelated — evidence: `git status --porcelain` and `git diff --no-renames --stat $TASKFMT_BASE` show only in-scope files.
-    - [ ] **3.2** `taskfmt verify` exits 0 with last line `DONE` (`AC-004`) — evidence: final full run (with progress check); full output in the transcript.
+    - [ ] **3.2** `taskfmt verify` exits 0 with last line `DONE` — evidence: final full run (with progress check); full output in the transcript.
 <!-- checklist:end -->

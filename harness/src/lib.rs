@@ -3,6 +3,7 @@
 //! Library modules hold the logic (lint, progress, gate, dispatch); `cli` + `main` only parse
 //! arguments and dispatch. Integration tests in `tests/` drive the library directly.
 
+pub mod acceptance;
 pub mod cli;
 pub mod cmds;
 pub mod config;
