@@ -15,6 +15,7 @@ pub mod ps;
 pub mod repo;
 pub mod run;
 pub mod selfcheck;
+pub mod selfhost;
 pub mod selftest;
 pub mod status;
 pub mod verify;
@@ -298,6 +299,7 @@ pub fn dispatch(cli: &Cli) -> anyhow::Result<i32> {
             *kill_after,
             *selfcheck,
         ),
+        Command::Selfhost { cmd } => selfhost::run(&ctx, cmd),
         Command::ContainerEntrypoint => container_entrypoint::run(),
         Command::Prereqs => container_entrypoint::prereqs_only(),
         Command::AgentLaunch => agent_launch::run(),

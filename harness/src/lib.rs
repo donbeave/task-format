@@ -16,6 +16,7 @@ pub mod redact;
 pub mod runstate;
 pub mod selection;
 pub mod selfcheck;
+pub mod selfhost;
 pub mod selftest;
 pub mod taskfile;
 pub mod verifycfg;

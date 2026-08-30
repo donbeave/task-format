@@ -244,6 +244,13 @@ pub enum Command {
         selfcheck: bool,
     },
 
+    /// The self-host driver (plan section 4.6). Every subcommand and every flag lives under
+    /// `harness/src/selfhost/`; this variant is landed once and never edited again (section 8.1).
+    Selfhost {
+        #[command(subcommand)]
+        cmd: crate::selfhost::cli::SelfhostCmd,
+    },
+
     /// Container PID 1 (root): inner dockerd, codex seeding, prereqs, then the agent.
     ContainerEntrypoint,
 
