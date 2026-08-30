@@ -103,6 +103,8 @@ pub fn run(
             &repo_url,
             Some(&experiment_id),
             selfcheck,
+            // the one image reader in the crate; a dispatch compares whatever it returns
+            &crate::ops::docker::DockerImageFingerprint,
         ) {
             Ok(outcome) => outcome,
             Err(err) => {

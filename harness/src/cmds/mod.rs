@@ -5,6 +5,7 @@ pub mod attach;
 pub mod build_images;
 pub mod container_entrypoint;
 pub mod experiment;
+pub mod fingerprint;
 pub mod gate;
 pub mod lint;
 pub mod preload;
@@ -211,6 +212,7 @@ pub fn dispatch(cli: &Cli) -> anyhow::Result<i32> {
         Command::Lint { tasks } => lint::run(&ctx, tasks),
         Command::ProgressInit { task, out } => progress_init::run(&ctx, task, out.as_deref()),
         Command::Selftest => selftest::run(&ctx),
+        Command::Fingerprint { path, image } => fingerprint::run(path.as_deref(), image.as_deref()),
         Command::Verify {
             root,
             task_dir,
@@ -267,6 +269,8 @@ pub fn dispatch(cli: &Cli) -> anyhow::Result<i32> {
             *kill_after,
             exp.as_deref(),
             *selfcheck,
+            // the one image reader in the crate; a dispatch compares whatever it returns
+            &crate::ops::docker::DockerImageFingerprint,
         ),
         Command::Gate { run: run_id } => gate::run(&ctx, run_id),
         Command::Promote { run: run_id, yes } => promote::run(&ctx, run_id, *yes),

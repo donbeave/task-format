@@ -341,6 +341,72 @@ pub fn stop(container: &str, grace_s: u64) -> bool {
     stopped || !is_running(container)
 }
 
+/// How a caller learns the gate fingerprint baked into an image.
+///
+/// A parameter rather than a lookup inside `dispatch_one` (D-011): what is injected is a **value**,
+/// never a verdict — the comparison runs unconditionally on whatever comes back — so this is no
+/// bypass of the refusal. Production passes [`DockerImageFingerprint`], the one implementation in
+/// the crate; test doubles live in integration-test crates that are linked into no binary.
+pub trait ImageFingerprint {
+    /// The image's own `taskfmt` fingerprint, or an error naming `image`.
+    fn image_fingerprint(&self, image: &str) -> anyhow::Result<String>;
+}
+
+/// The production reader: it executes the binary the image carries.
+pub struct DockerImageFingerprint;
+
+impl ImageFingerprint for DockerImageFingerprint {
+    fn image_fingerprint(&self, image: &str) -> anyhow::Result<String> {
+        image_fingerprint(image)
+    }
+}
+
+/// Ask an image what gate it carries, by running the binary that would run the gate.
+///
+/// Neither a label nor a file in the image is used: a label is metadata the builder attached and
+/// nothing binds it to the binary, and a file next to the binary can drift from it. Executing
+/// `/usr/local/bin/taskfmt` is the only answer that comes from the artifact that will judge, and
+/// it proves the image can execute it at all. The `--entrypoint` override is required because
+/// `harness-base` sets `ENTRYPOINT ["/usr/local/bin/taskfmt", "container-entrypoint"]`.
+///
+/// Fails closed: an absent image, an unreachable daemon, an image built before the subcommand
+/// existed and an image answering with anything but 64 lowercase hex digits are all errors naming
+/// `image`, never a value.
+pub fn image_fingerprint(image: &str) -> anyhow::Result<String> {
+    let out = capture(Command::new("docker").args([
+        "run",
+        "--rm",
+        "--entrypoint",
+        "/usr/local/bin/taskfmt",
+        image,
+        "fingerprint",
+    ]))
+    .with_context(|| format!("cannot run docker to read the gate fingerprint of {image}"))?;
+    if !out.ok() {
+        anyhow::bail!(
+            "cannot read the gate fingerprint of {image} (rc={}): {}",
+            out.status,
+            crate::redact::scrub(out.stderr.trim_end())
+        );
+    }
+    let value = out.stdout.trim().to_string();
+    if !is_fingerprint(&value) {
+        anyhow::bail!(
+            "{image} answered with no gate fingerprint: {:?}",
+            crate::redact::scrub(&value)
+        );
+    }
+    Ok(value)
+}
+
+/// 64 lowercase hex digits and nothing else — the shape `taskfmt fingerprint` prints.
+fn is_fingerprint(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+}
+
 pub fn image_exists(image: &str) -> bool {
     capture(Command::new("docker").args(["image", "inspect", image]))
         .map(|out| out.ok())
@@ -406,6 +472,18 @@ mod tests {
         assert!(info.labels.is_empty());
         let empty = parse_inspect_line("/harness-r\trunning\t\t{}").unwrap();
         assert!(empty.labels.is_empty());
+    }
+
+    #[test]
+    fn only_64_lowercase_hex_digits_are_a_fingerprint() {
+        assert!(is_fingerprint(&"a1b2c3d4".repeat(8)));
+        assert!(!is_fingerprint(&"A1B2C3D4".repeat(8)), "uppercase");
+        assert!(!is_fingerprint(&"a1b2c3d4".repeat(7)), "too short");
+        assert!(!is_fingerprint(""), "clap help, or nothing at all");
+        assert!(
+            !is_fingerprint(&format!("{}\n", "a1b2c3d4".repeat(8))),
+            "untrimmed"
+        );
     }
 
     #[test]

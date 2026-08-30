@@ -68,6 +68,17 @@ pub enum Command {
     /// Prove lint, progress-init and the gate on the bundled corpus.
     Selftest,
 
+    /// Print the content fingerprint of the harness crate a `taskfmt` was built from.
+    Fingerprint {
+        /// Recompute the digest over a crate directory instead of printing the compiled-in value.
+        /// Inspection only: it feeds no dispatch decision.
+        #[arg(long)]
+        path: Option<PathBuf>,
+        /// Report the value baked into a docker image, by executing its /usr/local/bin/taskfmt.
+        #[arg(long, conflicts_with = "path")]
+        image: Option<String>,
+    },
+
     /// The completion gate: exit 0 AND last stdout line "DONE" <=> pass.
     Verify {
         /// Repository root the gate runs in (default: TASKFMT_ROOT, git toplevel of cwd, cwd).

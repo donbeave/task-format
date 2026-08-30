@@ -5,7 +5,20 @@ use taskfmt::cmds::Ctx;
 use taskfmt::cmds::experiment::{resolve_repo_url, resume_repo_url};
 use taskfmt::config::{ExperimentConfig, Resolved};
 use taskfmt::interactive::Interaction;
+use taskfmt::ops::docker::ImageFingerprint;
 use taskfmt::runstate::{ExperimentState, ExperimentTask, RepoRecord};
+
+/// The image reader every `run::run` call here is handed: it reports this binary's own value, so
+/// the dispatch-time gate-identity check passes and each test still fails where it means to — at
+/// the clone, or before it. It consults no daemon and no image, which is what keeps this suite
+/// hermetic.
+struct SameBuild;
+
+impl ImageFingerprint for SameBuild {
+    fn image_fingerprint(&self, _image: &str) -> anyhow::Result<String> {
+        Ok(taskfmt::HARNESS_FINGERPRINT.to_string())
+    }
+}
 
 const MANIFEST: &str = r#"
 schema = "experiment/v1"
@@ -250,6 +263,7 @@ fn run_with_exp_tag_uses_the_recorded_repo() {
         None,
         Some(&fx.experiment_id),
         false,
+        &SameBuild,
     )
     .unwrap_err()
     .to_string();
@@ -275,6 +289,7 @@ fn run_with_exp_tag_refuses_a_conflicting_repo_arg() {
         None,
         Some(&fx.experiment_id),
         false,
+        &SameBuild,
     )
     .unwrap_err()
     .to_string();
@@ -302,6 +317,7 @@ fn run_without_exp_state_honours_the_repo_arg() {
         None,
         Some("exp-fresh"),
         false,
+        &SameBuild,
     )
     .unwrap_err()
     .to_string();

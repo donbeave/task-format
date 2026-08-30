@@ -6,6 +6,9 @@ One Rust CLI replaces all dispatch tooling. The crate lives here (`harness/Cargo
 harness/
   Cargo.toml + src/ + tests/     the CLI (lint, progress-init, gate, selfcheck, selftest, images,
                                  repo lifecycle, dispatch, attach/status, experiment loop)
+  build.rs + checks/             the content fingerprint baked into the binary, and the suite that
+                                 drives the dispatch-time comparison (a declared [[test]] target
+                                 outside tests/, so the image build never receives it)
   experiment.toml                the experiment manifest (schema experiment/v1) — repo root
   images/taskfmt/Dockerfile      multi-stage rust build -> harness-taskfmt:latest (just the binary)
   images/base/Dockerfile         harness-base: tools + inner docker + herdr + rustup + taskfmt
@@ -17,7 +20,7 @@ harness/
   testdata/example/              lint corpus (TASK-042, v4) used by selftest
 ```
 
-The `taskfmt` inside a run container is the copy baked into `harness-base` by `taskfmt build-images`, not the host binary. After upgrading the crate (`version` in `Cargo.toml`) rebuild the images, or the container gate keeps running the old version; no runtime version check exists yet at dispatch (backlog, findings §7).
+The `taskfmt` inside a run container is the copy baked into `harness-base` by `taskfmt build-images`, not the host binary. After editing the crate, reinstall it **and** rebuild the images: `taskfmt run` compares the two at dispatch and refuses to launch when they are different builds, naming both values and the remedy. The comparand is the content fingerprint `build.rs` bakes in — a SHA-256 over `Cargo.toml`, `Cargo.lock`, `build.rs` and every file under `src/`, which is exactly what the image build stage receives — and not `version`, which a forgotten reinstall leaves untouched. `taskfmt fingerprint` prints this binary's value, `--path DIR` recomputes it over a crate directory, and `--image IMAGE` reports an image's own by executing the binary it carries.
 
 ## The task package (what ships to the agent)
 
