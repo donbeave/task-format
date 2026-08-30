@@ -19,13 +19,13 @@ The completion gate is `taskfmt verify` (binary baked into the image, read-only)
 ## Protocol
 
 1. Read `/task/README.md` fully (and `/task/decisions.md` if present), then the files listed under "Read before editing".
-2. If `## Log` in `/progress/progress.md` is non-empty you are resuming: read it, run `git status` and `git diff --stat`, and continue from `CURRENT:`. After compaction or any resume, re-read `/task/README.md` and `progress.md` before editing; never reconstruct state from memory.
+2. If `## Log` in `/progress/progress.md` is non-empty you are resuming: read it, run `git status` and `git diff --stat`, and continue from `CURRENT:`. `/progress/progress.md` on disk is the ONLY authority for what is done; any summary of it that appears in your context — including one you or the runtime generated — is a claim to be checked against the file, never a substitute for it. Re-read the file immediately before any edit that changes `STATE:`, `CURRENT:` or a checkbox, and again before the final report. Re-read `/task/README.md` before editing after any resume or context compaction. Never reconstruct state from memory.
 3. State in the transcript: task ID, the one-sentence goal, the acceptance-criterion IDs, and the first leaf you will work on.
 4. Run every precondition command. If one fails, write `STATE: BLOCKED` and the failing command to `progress.md`, then emit the final report with `STATUS: BLOCKED`. Do not work around a failed precondition.
 5. Work the checklist leaves one at a time, in ID order unless `README.md` states a different dependency order. Before starting a leaf set `CURRENT: <id>` in `progress.md`.
-6. Mark a leaf `[x]` only after running its evidence command and seeing the stated result. Append one log line with the command and observed result. If later work invalidates it, set it back to `[ ]` and log `REOPENED`. A check that passes and fails on the same tree is FAILED evidence: log it and stop `NEEDS_REPLAN`, naming the command.
+6. Mark a leaf `[x]` only after running its evidence command and seeing the stated result — and, having seen it, mark it in the same edit that appends its log line, before you start the next leaf. The log and the checkbox are one record: at every point a leaf's box is `[x]` if and only if its latest log row is `DONE`. If later work invalidates it, set the box back to `[ ]` and log `REOPENED` in the same edit. Before you emit the final report, in any terminal state, re-read `/progress/progress.md` and reconcile the two; a leaf whose box and latest row disagree is a defect in your own reporting — fix it there. A check that passes and fails on the same tree is FAILED evidence: log it and stop `NEEDS_REPLAN`, naming the command.
 7. Mark a parent `[x]` only when every child is `[x]` and, if it states its own `evidence:`, only after running and logging that too (children alone do not suffice); without evidence it rolls up. Parents are never `CURRENT`.
-8. When all leaves except the gate leaf are done: (a) run `taskfmt verify --progress ""` from `/work` (progress check skipped); fix and rerun until it exits 0 with last line `DONE`. (b) Set `STATE: DONE`, `CURRENT: NONE`, mark the remaining leaves `[x]`, run `taskfmt verify` (full, with progress check); its complete output is the transcript evidence. Emit the final report.
+8. When all leaves except the gate leaf are done: (a) run `taskfmt verify --progress ""` from `/work` (progress check skipped); fix and rerun until it exits 0 with last line `DONE`. (b) Set `STATE: DONE`, `CURRENT: NONE`, mark the remaining leaves `[x]`, appending each one's `DONE` log row in the same edit (the gate leaf's row is (a)'s command and observed result), run `taskfmt verify` (full, with progress check); its complete output is the transcript evidence. Emit the final report.
 
 ## progress.md grammar
 
@@ -68,15 +68,17 @@ Rules: never change checklist text, IDs, order, or indentation — only the thre
 - `BLOCKED`: environment or dependency only — a precondition or external condition you cannot fix within scope is false (missing dependency, credentials, infrastructure). A precondition command that errors (rc 127 etc.) is `BLOCKED` too.
 - `NEEDS_REPLAN`: satisfying the task requires changing its goal, acceptance criteria, fixed decisions, scope, or checklist; requirements contradict; a material design decision is unresolved; or the unblock itself needs such a change.
 - `INCOMPLETE`: the turn or budget cap is reached first. Leave `STATE: IN_PROGRESS`, fill the handoff.
-- Do not spin. When no evidence-backed action remains, stop with the matching status, keep the current leaf unchecked, and report what was tried and the smallest decision or dependency needed to resume.
+- Do not spin. A leaf with no evidence-backed action left is logged `FAILED` with the command and the observed result and stays `[ ]`; then move to the next leaf that does not depend on it. Take a terminal only when no leaf anywhere has an evidence-backed action left — or at once where rule 4 or rule 6 says to stop — and report every `FAILED` leaf, what was tried, and the smallest decision or dependency needed to resume. If you continued past a failed leaf, say so under `DEVIATIONS`. Retrying a leaf whose failure you have already diagnosed is spinning.
 
 ## Turn signal
 
-At the end of every turn print one line:
+At the end of every turn EXCEPT the one that carries the final report, print one line:
 
 ```text
 GOAL_PROGRESS task=TASK-000 state=<STATE> current=<ID|NONE> done_this_turn=<IDs|none> blocked=<ID|none>
 ```
+
+On the turn that carries the final report, print this line immediately BEFORE the report and print nothing after the report's `GOAL_RESULT` line. `GOAL_RESULT` is the last line of the session, in every terminal state, without exception.
 
 ## Final report
 
