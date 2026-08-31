@@ -20,6 +20,8 @@ const PG_USER: &str = "pgtui";
 const PG_PASSWORD: &str = "pgtui";
 const PG_DB: &str = "pgtui";
 const PRELOAD_TAR: &str = "/opt/preload/postgres.tar";
+/// Where the claude image stages the plugin install at build time (see images/claude/Dockerfile).
+const CLAUDE_PLUGIN_SEED: &str = "/opt/claude-plugin-seed";
 const OUT: &str = "/out";
 const PARK: Duration = Duration::from_secs(86400);
 
@@ -84,6 +86,15 @@ pub fn run() -> anyhow::Result<i32> {
                 redact::eemit("entrypoint: codex login failed — check OPENAI_API_KEY");
             }
         }
+    }
+    // claude image: seed $CLAUDE_CONFIG_DIR/plugins from the baked /opt/claude-plugin-seed (a
+    // fresh run bind-mounts an empty /agent-home, which masks whatever the image installed
+    // there). Idempotent: an existing plugins/ tree belongs to this run's agent, keep it.
+    let claude_home = std::env::var("CLAUDE_CONFIG_DIR").unwrap_or_default();
+    if !claude_home.is_empty()
+        && seed_claude_plugins(Path::new(CLAUDE_PLUGIN_SEED), Path::new(&claude_home))?
+    {
+        let _ = chown_agent_recursive(&Path::new(&claude_home).join("plugins").to_string_lossy());
     }
     for dir in ["/work", "/out", "/agent-home"] {
         let _ = chown_agent(dir);
@@ -331,6 +342,29 @@ fn chown_agent(path: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `chown -R agent` on a path (best effort; for trees copied into the agent's home as root).
+fn chown_agent_recursive(path: &str) -> anyhow::Result<()> {
+    let status = Command::new("chown").args(["-R", "agent", path]).status()?;
+    if !status.success() {
+        anyhow::bail!("chown -R agent {path} failed");
+    }
+    Ok(())
+}
+
+/// Copy the baked plugin tree (`<seed_dir>/plugins`) into `<agent_home>/plugins`. Returns true
+/// when anything was copied. Idempotent: a missing seed or an already-present plugins/ tree is a
+/// no-op, so an existing per-run config is never clobbered.
+fn seed_claude_plugins(seed_dir: &Path, agent_home: &Path) -> anyhow::Result<bool> {
+    let src = seed_dir.join("plugins");
+    let dst = agent_home.join("plugins");
+    if !src.is_dir() || dst.exists() {
+        return Ok(false);
+    }
+    crate::ops::copy_tree(&src, &dst)
+        .with_context(|| format!("copying {} to {}", src.display(), dst.display()))?;
+    Ok(true)
+}
+
 /// `taskfmt codex-login` — reads the API key on stdin (never argv) and writes codex auth.json.
 /// Invoked by the entrypoint through gosu so the secret never crosses a process argument.
 pub fn codex_login() -> anyhow::Result<i32> {
@@ -355,4 +389,71 @@ pub fn codex_login() -> anyhow::Result<i32> {
         .context("chmod 600 auth.json")?;
     let _ = chown_agent(&home);
     Ok(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A fake baked seed: `<seed>/plugins/<tree…>`.
+    fn fake_seed(seed: &Path) {
+        let cache = seed.join("plugins/cache/rust-analyzer-lsp");
+        std::fs::create_dir_all(&cache).unwrap();
+        std::fs::write(cache.join("plugin.json"), "{}").unwrap();
+        std::fs::write(seed.join("plugins/installed_plugins.json"), "{}").unwrap();
+    }
+
+    #[test]
+    fn plugin_seed_copies_the_tree_once_and_never_twice() {
+        let dir = tempfile::tempdir().unwrap();
+        let seed = dir.path().join("seed");
+        let home = dir.path().join("agent-home");
+        std::fs::create_dir_all(&home).unwrap();
+        fake_seed(&seed);
+
+        assert!(
+            seed_claude_plugins(&seed, &home).unwrap(),
+            "first boot copies"
+        );
+        assert!(
+            home.join("plugins/cache/rust-analyzer-lsp/plugin.json")
+                .is_file(),
+            "the whole tree came along"
+        );
+
+        // a file the agent wrote inside its own plugins/ tree must survive a re-boot
+        std::fs::write(home.join("plugins/marker"), "mine").unwrap();
+        assert!(
+            !seed_claude_plugins(&seed, &home).unwrap(),
+            "second boot is a no-op"
+        );
+        assert_eq!(
+            std::fs::read_to_string(home.join("plugins/marker")).unwrap(),
+            "mine"
+        );
+    }
+
+    #[test]
+    fn plugin_seed_is_a_noop_without_a_baked_seed() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("agent-home");
+        assert!(!seed_claude_plugins(&dir.path().join("missing"), &home).unwrap());
+        assert!(!home.join("plugins").exists());
+    }
+
+    #[test]
+    fn plugin_seed_preserves_existing_agent_home_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let seed = dir.path().join("seed");
+        let home = dir.path().join("agent-home");
+        std::fs::create_dir_all(&home).unwrap();
+        fake_seed(&seed);
+        std::fs::write(home.join("settings.json"), "{}").unwrap();
+
+        assert!(seed_claude_plugins(&seed, &home).unwrap());
+        assert!(
+            home.join("settings.json").is_file(),
+            "the seeded copy touches only plugins/"
+        );
+    }
 }

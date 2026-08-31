@@ -274,13 +274,22 @@ pub fn codex_agent_cmd(model: &str, effort: &str) -> String {
 }
 
 /// `settings.json` pre-seed so Claude Code starts without dialogs. Contains no key material.
+/// `extraKnownMarketplaces` + `enabledPlugins` carry the rust-analyzer-lsp plugin into every
+/// per-run config; the plugins/ tree itself is copied from the image's /opt/claude-plugin-seed
+/// by the container entrypoint (the per-run /agent-home bind mount masks the baked copy).
 pub fn claude_settings_json() -> &'static str {
     r#"{
   "skipDangerousModePermissionPrompt": true,
   "theme": "dark",
   "tui": "default",
   "cleanupPeriodDays": 3650,
-  "env": {"CLAUDE_CODE_GOAL_CHECKIN_MINUTES": "0"}
+  "env": {"CLAUDE_CODE_GOAL_CHECKIN_MINUTES": "0"},
+  "extraKnownMarketplaces": {
+    "claude-plugins-official": {
+      "source": {"source": "git", "url": "https://github.com/anthropics/claude-plugins-official.git"}
+    }
+  },
+  "enabledPlugins": {"rust-analyzer-lsp@claude-plugins-official": true}
 }
 "#
 }
@@ -377,6 +386,21 @@ mod tests {
         preseed_agent_home(dir.path(), "claude").unwrap();
         let settings = std::fs::read_to_string(dir.path().join("settings.json")).unwrap();
         assert!(settings.contains("skipDangerousModePermissionPrompt"));
+        assert!(
+            settings.contains("extraKnownMarketplaces")
+                && settings.contains("claude-plugins-official")
+                && settings.contains("\"rust-analyzer-lsp@claude-plugins-official\": true"),
+            "the seeded settings must enable the rust-analyzer-lsp plugin"
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&settings).unwrap();
+        assert_eq!(
+            parsed["extraKnownMarketplaces"]["claude-plugins-official"]["source"]["source"],
+            "git"
+        );
+        assert_eq!(
+            parsed["enabledPlugins"]["rust-analyzer-lsp@claude-plugins-official"],
+            true
+        );
         let project = std::fs::read_to_string(dir.path().join(".claude.json")).unwrap();
         assert!(project.contains("hasTrustDialogAccepted"));
         assert!(
