@@ -1,15 +1,9 @@
-# Historical source
+# Research chapter
 
-This directory preserves earlier task-format research and task-authoring
-material for provenance. It is not a second documentation system.
+Research is part of the main project documentation. The complete account lives
+in the root [README](../../README.md): motivation, task model, lifecycle,
+research topics, comparisons, findings, and adopted decisions.
 
-For the current, integrated explanation, read the [project guide](../project-guide.md).
-
-## Contents
-
-- `notes/` — historical investigations and design discussions.
-- `raw/` — captured drafts and task-format source material.
-
-These files may describe superseded package shapes or runtime assumptions. They
-must not override the project guide, harness code, configuration, or live task
-packages. Task-related Markdown remains unchanged by documentation rewrites.
+This directory contains only this pointer and the compatibility reference for
+the protected runtime prompt. Obsolete drafts and raw research records were
+removed after their durable conclusions were incorporated into the main guide.
