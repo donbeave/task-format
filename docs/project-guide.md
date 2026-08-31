@@ -58,6 +58,23 @@ stability, retries, and rework across repeated fresh runs. Adopt a format
 change only when repeated control comparisons show improvement without
 weakening proof or changing the task outcome.
 
+## Comparisons and conclusions
+
+The research compared design choices, not model rankings:
+
+| Question | Chosen direction | Reason |
+| --- | --- | --- |
+| Broad request or bounded outcome? | One observable vertical slice. | A single gate can prove it and a fresh agent can finish it. |
+| Executor discretion or settled decisions? | Resolve consequential choices before dispatch. | The agent implements a contract instead of inventing architecture. |
+| Writable contract or protected input? | Read-only task package. | The implementation cannot rewrite its own requirements. |
+| Self-report or independent proof? | Host-side gate. | A convincing report is not evidence of correctness. |
+| Shared mutable tests or trusted material? | Planner-owned trusted overlay. | Verification stays outside the agent's change surface. |
+| Reused workspace or fresh run? | Fresh clone, container, and session. | Prior state must not contaminate a comparison. |
+| Pixel-only UI proof or deterministic behavior? | Stable semantic or textual evidence. | Portable tests need an oracle that does not depend on a display. |
+
+These are design decisions supported by the research direction and the current
+harness. They are not claims that every alternative always fails.
+
 ## Current result
 
 `task/v4` and the Rust `taskfmt` harness are operational. `TASK-001` through
@@ -72,6 +89,10 @@ proves that one writing style beats another.
 - Scope has a baseline: unauthorized paths fail verification.
 - Runs stay inspectable: missing artifacts mean missing evidence.
 - Format changes need comparison: plausible advice is not evidence.
+
+The unresolved question is quantitative: how much each writing choice changes
+pass rate, false completion, scope safety, and rework. That requires repeated
+controlled runs; the current seven-package `pgtui` series is not that matrix.
 
 ## Next links
 

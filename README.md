@@ -34,7 +34,7 @@ The `task/v4` control format and Rust harness are built. `TASK-001` through `TAS
 
 ## Start here
 
-- Research question, method, evidence, and decisions: [research record](docs/research/).
+- Complete project guide, comparisons, findings, and decisions: [project guide](docs/project-guide.md).
 - Running and operating the Rust CLI: [harness guide](harness/README.md).
 - Authoring a package: [task template](reference/task-template/).
 - Experiment packages, fixtures, and run data: [experiments](experiments/).
@@ -48,7 +48,7 @@ The `task/v4` control format and Rust harness are built. `TASK-001` through `TAS
 | `experiments/tasks/` | Versioned task packages used as experiment data. |
 | `experiments/fixtures/` | Seed data and trusted-material specification. |
 | `experiments/runs/` | Local run artifacts; ignored by Git. |
-| `docs/research/` | Research question, method, evidence, findings, and decisions. |
+| `docs/` | Unified project guide, operating docs, experiment design, and integrated research. |
 | `experiment.toml` | Versioned experiment manifest: paths, images, runtime, and agent profiles. |
 
 ## Boundaries that protect the experiment
