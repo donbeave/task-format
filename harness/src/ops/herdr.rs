@@ -30,23 +30,44 @@ pub fn wait_idle(manifest: &Manifest, timeout_ms: u64) -> anyhow::Result<bool> {
     Ok(out.ok())
 }
 
-/// `herdr agent wait task --until idle --until done --until blocked --timeout 300000`
+/// Every status herdr 0.8.2 can classify an agent into (the `herdr agent wait --until` possible
+/// values). `unknown` is how herdr reports an agent whose process is gone (the pane is back at a
+/// shell, so detection has nothing to classify — the CLI's own help says "Use --until unknown
+/// explicitly when needed"). Without it a `GOAL_RESULT`-then-exit agent sits in the until-set's
+/// blind spot and every poll burns the full timeout before `check()` can classify the exit. A
+/// deleted record is covered too: `herdr agent wait` then fails immediately with
+/// `agent_not_found`/`agent_not_running` (verified against herdr 0.8.2), and the caller ignores
+/// the exit status.
+const HERDR_AGENT_STATES: [&str; 5] = ["idle", "working", "blocked", "done", "unknown"];
+
+/// Does `wait_terminal` return promptly for this observation? `None` is the agent-gone case
+/// (`herdr agent get` fails, which status.rs synthesizes as "none"): the wait errors out
+/// immediately instead of matching a state. `working` is the one status that must keep waiting.
+fn wait_returns_for(status: Option<&str>) -> bool {
+    match status {
+        None => true,
+        Some(state) => HERDR_AGENT_STATES.contains(&state) && state != "working",
+    }
+}
+
+/// `herdr agent wait task --until idle --until done --until blocked --until unknown --timeout 300000`
 /// (server-side, event-driven — used by `status --wait`.)
 pub fn wait_terminal(manifest: &Manifest, timeout_ms: u64) {
-    let args = vec![
+    let mut args = vec![
         HERDR.to_string(),
         "agent".to_string(),
         "wait".to_string(),
         manifest.agent_name.clone(),
-        "--until".to_string(),
-        "idle".to_string(),
-        "--until".to_string(),
-        "done".to_string(),
-        "--until".to_string(),
-        "blocked".to_string(),
-        "--timeout".to_string(),
-        timeout_ms.to_string(),
     ];
+    for state in HERDR_AGENT_STATES
+        .into_iter()
+        .filter(|state| wait_returns_for(Some(state)))
+    {
+        args.push("--until".to_string());
+        args.push(state.to_string());
+    }
+    args.push("--timeout".to_string());
+    args.push(timeout_ms.to_string());
     let _ = docker::exec(&manifest.container, Some("agent"), &env(), &args, false);
 }
 
@@ -168,4 +189,43 @@ pub fn pane_from_workspace_create(stdout: &str) -> anyhow::Result<String> {
         anyhow::bail!("no pane id in herdr workspace create output");
     }
     Ok(pane)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The stall fix: a `GOAL_RESULT`-then-exit agent must not burn the full 300 s timeout per
+    /// poll. herdr 0.8.2 reports that shape as `unknown` (process gone, nothing to classify) or
+    /// drops the record entirely (`agent get` fails → `None` here); both must make the wait
+    /// return immediately so `check()` can classify the exit.
+    #[test]
+    fn wait_returns_immediately_when_the_agent_is_gone() {
+        assert!(wait_returns_for(None), "agent record gone");
+        assert!(
+            wait_returns_for(Some("unknown")),
+            "herdr's process-gone classification"
+        );
+    }
+
+    #[test]
+    fn wait_returns_for_the_settle_states() {
+        for state in ["idle", "done", "blocked"] {
+            assert!(wait_returns_for(Some(state)), "{state}");
+        }
+    }
+
+    #[test]
+    fn wait_keeps_waiting_while_the_agent_works() {
+        assert!(!wait_returns_for(Some("working")));
+    }
+
+    /// The until-set handed to `herdr agent wait` is derived from the predicate, so a status the
+    /// predicate accepts can never be left out of the CLI call — that blind spot was the stall.
+    #[test]
+    fn until_set_covers_every_known_state_but_working() {
+        for state in HERDR_AGENT_STATES {
+            assert_eq!(wait_returns_for(Some(state)), state != "working", "{state}");
+        }
+    }
 }
