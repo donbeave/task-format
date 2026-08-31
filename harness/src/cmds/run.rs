@@ -356,7 +356,9 @@ pub fn wait_and_gate(
     // the manifest, so the terminal state reaches disk through the write that already happens.
     manifest.status_state = status.state.clone();
     // Everything that needs a live container happens here, before the stop: the full status
-    // (`status::check` reports CONTAINER_STOPPED for a stopped container) and the screen snapshot.
+    // (`status::check` still classifies a stopped container from artifact evidence — a verdict
+    // or GOAL_RESULT — and only reports CONTAINER_STOPPED when there is none) and the screen
+    // snapshot.
     let _ = redact::write_json(&run_dir.join("out").join(STATUS_FILE), &status);
     herdr::snapshot_screen(manifest, run_dir);
     quiesce(manifest);

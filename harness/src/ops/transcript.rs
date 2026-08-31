@@ -1,7 +1,8 @@
 //! Completion signals read from outside the container (port of the `status.sh` state machine).
 //!
 //! Trust order: the Claude transcript `goal_status` verdict, then the agent-authored
-//! `GOAL_RESULT` line in the raw `tui.log`, then herdr's own agent status.
+//! `GOAL_RESULT` line — the transcript jsonl first (authoritative), the raw `tui.log` as
+//! fallback — then herdr's own agent status.
 
 use std::path::{Path, PathBuf};
 
@@ -151,6 +152,80 @@ pub fn goal_result_line(tui_log: &Path) -> Option<String> {
         .rev()
         .map(strip_ansi)
         .find(|line| line.starts_with("GOAL_RESULT"))
+}
+
+/// Last `GOAL_RESULT` line in the session transcript jsonl — the authoritative copy of the
+/// agent's final report. `tui.log` is a terminal *rendering* and loses rows to redraw and
+/// compaction: in the 2026-08-31 TASK-002 run the agent printed
+/// `GOAL_RESULT task=TASK-002 status=DONE` and the log never showed it, so the run polled IDLE
+/// until `kill_after` with the work done. The transcript records the assistant message itself
+/// and cannot truncate it.
+///
+/// A row only counts when it is anchored to *this* run — it must carry `task=<task_id>` and a
+/// parseable `status=` token — because an assistant text block also quotes the line while
+/// planning ("next I print GOAL_RESULT ..."), and a mid-task quote is not completion evidence.
+pub fn goal_result_transcript(transcript: &Path, task_id: &str) -> Option<String> {
+    let text = std::fs::read_to_string(transcript).ok()?;
+    let anchor = format!("task={task_id}");
+    let mut last: Option<String> = None;
+    for line in text.lines() {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if value.get("type").and_then(serde_json::Value::as_str) != Some("assistant") {
+            continue;
+        }
+        let Some(content) = value
+            .pointer("/message/content")
+            .and_then(serde_json::Value::as_array)
+        else {
+            continue;
+        };
+        for block in content {
+            if block.get("type").and_then(serde_json::Value::as_str) != Some("text") {
+                continue;
+            }
+            let Some(text) = block.get("text").and_then(serde_json::Value::as_str) else {
+                continue;
+            };
+            for row in text.lines() {
+                let row = row.trim();
+                if row.starts_with("GOAL_RESULT")
+                    && row.split_whitespace().any(|token| token == anchor)
+                    && report_status(row).is_some()
+                {
+                    last = Some(row.to_string());
+                }
+            }
+        }
+    }
+    last
+}
+
+/// Did the goal evaluator's Stop hook crash? A `hook_non_blocking_error` attachment for the
+/// `Stop` event means Claude Code ran the evaluator and the evaluator failed (non-zero exit,
+/// unparseable output), so no `goal_status` verdict came out of that evaluation. Observed in
+/// the 2026-08-31 TASK-002 run: `{"type":"hook_non_blocking_error","hookName":"Stop",
+/// "hookEvent":"Stop","stderr":"JSON validation failed","exitCode":1}` — and under the harness
+/// protocol no verdict can arrive afterwards either, because nothing re-prompts the evaluator
+/// before `kill_after` (check-ins disabled).
+pub fn evaluator_hook_error(transcript: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(transcript) else {
+        return false;
+    };
+    text.lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .any(|value| {
+            value.get("type").and_then(serde_json::Value::as_str) == Some("attachment")
+                && value
+                    .pointer("/attachment/type")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("hook_non_blocking_error")
+                && value
+                    .pointer("/attachment/hookEvent")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("Stop")
+        })
 }
 
 /// The agent-authored `STATUS:` in a `GOAL_RESULT` line (`status=<X>` token).
@@ -390,6 +465,75 @@ mod tests {
         )
         .unwrap();
         assert!(recently_active(&tr, Duration::from_secs(300)));
+    }
+
+    #[test]
+    fn goal_result_transcript_reads_the_last_report_from_assistant_text() {
+        let dir = write_tmp(
+            "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[\
+                {\"type\":\"thinking\",\"thinking\":\"GOAL_RESULT task=T-1 status=DONE is not a report\"},\
+                {\"type\":\"text\",\"text\":\"STATUS: BLOCKED\\nGOAL_RESULT task=T-1 status=BLOCKED\"}]}}\n\
+             {\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"GOAL_RESULT task=T-1 status=DONE\"}}\n\
+             {\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[\
+                {\"type\":\"text\",\"text\":\"final report\\nGOAL_RESULT task=T-1 status=DONE\"}]}}\n",
+        );
+        assert_eq!(
+            goal_result_transcript(&dir.path().join("t.jsonl"), "T-1").as_deref(),
+            Some("GOAL_RESULT task=T-1 status=DONE"),
+            "assistant text blocks only, last one wins; thinking blocks and user echoes do not count"
+        );
+    }
+
+    #[test]
+    fn goal_result_transcript_must_be_anchored_to_the_run_task() {
+        // a mid-task quote/planning mention of the line — a different task id, no task id, or no
+        // parseable status — is not this run's completion evidence
+        let dir = write_tmp(
+            "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[\
+                {\"type\":\"text\",\"text\":\"GOAL_RESULT task=T-999 status=DONE\"}]}}\n\
+             {\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[\
+                {\"type\":\"text\",\"text\":\"GOAL_RESULT status=DONE\"}]}}\n\
+             {\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[\
+                {\"type\":\"text\",\"text\":\"GOAL_RESULT task=T-1 status=MAYBE\"}]}}\n",
+        );
+        assert!(goal_result_transcript(&dir.path().join("t.jsonl"), "T-1").is_none());
+        let dir = write_tmp(
+            "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[\
+                {\"type\":\"text\",\"text\":\"planning mention\\nGOAL_RESULT task=T-1 status=DONE\"}]}}\n",
+        );
+        assert_eq!(
+            goal_result_transcript(&dir.path().join("t.jsonl"), "T-1").as_deref(),
+            Some("GOAL_RESULT task=T-1 status=DONE"),
+            "the real final line, anchored to the run's task, counts"
+        );
+    }
+
+    #[test]
+    fn goal_result_transcript_is_none_without_a_report() {
+        let dir = write_tmp(
+            "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[\
+                {\"type\":\"text\",\"text\":\"still working\"}]}}\n",
+        );
+        assert!(goal_result_transcript(&dir.path().join("t.jsonl"), "T-1").is_none());
+        assert!(goal_result_transcript(dir.path().join("nope.jsonl").as_path(), "T-1").is_none());
+    }
+
+    #[test]
+    fn evaluator_hook_error_matches_the_stop_hook_crash_only() {
+        let dir = write_tmp(
+            "{\"type\":\"attachment\",\"attachment\":{\"type\":\"hook_non_blocking_error\",\
+             \"hookName\":\"Stop\",\"hookEvent\":\"Stop\",\"stderr\":\"JSON validation failed\",\"exitCode\":1}}\n",
+        );
+        assert!(evaluator_hook_error(&dir.path().join("t.jsonl")));
+        // a non-Stop hook failure is not the evaluator
+        let dir = write_tmp(
+            "{\"type\":\"attachment\",\"attachment\":{\"type\":\"hook_non_blocking_error\",\
+             \"hookName\":\"PreToolUse\",\"hookEvent\":\"PreToolUse\",\"exitCode\":1}}\n",
+        );
+        assert!(!evaluator_hook_error(&dir.path().join("t.jsonl")));
+        assert!(!evaluator_hook_error(
+            dir.path().join("nope.jsonl").as_path()
+        ));
     }
 
     #[test]

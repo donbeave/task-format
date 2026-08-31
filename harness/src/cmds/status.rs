@@ -26,7 +26,8 @@ pub struct Status {
     /// parsed).
     pub goal_verdicts: Option<usize>,
     /// **Why** the harness considers the run finished — `goal-verdict`, `agent-exited`,
-    /// `container-stopped`, `killed-timeout`, `goal-cleared-error` — and `None` while it does not.
+    /// `container-stopped`, `killed-timeout`, `goal-cleared-error`, `evaluator-error` — and
+    /// `None` while it does not.
     /// This is the field that makes `terminal()` answerable by an operator instead of inferred
     /// from a state name whose meaning depends on which signal produced it.
     pub terminal_reason: Option<String>,
@@ -117,6 +118,8 @@ pub const CONTAINER_STOPPED: &str = "CONTAINER_STOPPED";
 pub const GOAL_MET: &str = "GOAL_MET";
 /// The evaluator died.
 pub const GOAL_CLEARED_ERROR: &str = "GOAL_CLEARED_ERROR";
+/// The evaluator's Stop hook crashed before it ever produced a verdict.
+pub const EVALUATOR_ERROR: &str = "EVALUATOR_ERROR";
 /// The pane is back at the shell — no live agent.
 pub const AGENT_EXITED: &str = "AGENT_EXITED";
 /// herdr says the agent settled with the goal still set.
@@ -137,6 +140,10 @@ pub const REASON_CONTAINER_STOPPED: &str = "container-stopped";
 pub const REASON_KILLED_TIMEOUT: &str = "killed-timeout";
 /// `Status::terminal_reason`: the goal evaluator died, so no verdict can ever arrive.
 pub const REASON_GOAL_CLEARED_ERROR: &str = "goal-cleared-error";
+/// `Status::terminal_reason`: the evaluator's Stop hook failed with zero verdicts on record.
+/// That no verdict can arrive afterwards is a harness-protocol invariant — nothing re-prompts
+/// the evaluator before `kill_after` (check-ins disabled) — not a transcript invariant.
+pub const REASON_EVALUATOR_ERROR: &str = "evaluator-error";
 
 /// `<run>/out/` — one JSON line per poll of [`wait_terminal_state`], so the latch's decisions are
 /// an artifact instead of an inference. Diagnosing the 2026-08-29 TASK-002 race needed exactly
@@ -155,6 +162,7 @@ fn terminal_reason_for(state: &str, completion_evidence: bool) -> Option<&'stati
         KILLED_TIMEOUT => Some(REASON_KILLED_TIMEOUT),
         GOAL_MET => Some(REASON_GOAL_VERDICT),
         GOAL_CLEARED_ERROR => Some(REASON_GOAL_CLEARED_ERROR),
+        EVALUATOR_ERROR => Some(REASON_EVALUATOR_ERROR),
         IDLE | BLOCKED if completion_evidence => Some(REASON_GOAL_VERDICT),
         _ => None,
     }
@@ -198,22 +206,11 @@ pub fn check(manifest: &Manifest, run_dir: &Path) -> anyhow::Result<Status> {
     let mut reason = String::new();
     let mut verdicts: Option<usize> = None;
 
-    if !crate::ops::docker::is_running(&manifest.container) {
-        return Ok(Status::bare(CONTAINER_STOPPED, manifest, run_dir));
-    }
-
-    // herdr's own classification (idle|working|blocked|done|unknown|none)
-    let mut hstate = herdr::agent_status(manifest).unwrap_or_else(|| "none".to_string());
-    if hstate.is_empty() {
-        hstate = "none".to_string();
-    }
-    if hstate == "none" {
-        state = AGENT_EXITED.to_string();
-    }
-
     // 1. authoritative (claude): last evaluator verdict in the transcript
     let tr = transcript::claude_transcript(manifest);
-    if manifest.agent_kind == "claude" && tr.is_file() {
+    let claude = manifest.agent_kind == "claude" && tr.is_file();
+    let mut evaluator_error = false;
+    if claude {
         if let Some(verdict) = transcript::goal_verdict(&tr) {
             reason = verdict.reason;
             if verdict.met {
@@ -224,31 +221,79 @@ pub fn check(manifest: &Manifest, run_dir: &Path) -> anyhow::Result<Status> {
         if transcript::goal_cleared_error(&manifest.tui_log()) {
             state = GOAL_CLEARED_ERROR.to_string();
         }
+        evaluator_error = transcript::evaluator_hook_error(&tr);
     }
 
-    // 2. agent-side signal (both agents): the GOAL_RESULT line in the raw log
-    let result = transcript::goal_result_line(&manifest.tui_log()).unwrap_or_default();
+    // 2. agent-side signal (both agents): the GOAL_RESULT line. The transcript jsonl is
+    //    authoritative — `tui.log` is a rendering and loses the final report to redraw and
+    //    compaction (the 2026-08-31 TASK-002 run) — so the log is only a fallback.
+    let result = if claude {
+        transcript::goal_result_transcript(&tr, &manifest.task)
+            .or_else(|| transcript::goal_result_line(&manifest.tui_log()))
+    } else {
+        transcript::goal_result_line(&manifest.tui_log())
+    }
+    .unwrap_or_default();
 
-    // 3. herdr says settled and nothing else fired
-    if state == RUNNING {
-        match hstate.as_str() {
-            "idle" | "done" => state = IDLE.to_string(),
-            "blocked" => state = BLOCKED.to_string(),
-            _ => {}
+    let evidence = verdicts.is_some_and(|count| count >= 1) || !result.trim().is_empty();
+
+    // The evaluator's Stop hook crashed and never judged (zero verdicts). Terminal — polling
+    // cannot produce a verdict anymore — but only when nothing else says the work ended:
+    // completion evidence (a verdict, or the agent's verifiable GOAL_RESULT) always wins, and
+    // the gate decides whether the work may be pushed.
+    if evaluator_error && verdicts == Some(0) && !evidence && state == RUNNING {
+        state = EVALUATOR_ERROR.to_string();
+    }
+
+    let container_running = crate::ops::docker::is_running(&manifest.container);
+    let mut hstate = "none".to_string();
+    if !container_running {
+        // A stopped container must not mask artifact evidence: a verdict or a GOAL_RESULT read
+        // from disk still classifies the run. Only an evidence-free run is CONTAINER_STOPPED.
+        if state == RUNNING {
+            state = if evidence {
+                IDLE.to_string()
+            } else {
+                CONTAINER_STOPPED.to_string()
+            };
         }
-    }
+    } else {
+        // herdr's own classification (idle|working|blocked|done|unknown|none)
+        hstate = herdr::agent_status(manifest).unwrap_or_else(|| "none".to_string());
+        if hstate.is_empty() {
+            hstate = "none".to_string();
+        }
+        if hstate == "none" && state == RUNNING {
+            // No live agent. Like a stopped container, this must not mask artifact evidence:
+            // with a verdict or a GOAL_RESULT on disk the work verifiably ended, and the gate
+            // decides — the bare agent-exited hard event is for the evidence-free case only.
+            state = if evidence {
+                IDLE.to_string()
+            } else {
+                AGENT_EXITED.to_string()
+            };
+        }
 
-    // 4. herdr misreads a busy claude (spinner frames classify as idle/blocked). Fresh transcript
-    //    activity is ground truth for "working right now", so settle states downgrade to RUNNING;
-    //    verdicts and hard exits are never touched.
-    if matches!(state.as_str(), IDLE | BLOCKED) {
-        let active = transcript::recently_active(&tr, ACTIVE_WINDOW);
-        state = downgrade_if_active(&state, active).to_string();
+        // 3. herdr says settled and nothing else fired
+        if state == RUNNING {
+            match hstate.as_str() {
+                "idle" | "done" => state = IDLE.to_string(),
+                "blocked" => state = BLOCKED.to_string(),
+                _ => {}
+            }
+        }
+
+        // 4. herdr misreads a busy claude (spinner frames classify as idle/blocked). Fresh
+        //    transcript activity is ground truth for "working right now", so settle states
+        //    downgrade to RUNNING; verdicts and hard exits are never touched.
+        if matches!(state.as_str(), IDLE | BLOCKED) {
+            let active = transcript::recently_active(&tr, ACTIVE_WINDOW);
+            state = downgrade_if_active(&state, active).to_string();
+        }
     }
 
     // 5. the state is a label; the reason is what makes it terminal. `IDLE`/`BLOCKED` need
     //    completion evidence, and without it the caller keeps polling until `kill_after_min`.
-    let evidence = verdicts.is_some_and(|count| count >= 1) || !result.trim().is_empty();
     let terminal_reason = terminal_reason_for(&state, evidence).map(str::to_string);
 
     Ok(Status {
@@ -421,7 +466,9 @@ fn latch_decision(
 /// `GOAL_MET` carries an evaluator verdict by construction. `IDLE` and `GOAL_CLEARED_ERROR` do
 /// not: an `IDLE` with neither a verdict nor a `GOAL_RESULT` line is the settled-idle heuristic
 /// and nothing more, and a `GOAL_CLEARED_ERROR` before any verdict means the evaluator died
-/// without ever judging. Neither is a run whose work may be pushed.
+/// without ever judging. Neither is a run whose work may be pushed. `EVALUATOR_ERROR` is never
+/// promotable by construction (it is only classified when no completion evidence exists), like
+/// `KILLED_TIMEOUT`.
 pub fn is_promotable(status: &Status) -> bool {
     match status.state.as_str() {
         GOAL_MET => true,
@@ -548,6 +595,7 @@ mod tests {
             AGENT_EXITED,
             KILLED_TIMEOUT,
             GOAL_CLEARED_ERROR,
+            EVALUATOR_ERROR,
         ] {
             assert!(terminal_reason_for(state, false).is_some(), "{state}");
         }
@@ -566,6 +614,10 @@ mod tests {
         assert_eq!(
             terminal_reason_for(GOAL_CLEARED_ERROR, false),
             Some(REASON_GOAL_CLEARED_ERROR)
+        );
+        assert_eq!(
+            terminal_reason_for(EVALUATOR_ERROR, false),
+            Some(REASON_EVALUATOR_ERROR)
         );
         // an evaluator verdict is terminal on its own
         assert_eq!(
@@ -661,6 +713,21 @@ mod tests {
         // the evaluator died before it ever judged: nothing to promote on
         assert!(!is_promotable(&status(GOAL_CLEARED_ERROR, Some(0), "")));
         assert!(is_promotable(&status(GOAL_CLEARED_ERROR, Some(1), "")));
+        // the evaluator's Stop hook crashed with zero verdicts: terminal, never promotable
+        let evaluator = status(EVALUATOR_ERROR, Some(0), "");
+        assert!(evaluator.terminal());
+        assert_eq!(
+            evaluator.terminal_reason.as_deref(),
+            Some(REASON_EVALUATOR_ERROR)
+        );
+        assert!(!is_promotable(&evaluator));
+        // ... but when the agent's GOAL_RESULT survived in the transcript, the evidence wins
+        // and the gate decides
+        assert!(is_promotable(&status(
+            IDLE,
+            Some(0),
+            "GOAL_RESULT task=TASK-002 status=DONE"
+        )));
         // hard exits and dialogs stay out, as before
         assert!(!is_promotable(&status(AGENT_EXITED, Some(1), "")));
         assert!(!is_promotable(&status(CONTAINER_STOPPED, Some(1), "")));
@@ -703,6 +770,20 @@ mod tests {
         assert!(!confirmed);
         assert!(candidate.is_none());
         let _ = candidate;
+    }
+
+    #[test]
+    fn evaluator_error_latches_like_any_hard_terminal() {
+        // terminal with zero evidence by construction; no warmup applies (that is IDLE-only),
+        // and it confirms once it has held for the settle window
+        let (candidate, confirmed) = observe_bare(&None, 10, EVALUATOR_ERROR);
+        assert!(!confirmed, "not before the settle window");
+        assert_eq!(
+            candidate.as_ref().map(|(state, _)| state.as_str()),
+            Some(EVALUATOR_ERROR)
+        );
+        let (_, confirmed) = observe_bare(&candidate, 45, EVALUATOR_ERROR);
+        assert!(confirmed, "confirmed after holding through the settle");
     }
 
     #[test]
