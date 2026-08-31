@@ -25,7 +25,7 @@ cap, leave STATE: IN_PROGRESS and print STATUS: INCOMPLETE.
 
 Headed (the harness): `taskfmt run --agent <claude profile>` starts `claude --dangerously-skip-permissions --session-id <uuid> --add-dir /task --add-dir /progress --model <M> --effort <E>` (`ops/container.rs claude_agent_cmd`) under herdr and sends the block above with `herdr agent prompt task`; acceptance = `goal_status` sentinel in the session transcript (`run.rs confirm_acceptance`; `taskfmt status` reads the verdicts).
 
-Headless (reference only; runs are headed under herdr — see `docs/research/notes/headed-herdr-harness.md`):
+Headless (reference only; runs are headed under herdr — see `README.md`):
 
 ```sh
 claude -p "/goal <condition above>" \

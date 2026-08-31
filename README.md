@@ -90,7 +90,6 @@ No completed ablation matrix yet proves that one wording or checklist style prod
 | `experiments/fixtures/` | Shared deterministic seed data. |
 | `experiments/runs/` | Generated run workspaces and evidence; Git-ignored. |
 | `reference/task-template/` | Canonical `task/v4` package template. |
-| `docs/research/` | Integrated research chapter and supporting source material. |
 | `experiment.toml` | Versioned paths, images, runtime, and agent profiles. |
 
 ## Authority and boundaries
