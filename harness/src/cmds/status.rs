@@ -286,9 +286,13 @@ pub fn check(manifest: &Manifest, run_dir: &Path) -> anyhow::Result<Status> {
         // 4. herdr misreads a busy claude (spinner frames classify as idle/blocked). Fresh
         //    transcript activity is ground truth for "working right now", so settle states
         //    downgrade to RUNNING; verdicts and hard exits are never touched.
+        //    With anchored completion evidence (a verdict, or a GOAL_RESULT carrying the task id
+        //    and a parseable status token — the anchoring is what made the false-positive risk
+        //    negligible) the agent has formally reported an end, so the quiet-window buys
+        //    nothing: skip the downgrade and let the evidence classify terminal immediately.
         if matches!(state.as_str(), IDLE | BLOCKED) {
             let active = transcript::recently_active(&tr, ACTIVE_WINDOW);
-            state = downgrade_if_active(&state, active).to_string();
+            state = settle_with_activity(&state, evidence, active).to_string();
         }
     }
 
@@ -316,7 +320,18 @@ const ACTIVE_WINDOW: Duration = Duration::from_secs(300);
 
 /// herdr misclassifies a busy claude: spinner frames read as idle/blocked. The transcript is the
 /// ground truth for "is the agent doing anything": fresh activity downgrades those two states
-/// back to RUNNING. Verdicts and hard exits are never downgraded.
+/// back to RUNNING — the rescue for a genuinely busy agent going quiet in herdr's eyes.
+/// Verdicts and hard exits are never downgraded, and neither is a settle state backed by
+/// anchored completion evidence (a real evaluator verdict, or a GOAL_RESULT carrying the task
+/// id plus a parseable status token): the agent has formally reported an end, and that
+/// anchoring already removed the false-positive risk, so the quiet-window buys nothing there.
+fn settle_with_activity(state: &str, evidence: bool, transcript_active: bool) -> &str {
+    if evidence {
+        return state;
+    }
+    downgrade_if_active(state, transcript_active)
+}
+
 fn downgrade_if_active(state: &str, transcript_active: bool) -> &str {
     if transcript_active && matches!(state, IDLE | BLOCKED) {
         RUNNING
@@ -793,6 +808,29 @@ mod tests {
         assert!(!confirmed);
         let (_, confirmed) = observe(&candidate, 45, GOAL_MET);
         assert!(confirmed);
+    }
+
+    /// The latency fix: completion evidence (an anchored GOAL_RESULT or a real verdict) means
+    /// the agent formally reported an end, so fresh transcript activity must NOT keep the run
+    /// in RUNNING for the whole 300 s quiet-window — the terminal classification is immediate
+    /// (the latch settle still applies, unchanged). `check()` itself is not directly testable
+    /// (docker/herdr), so the rule is exercised at the `settle_with_activity` seam.
+    #[test]
+    fn completion_evidence_skips_the_recent_activity_downgrade() {
+        // IDLE + evidence + fresh activity: stays IDLE, stays terminal-classifiable
+        assert_eq!(settle_with_activity(IDLE, true, true), IDLE);
+        assert_eq!(settle_with_activity(BLOCKED, true, true), BLOCKED);
+        assert_eq!(
+            terminal_reason_for(settle_with_activity(IDLE, true, true), true),
+            Some(REASON_GOAL_VERDICT),
+            "evidence + activity must not delay terminal classification"
+        );
+        // IDLE + no evidence + fresh activity: downgraded to RUNNING, exactly as today
+        assert_eq!(settle_with_activity(IDLE, false, true), RUNNING);
+        assert_eq!(settle_with_activity(BLOCKED, false, true), RUNNING);
+        // no fresh activity: evidence changes nothing
+        assert_eq!(settle_with_activity(IDLE, true, false), IDLE);
+        assert_eq!(settle_with_activity(IDLE, false, false), IDLE);
     }
 
     #[test]
