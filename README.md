@@ -1,56 +1,63 @@
 # task-format
 
-## The question
+`task-format` is a research harness for answering one practical question: how should a bounded task package be written so a coding agent produces predictable, verifiable work?
 
-> Hand one bounded task to a fresh coding agent in a fresh container. Change only **how the task package is written**. Which structure makes the agent's output most predictable?
+## Why this exists
 
-Same task. Same machine gate. Fresh container, fresh clone, fresh agent. Only the way the task is written changes. That is the whole project — everything else exists to make the answer trustworthy.
+Coding agents can drift when a task has unclear scope, unresolved decisions, weak completion criteria, or too much unrelated context. An agent saying that work is done is not proof that it is correct. This project tests whether a precise task contract and an independent machine gate make outcomes more reliable.
 
-The artifact under study is the **task package** the agent receives: task content in `README.md` (including typed acceptance blocks), the agent protocol in `AGENTS.md`, and declarative gate config in `verify.toml`.
+The project changes the task package, not the task itself. Each run gives one agent one bounded task in a fresh container and a fresh clone, then measures the result with the same gate.
 
-## Why it matters
+## What a task package contains
 
-Agents (Claude Code first, Codex second) are told what to do in markdown, and the same task can be written many ways — a vague one-liner, a strict checklist, a spec with acceptance criteria. Task-writing advice today is folklore: "be specific", "add acceptance criteria". We could find no controlled comparison of structured vs prose task specs, so this project builds one.
+- `README.md` defines the task-specific goal, requirements, acceptance criteria, fixed decisions, scope, and checklist.
+- `AGENTS.md` defines the shared execution protocol and progress rules.
+- `verify.toml` declares the completion gate: commands, required and forbidden paths, patterns, and the scope whitelist.
+- `decisions.md`, when present, holds binding decisions.
+- `trusted/`, when present, contains planner-owned verification material overlaid into the working repository before the agent starts.
 
-Predictability = harness-computed metrics (pass rate, false-DONE rate, scope violations, diff stability across repeats) — never the agent's own claim, never a human eyeball.
+The package is mounted read-only. The agent changes code in `/work` and keeps progress only in `/progress/progress.md`; that progress file is never committed.
 
 ## How a run works
 
-```mermaid
-flowchart LR
-    T["Task package<br/>README + AGENTS.md + verify.toml"] --> F["Fresh container<br/>+ fresh clone of<br/>empty experiment repo"]
-    F --> A["Agent works headed (herdr)<br/>only progress.md writable"]
-    A --> G{{"Machine gate<br/>taskfmt verify"}}
-    G -->|PASS| P["commit + push main"]
-    G -->|FAIL| X["nothing pushed"]
-    P --> M["Metrics recorded"]
-    X --> M
-    M --> W["Which structure<br/>predicts best?"]
-    W -. "change one variable,<br/>run again" .-> T
-```
+1. `taskfmt` starts from a fresh clone or fetch of the experiment repository.
+2. It overlays trusted verification material and records a trusted base commit.
+3. It gives the read-only task package to one agent in a fresh headed container.
+4. The agent iterates against `taskfmt verify`.
+5. The host reruns the gate. Only a PASS can be promoted to `main`; failed or blocked runs are never pushed.
 
-Rules that keep runs comparable:
+Predictability is computed by the harness, not self-reported by the agent. Measurements include gate pass rate, false-DONE rate, scope violations, verification evidence, and diff stability across repeated runs.
 
-1. One task = one fresh container = one fresh clone of a disposable experiment repo. Never reuse state.
-2. The agent sees the task read-only; only `progress.md` is writable, and it is never committed.
-3. A machine gate decides PASS/FAIL. A failed task never pushes.
-4. All orchestration is one Rust binary, `taskfmt` — no shell scripts in the execution path.
-5. Agents run headed (live terminal via herdr) so any session can be inspected.
+## Current status
 
-## What's inside
+The `task/v4` control format and Rust harness are built. `TASK-001` through `TASK-007` exercise the system by building a terminal PostgreSQL client (`pgtui`) from an empty experiment repository. They are control and shakeout work, not measured comparisons: no format-comparison results exist yet.
 
-| Path | What it is |
-|---|---|
-| `docs/research/RESEARCH-FINDINGS.md` | Source of truth: method, metrics, decisions D1–D39 |
-| `reference/task-template/` | The pure task-package template (schema `task/v4`) |
-| `harness/` | `taskfmt` — all execution tooling, one Rust binary |
-| `experiments/` | Task packages TASK-001..007, fixtures, run outputs (data only) |
-| `experiment.toml` | Versioned experiment manifest: images, runtime, agent profiles |
+## Start here
 
-## Status
+- Research method, design decisions, metrics, and open questions: [research findings](docs/research/RESEARCH-FINDINGS.md).
+- Running and operating the Rust CLI: [harness guide](harness/README.md).
+- Authoring a package: [task template](reference/task-template/).
+- Experiment packages, fixtures, and run data: [experiments](experiments/).
 
-The control format (`task/v4`) is built; the comparison matrix (checklist depth, rule count, protocol placement, executable checklists, …) is the planned comparison phase, run as one-variable-at-a-time ablations against the control. Today the sequence TASK-001..007 exercises the harness end to end, building a complete terminal PostgreSQL client (`pgtui`, Rust) from an empty repo, one gated task at a time — shakeout runs, not measured comparisons yet.
+## Repository map
+
+| Path | Purpose |
+| --- | --- |
+| `harness/` | Rust `taskfmt` CLI: linting, verification, container dispatch, status, promotion, and experiment orchestration. |
+| `reference/task-template/` | Canonical agent-visible `task/v4` package template. |
+| `experiments/tasks/` | Versioned task packages used as experiment data. |
+| `experiments/fixtures/` | Seed data and trusted-material specification. |
+| `experiments/runs/` | Local run artifacts; ignored by Git. |
+| `docs/research/` | Research inputs, synthesized findings, decisions, and backlog. |
+| `experiment.toml` | Versioned experiment manifest: paths, images, runtime, and agent profiles. |
+
+## Boundaries that protect the experiment
+
+- The task package is the research object. Preserve `reference/task-template/` and `experiments/tasks/` structure and task metadata unless deliberately changing an experiment variant.
+- A task may modify only paths listed in its `expected_paths` and `verify.toml` `allowed_globs`; the two lists must match.
+- `taskfmt verify` is the completion authority. A passing agent report without a passing host gate is not a successful run.
+- Runs are isolated. Do not reuse a previous workspace or container as a new experimental result.
 
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE).
+Apache License 2.0. See [LICENSE](LICENSE).

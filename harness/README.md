@@ -1,128 +1,137 @@
-# taskfmt — the Rust harness (schema task/v4)
+# taskfmt harness
 
-One Rust CLI replaces all dispatch tooling. The crate lives here (`harness/Cargo.toml`, binary `taskfmt`); the same binary runs on the host and, baked into the images, inside the container (`container-entrypoint`, `prereqs`, `agent-launch`). No executable shell script exists in the execution path — Dockerfiles and declarative config/data (`verify.toml`, `experiment.toml`, `goal-prompt.md`, `testdata/`) are the only non-Rust files.
+`taskfmt` runs bounded coding tasks with an AI agent, then independently checks the result before it can reach `main`.
+
+AI agents can change a repository quickly. That speed is useful only when the requested outcome, allowed change surface, proof, and promotion rule are explicit. This harness makes those boundaries executable: one task runs in one fresh container, its result is gated on the host, and only a passing run can be promoted.
+
+The Rust crate and `taskfmt` binary live in this directory. Repository-level settings live in [`experiment.toml`](../experiment.toml).
+
+## What it does
+
+For each task, `taskfmt`:
+
+1. Lints the task package before dispatch.
+2. Creates a fresh workspace from the experiment repository's `main` branch.
+3. Adds planner-owned trusted verification material to that workspace.
+4. Starts one headed agent container with a writable `/work` workspace and read-only task instructions.
+5. Records run state under `experiments/runs/`.
+6. Re-runs the completion gate outside the agent container.
+7. Promotes only a passing result, using a signed commit and pushing `main`.
+
+The harness supports Claude and Codex agent profiles. Images are built from [`images/`](images/); profile, runtime, repository, and path settings belong in [`experiment.toml`](../experiment.toml).
+
+## Concepts
+
+- **Task package** — planner-owned instructions and verifier inputs. Start from the [task template](../reference/task-template/README.md); configured packages are under [`experiments/tasks/`](../experiments/tasks/).
+- **Trusted material** — tests, fixtures, support code, or other verifier inputs supplied by the planner. It is added to the run workspace before the agent starts and is outside the agent's allowed output paths.
+- **Run** — one task, one fresh container, one recorded workspace. Its record is `experiments/runs/<id>/manifest.json`.
+- **Gate** — `taskfmt verify`, run again by the host against the recorded run. A pass requires exit status 0 and `DONE` as the last stdout line.
+- **Promotion** — a signed commit and push to `main`. `taskfmt promote` refuses a failed or missing gate result.
+
+Task-package Markdown, the launch prompt, and bundled task fixtures are executable inputs. Do not casually rewrite them while changing operator documentation.
+
+## Start an experiment
+
+Preload the pinned prerequisite image, then build agent images when the local image cache is not ready:
+
+```sh
+taskfmt preload
+taskfmt build-images --agent all
+```
+
+Run one task against an existing repository:
+
+```sh
+taskfmt lint TASK-001
+taskfmt run --task TASK-001 --repo <repository-url> --agent codex-default
+taskfmt status <run-id> --wait
+taskfmt gate <run-id>
+taskfmt promote <run-id>
+```
+
+Without `--repo`, `taskfmt run` can create a disposable private experiment repository. To run a selected series, use the complete loop:
+
+```sh
+taskfmt experiment --tasks 1-3 --repo <repository-url> --agent codex-default
+```
+
+Commands that change state or spend substantial resources ask for confirmation. Use `--auto` or `--yes` for unattended execution; a non-interactive shell requires one of them. Read-only commands do not prompt.
+
+## Follow a run
+
+```sh
+taskfmt ps
+taskfmt status <run-id>
+taskfmt attach <run-id>
+taskfmt gate <run-id>
+```
+
+`attach` reconnects to the agent TUI; detach with `ctrl+b q`, not `ctrl+c`. A `<run-id>` may also be the container name, run directory, or that run's `manifest.json` path. `taskfmt ps` works without a manifest and is the quickest way to find local runs.
+
+## Verification and safety
+
+`taskfmt lint` checks task-package structure before a run. `taskfmt progress-init` creates the agent's uncommitted progress file from the package README.
+
+`taskfmt verify` runs commands declared by the package's `verify.toml`, checks the allowed change scope, and checks progress unless disabled explicitly. `taskfmt gate` repeats that verification on the host using the run's trusted snapshot. A passing agent report alone never promotes code.
+
+Use `--selfcheck` with `run` or `experiment` to test a task gate before dispatch. `taskfmt selfcheck` requires the untouched base to fail relevant focused checks; with a reference solution, it also requires the gate to pass. Selfcheck is opt-in because it uses the task's host toolchain; dispatch refuses both a failing result and a no-verdict result.
+
+Secrets in agent profiles are references, not values. They are resolved only at dispatch, passed through a temporary mode-0600 environment file, then redacted from harness output and records.
+
+## Configuration
+
+Every command that needs repository layout, images, or profiles reads [`experiment.toml`](../experiment.toml). Selection order is:
+
+1. `--config <path>`
+2. `TASKFMT_CONFIG`
+3. Nearest `experiment.toml` found by walking upward from the current directory
+
+Paths in the manifest resolve relative to that manifest, so commands can run from any subdirectory. Set agent profile, model, effort, static environment, secret references, image names, task directory, run directory, and runtime limits there.
+
+## Useful commands
+
+```text
+taskfmt lint [TASKS...]              validate task packages
+taskfmt progress-init <TASK>         create initial progress file
+taskfmt verify [FLAGS]               run task completion gate
+taskfmt selfcheck <TASK> <WORKSPACE> prove gate distinguishes base from solution
+taskfmt run --task <TASK>             dispatch one containerized task
+taskfmt status <RUN> [--wait]         inspect or wait for a run
+taskfmt attach <RUN>                  reconnect to agent TUI
+taskfmt gate <RUN>                    run host-side gate
+taskfmt promote <RUN>                 signed commit and push `main` after a pass
+taskfmt experiment [FLAGS]            run selected tasks in order
+taskfmt ps [--json]                  list local run containers
+taskfmt build-images [--agent ...]   build harness images
+taskfmt preload                       cache pinned prerequisite image
+taskfmt fingerprint [FLAGS]          inspect host, source, or image binary fingerprint
+taskfmt selftest                      test bundled harness corpus and gate behavior
+```
+
+Run `taskfmt --help` or `taskfmt <command> --help` for command flags. `selfhost` is an advanced, separate command family; its subcommand help is the operator reference.
+
+## After changing this crate
+
+The host binary and image-baked binary must match. `taskfmt run` compares their content fingerprints and refuses dispatch when they differ. After changing harness Rust code, reinstall the binary and rebuild the affected images.
+
+Run the harness checks from repository root:
+
+```sh
+cargo fmt --manifest-path harness/Cargo.toml --check
+cargo clippy --manifest-path harness/Cargo.toml --all-targets -- -D warnings
+cargo test --manifest-path harness/Cargo.toml
+cargo run --manifest-path harness/Cargo.toml -- selftest
+```
+
+## Repository layout
 
 ```text
 harness/
-  Cargo.toml + src/ + tests/     the CLI (lint, progress-init, gate, selfcheck, selftest, images,
-                                 repo lifecycle, dispatch, attach/status, experiment loop)
-  build.rs + checks/             the content fingerprint baked into the binary, and the suite that
-                                 drives the dispatch-time comparison (a declared [[test]] target
-                                 outside tests/, so the image build never receives it)
-  experiment.toml                the experiment manifest (schema experiment/v1) — repo root
-  images/taskfmt/Dockerfile      multi-stage rust build -> harness-taskfmt:latest (just the binary)
-  images/base/Dockerfile         harness-base: tools + inner docker + herdr + rustup + taskfmt
-  images/claude|codex/Dockerfile agent layers on harness-base
-  images/common/herdr-config.toml  baked herdr server config
-  images/preload/postgres.digest   pinned postgres:16-alpine digest (committed)
-  images/preload/postgres.tar      gitignored; regenerated by `taskfmt preload`
-  goal-prompt.md                 the /goal launch prompt (data)
-  testdata/example/              typed lint corpus (TASK-042, v4) used by selftest
+  src/                 taskfmt implementation
+  tests/               integration and behavior tests
+  checks/              fingerprint command checks
+  images/              taskfmt, base, Claude, and Codex image definitions
+  testdata/            bundled lint and gate corpus; do not edit as documentation
+  goal-prompt.md       dispatched runtime input; do not edit as documentation
+  Cargo.toml           crate manifest
 ```
-
-The `taskfmt` inside a run container is the copy baked into `harness-base` by `taskfmt build-images`, not the host binary. After editing the crate, reinstall it **and** rebuild the images: `taskfmt run` compares the two at dispatch and refuses to launch when they are different builds, naming both values and the remedy. The comparand is the content fingerprint `build.rs` bakes in — a SHA-256 over `Cargo.toml`, `Cargo.lock`, `build.rs` and every file under `src/`, which is exactly what the image build stage receives — and not `version`, which a forgotten reinstall leaves untouched. `taskfmt fingerprint` prints this binary's value, `--path DIR` recomputes it over a crate directory, and `--image IMAGE` reports an image's own by executing the binary it carries.
-
-## The task package (what ships to the agent)
-
-| File | Mount | Owner | Content |
-| --- | --- | --- | --- |
-| `README.md` | `/task` ro | planner | frontmatter (`schema: task/v4`, `id`, `title`, `kind`, `verify: "taskfmt verify"`, `expected_paths` whitelist); Goal; Context; Preconditions with commands; Scope; Requirements `R-*`; typed acceptance blocks `AC-*`; Fixed decisions `D-*`; static checklist between `<!-- checklist:start/end -->`. |
-| `decisions.md` | `/task` ro | planner | the fixed decisions verbatim (mounted next to the README). |
-| `AGENTS.md` (+ `CLAUDE.md` symlink) | `/task` ro | fixed | execution protocol, progress grammar, final report; the gate is `taskfmt verify`. |
-| `verify.toml` | `/task` ro | planner | declarative gate inputs: `focused`/`regression`/`lint` command lists, `forbidden_patterns` (regex + optional paths), `forbidden_paths` (must not be created or modified vs the base commit), `required_paths`, `allowed_globs` (== `expected_paths`). |
-| `trusted/` | overlay → `/work`, committed as the trusted base commit (lands on `main` ahead of the agent's commit — a push carries ancestors, and later tasks build on this material) | planner | tests, support harness, seed SQL, `render.rs`, fonts — verification material, outside every whitelist. |
-| `progress.md` | `/progress` rw | agent | generated per run by `taskfmt progress-init` from `README.md`; never committed. |
-
-Scope base resolution: `--base` > `TASKFMT_BASE` env (set by dispatch to the recorded trusted commit SHA, never to the tag) > `base_ref` in verify.toml > `baseline` tag. The scope base of record is `manifest.json` `base_sha`: the `baseline` tag lives in the agent-writable `/work`, so a stray `git tag -f` could move it; the in-container `taskfmt verify` and the host gate both pin the SHA, and `taskfmt status` reports `base_tag_ok` (live tag == recorded SHA). The tag stays for humans.
-
-## Commands
-
-```sh
-taskfmt lint [TASKS..]                # author checklist, mechanically (exit 1 on any ERROR)
-taskfmt progress-init <TASK> [-o F]   # README.md -> initial progress.md (lints first)
-taskfmt selftest                      # lint corpus + mutants + progress shape + 10-tamper gate matrix
-                                      #   + repo-wide AGENTS.md/CLAUDE.md symlink audit
-taskfmt verify [flags]                # THE GATE: exit 0 and last line DONE <=> pass
-taskfmt selfcheck <TASK> <WS> [--base R] [--reference D|F.patch] [--keep]
-                                      #   D13/D36: gate RED on the untouched base (nop + focused
-                                      #   polarity), GREEN on the reference (oracle); exit 0 only
-                                      #   on PASS, 69 when any command could not run (NOVERDICT)
-taskfmt build-images [--agent all] [--no-cache]
-taskfmt preload                       # pull pinned postgres:16-alpine -> docker save -> preload tar
-taskfmt repo create [--name N]        # gh private repo + allow-empty bootstrap commit on main
-taskfmt repo delete [--name N]
-taskfmt run --task TASK-00N [--repo URL] [--agent PROFILE] [--model M] [--effort E]
-                                      #   [--wait] [--exp ID] [--selfcheck]  — one task, one
-                                      #   fresh container, one fresh clone/fetch of origin/main
-taskfmt gate <RUN>                    # host gate on the run workspace (trusted snapshot copies)
-taskfmt promote <RUN>                 # commit -s + push main; refuses unless the gate PASSED
-taskfmt status <RUN> [--wait] [--kill-after MIN]
-taskfmt attach <RUN>                  # docker exec -it ... herdr (detach: ctrl+b q — never ctrl+c)
-taskfmt ps [--json]                   # the run containers on this host; needs no manifest
-taskfmt experiment [--tasks 1-3,5|all] [--repo URL] [--agent PROFILE] [--auto] [--resume ID]
-                                      #   [--selfcheck]
-```
-
-Globals: `--config PATH`, `--auto`, `--yes`, `-v`. The manifest is `--config` > `$TASKFMT_CONFIG` > the nearest `experiment.toml` at or above the current directory (discovery walks up to `/`; not finding one names every directory searched). An explicit `--config`/`$TASKFMT_CONFIG` path is resolved against the cwd and used as given — never discovered. `paths.*` always resolve against the manifest's own directory, so every command works from any subdirectory of the checkout. Interactive by default: every mutating/expensive step prints what it will do and asks `[y/N]`; `--auto` prints the plan and proceeds; no TTY without `--auto`/`--yes` is a hard error for mutating commands.
-
-The four commands that take a `<RUN>` resolve it **against the run itself first**, and only then against the process: the argument may be a run id, its container name (`harness-<run id>`), its run directory, or the path of that directory's `manifest.json`, and a container answers with its own `taskfmt.*` labels (`run_id`, `run_dir`, `manifest`, `task`, `profile`, `exp`) or, for a container launched before those labels existed, with the parent of its `/work` bind mount. The manifest that dispatched a run is therefore the manifest that gates it, whatever directory the operator is standing in; `--config` / `$TASKFMT_CONFIG` / cwd discovery decide only when the argument names no run on this host. `taskfmt ps` needs none of it — it asks docker, so it works from anywhere and is what every "cannot locate a run" error points at.
-
-## Lifecycle (one experiment, gate-protected)
-
-1. `taskfmt repo create` — disposable private GitHub repo; `main` = one allow-empty bootstrap commit.
-2. For every task in order: fresh clone/fetch of `origin/main` → record base SHA → overlay `trusted/` → commit it as the trusted base (pushed together with the task commit) → task snapshot → lint → gate selfcheck only with `--selfcheck` (D13/D36, `runs/<id>/selfcheck.log`; refuses on FAIL) → `progress-init` → container (`docker run -d --privileged`, no `--rm`; `/work`, `/task:ro`, `/progress`, `/agent-home`, `/out`, `/seed:ro`; `TASKFMT_BASE=<base SHA>`; `--label taskfmt.run_id/run_dir/manifest/task/profile[/exp]`, which is how every later command finds the run from the container alone) → prereq stage (inner dockerd `vfs`, `docker load` postgres, standing `prereq-postgres`, seed restore) → herdr pane + agent → inject the one-line `/goal` prompt: the first ```` ```text ```` block of `harness/goal-prompt.md` whose info string names the profile's agent kind (`text claude`, `text codex`, or the shared `text claude codex`), collapsed to one line (`<run>/prompt.txt`).
-3. On completion: host `gate` re-runs `taskfmt verify` against trusted copies. PASS ⇒ `promote` (`git commit -s`, push `main`). FAIL/BLOCKED ⇒ never pushed; the experiment stops there.
-4. Every step lands in `runs/<id>/manifest.json` (+ `experiment.json` for the loop): repo URL, base/result SHAs, gate verdict, agent profile/model/effort, session id, container.
-
-Secrets: `env_secret` values are **references**, resolved at dispatch only. `file://NAME` names a regular file, mode exactly 0600, directly inside `$HOME/.config/taskfmt/` — a bare name with no `/`, refused unless the canonicalized leaf's parent is exactly that directory, and resolved with no subprocess; every other reference is handed to `op read`. Either way the resolved value is passed to the container via a 0600 env-file that is deleted immediately after `docker run` returns, and registered with the redactor that scrubs every output path. Values never appear in argv, logs, transcripts, artifacts, or any tracked file.
-
-Developer-commit attribution: `promote`'s experiment-repo commits are already machine-stamped from `manifest.json`; commits an agent makes directly in this checkout (`git commit -s` in a Bash tool, for `harness/` fixes or docs) are not. A one-time-per-clone `git config core.hooksPath .githooks` installs `.githooks/prepare-commit-msg`, which appends `Co-Authored-By:`/`Claude-Session:` trailers when absent, before `-s`'s `Signed-off-by:` line, deriving the model from `$CLAUDE_MODEL` or `git config taskfmt.commit.actor` (default `Claude Opus 5`) and the session from `$CLAUDE_SESSION_URL` or `git config taskfmt.commit.session`; it no-ops on `--amend`/merges/reused messages and on commits already carrying the trailers or made by `harness@localhost` (`promote`'s own commits). This is a client-side git hook fired only by an interactive/scripted `git commit` on a developer's clone, not part of the execution path the "no executable shell script" rule (above) covers — `taskfmt` itself never invokes it.
-
-### Gate selfcheck (D13, D36)
-
-`taskfmt selfcheck <task-dir> <workspace> [--base <sha|ref>] [--reference <dir|file.patch>] [--keep]`
-
-Proves one package's gate distinguishes "not done" from "done" (SWE-bench FAIL_TO_PASS/PASS_TO_PASS, Harbor nop/oracle). `<workspace>` is a git repo at the trusted base commit (the run's `workspace/` after the `baseline` tag); it is never mutated — every phase runs in a scratch copy under `TMPDIR` (`--keep` retains it). The progress check is disabled throughout.
-
-- **nop** — `taskfmt verify --no-progress` on the untouched base must exit 1 with `RESULT FAIL` from real checks (exit 2 = no config, 70 = internal error are not verdicts).
-- **polarity** — from the same run: every `focused.N` must FAIL on the base. `regression.N` results are reported as INFO only, never a verdict: under D28 a package ships its own new tests in `trusted/`, so a regression command may legitimately be RED at the base. Empty `[focused]` = nothing proves RED = BAD. A command that cannot run (rc 126/127 or a spawn failure — toolchain missing) is **NOVERDICT**: reported as polarity BAD with "toolchain missing / command not runnable", never counted as a RED that proves anything.
-- **oracle** — only with `--reference`: dir mirrored over the tree (`.git` kept) or `.patch`/`.diff` via `git apply`; everything staged; gate must PASS with `DONE` and every focused/regression PASS. Reference solutions do not ship yet, so `taskfmt run` invokes nop+polarity only and prints `SELFCHECK oracle SKIPPED (no reference)`.
-
-Output: gate lines indented `  | `, then `NOP …`, `POLARITY <focused|regression>.<i> <FAIL|PASS>-ON-<BASELINE|REFERENCE> OK|BAD|INFO|NOVERDICT got=… cmd=…`, `SELFCHECK nop|polarity|oracle PASS|FAIL|SKIPPED|NOVERDICT`, `SELFCHECK RESULT PASS|FAIL|NOVERDICT`. Exit 0 only on RESULT PASS; 1 FAIL; 66 missing input; 69 NOVERDICT (some command could not run — no verdict either way); 70 internal error.
-
-Dispatch precondition — **opt-in**: `taskfmt run --selfcheck` / `taskfmt experiment --selfcheck` run nop+polarity on the freshly built workspace after lint (lint always runs first) and refuse to dispatch on FAIL (`runs/<ID>/selfcheck.log`). Default is off; there is no `--skip-selfcheck`. `manifest.json` records `selfcheck: not-run | pass | fail | noverdict`. The host-side check executes the fixture's own toolchain on the host, so postgres-backed focused tests (TASK-004+) and TASK-001 (empty repo, no toolchain) yield NOVERDICT rather than a verdict. The container-mode selfcheck (run inside the run image during the prereq stage, after postgres is up) is pending — backlog, findings §7; once it exists the precondition becomes default-on.
-
-### Status (`taskfmt status <RUN> [--wait] [--kill-after MIN]`)
-
-One JSON line from three signals in order of trust: the transcript `goal_status` verdict (claude), the `GOAL_RESULT` line in `<run>/out/tui.log`, herdr's agent status (`idle`/`done` settled, `blocked` dialog, target gone = agent exited). Fields: `state`, `herdr_status`, `goal_reason`, `goal_result_line`, `report_status` (the `status=` token of that line — `DONE|BLOCKED|NEEDS_REPLAN|INCOMPLETE`, null otherwise; a label, never load-bearing), `goal_verdicts` (real evaluator verdicts; `null` for codex — the rollout JSONL is not parsed), `transcript` (claude session path, or `n/a (rollout jsonl not parsed)`), `base_sha` (the recorded trusted commit) and `base_tag_ok` (diagnostic only — live `baseline` tag == `base_sha`; `false` when the tag moved or was deleted; `null` when the run workspace is absent or git could not answer, e.g. an index lock, which is not drift). The gate never reads the tag. `--kill-after` sends `/goal clear` and reports `KILLED_TIMEOUT`. The last rendered screen lands in `<run>/out/screen.txt`. The trusted verdict remains the host `taskfmt gate`.
-
-### Codex (headed, native `/goal`)
-
-- Dispatch is the Codex TUI under herdr, never `codex exec` (which has no goal flag, findings §2 [O1]). Profile `codex-default` (`experiment.toml`: kind `codex`, no model pin, effort `high`, image `harness-codex:latest`) runs `codex --dangerously-bypass-approvals-and-sandbox --no-alt-screen -C /work --add-dir /task --add-dir /progress [-m M] -c model_reasoning_effort="E"` (`ops/container.rs codex_agent_cmd`; `-m` only when a model is pinned) and injects the ```` ```text claude codex ```` block of `goal-prompt.md` — the same `/goal` condition Claude gets — with `herdr agent prompt task`. Goal lifecycle commands per the cookbook: `/goal`, `/goal pause`, `/goal resume`, `/goal clear` (`taskfmt status --kill-after` sends the last one).
-- `config.toml` has one source, `container::codex_config_toml` (`preseed_agent_home` writes it into the fresh `/agent-home` = `$CODEX_HOME`): `approval_policy = "never"`, `sandbox_mode = "danger-full-access"`, `[features] goals = true`, `/work` trusted, tooltips/animations off; per-run model/effort go on the command line (`-m`, `-c model_reasoning_effort`).
-- Goal verdicts are not measured for Codex: the rollout JSONL is not parsed, so `taskfmt status` prints `goal_verdicts: null` and `transcript: n/a (rollout jsonl not parsed)`; dispatch confirms only that herdr reports the agent `working`; completion rests on `GOAL_RESULT` in `tui.log` + herdr `idle`/`done`, then the host gate.
-- UNVERIFIED until a run exists: `/goal` submission through `herdr agent prompt` (slash popup vs Enter), goal events in the rollout JSONL, whether `[features] goals = true` is still needed at 0.150.1.
-
-## Author checklist (enforced by `taskfmt lint`)
-
-- One outcome, one repo, one subsystem, no open decisions, no dependency on prior chat.
-- Frontmatter: `schema: task/v4`, `id: TASK-<n>`, allowed `kind`, `verify`, `expected_paths`; every required H2 present in template order (ERROR).
-- No template `<...>` placeholders left in `README.md` outside code spans (a bare `<...>` or one that is the entire inline-code span counts; `<...>` inside a longer code span is literal) and none in `verify.toml` (ERROR).
-- No duplicate `P-*`/`R-*`/`D-*` definitions or `AC-*` rows (ERROR).
-- Every `P-*` line carries a backticked command (ERROR). Every typed `AC-*` block has valid metadata, real `Covers` IDs, a constrained `gherkin` body when non-gate, an exact `Evidence` command, and an `Expected` result (ERROR); each AC command appears verbatim in `verify.toml` (WARN when absent). Legacy acceptance tables remain accepted for parser compatibility.
-- Checklist (ERROR): one block; IDs unique and contiguous; depth matches indentation (0/4/8/12 spaces = 1-4 components); max depth 4; 5-20 leaves; every leaf has `evidence:` naming a backticked command or an "exits 0" claim (gate leaf exempt); no two items with identical evidence text; no single-child parent; every `AC-*` cited on a leaf or on a parent that carries its own `evidence:`; last leaf is the `taskfmt verify` gate.
-- Every `R-*` is cited by an AC row or a checklist item (a parent's citation covers its leaves; ranges `R-002..R-004` expand) (ERROR). Behavioral `R-*` are cited on the item whose evidence proves them; policy `R-*` (no new deps, final design) on the diff-review leaf. Citing everything on the gate leaf satisfies the lint and is an anti-pattern — it proves nothing per requirement.
-- For `kind: feature`/`bugfix`, `AC-001` is the Goal path end-to-end and the Baseline command is the AC-001 command; the first implementation item's evidence is that command. Lint: fenced Baseline command must equal some AC evidence command (WARN otherwise).
-- `cargo test` with two or more positional filters needs ` -- ` (WARN).
-- "Read before editing" hints never reference `/task/` — binding docs are not hints (ERROR).
-- Every AC evidence command runs planner-shipped tests from `trusted/` outside `expected_paths` (D28); executor-written tests never serve as AC evidence.
-- Out of scope names at least one real adjacent behavior considered and refused.
-- `D-*` are imported from ADRs/spec/operator rulings, never invented to fill the table; `decisions.md`, when shipped, is one file per fixture and task packages copy its sections verbatim.
-- `decisions.md`, when shipped beside the README, is read: every `D-*` the `In force` declaration puts in force has a body in the same file, every `D-*` a bold Fixed-decisions bullet cites has a body, and no `D-*` has two bodies (ERROR). A body is a `- **D-NNN …` bullet or a `# `..`###### ` heading, and runs to the next body line; `## D-010's other half` is prose about `D-010`, not a second one. A declaration naming no id warns and checks nothing; a `Full text:` promise with no `decisions.md` beside the README warns (WARN). No `decisions.md` is silence, not a finding.
-- `oracle` (WARN, an over-approximation on purpose — satisfiability of a decision against a test suite is undecidable, so the rule reports rather than refuses): a decision that calls a backticked span `not used`/`never used`/`does not exist`/`do not exist` while a `.rs` file under `trusted/` has a string literal containing it, and a decision naming a backticked `tests/` path ending `.rs`/`.sql`/`.toml` that `trusted/` has no home for. No `trusted/` tree is silence.
-- `expected_paths` (scope whitelist) covers what the solution may change or create and equals `allowed_globs`; no other path list exists. `verify.toml` parses and has at least one `focused` command (ERROR).
-- Gate must fail on the untouched pre-task state and pass on a correct implementation. Prove it with `taskfmt selfcheck <task> <workspace>` before dispatch (nop + focused polarity; oracle once a reference exists) — or `run --selfcheck`; TASK-001's negative proof is NOVERDICT on the host by construction (empty `main`, no toolchain).
-- A task with a completed run is immutable (its `progress.md` diffs against it); promote discoveries via `FOLLOW_UP` -> ADR/CONTEXT in a separate change and re-lint undispatched packages.
-- `README.md` ≤ 10,000 bytes (WARN above).
-
-`taskfmt selftest` proves lint rejects broken contracts, progress-init emits the exact initial shape, and the gate fails on every tamper and passes only on the complete DONE file. Run it (plus `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`) after touching anything in this crate.
