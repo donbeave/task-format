@@ -26,4 +26,4 @@ Compare gate pass rate, false-completion claims, scope violations, diff
 stability, retries, and rework across repeated runs. A single favorable run is
 not a format result.
 
-See the [research method](research/method.md) and [evidence standard](research/evidence.md).
+The complete rationale and evidence standard are in the [project guide](project-guide.md).

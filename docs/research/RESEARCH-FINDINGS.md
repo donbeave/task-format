@@ -1,5 +1,5 @@
 # Findings moved
 
-The current research summary is [findings.md](findings.md). This compatibility
-page remains because protected historical task artifacts link to the former
-filename.
+The current integrated research summary is [the project guide](../project-guide.md).
+This compatibility page remains because protected historical task artifacts
+link to the former filename.

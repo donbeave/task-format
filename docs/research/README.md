@@ -1,31 +1,15 @@
-# Research
+# Historical source
 
-## Purpose
+This directory preserves earlier task-format research and task-authoring
+material for provenance. It is not a second documentation system.
 
-This folder records what task-format is testing, what the project currently
-knows, and what evidence is still missing. It is a research record, not an
-execution manual.
+For the current, integrated explanation, read the [project guide](../project-guide.md).
 
-## Read this first
+## Contents
 
-1. [Findings](findings.md) — current answer and status.
-2. [Method](method.md) — comparison design and controls.
-3. [Evidence](evidence.md) — measurements and adoption rules.
-4. [Decisions](decisions.md) — principles reflected in the project.
-5. [History](history.md) — how the current design was reduced from earlier work.
-6. [Archive map](archive.md) — why protected historical trees remain.
+- `notes/` — historical investigations and design discussions.
+- `raw/` — captured drafts and task-format source material.
 
-## Research question
-
-For the same bounded coding outcome, which task-package structure makes an
-autonomous coding agent more predictable, verifiable, and less likely to drift?
-
-## Authority
-
-Use sources in this order when documents disagree:
-
-1. Harness code and `experiment.toml` for current behavior.
-2. The task template and experiment packages for the live task format.
-3. This folder for rationale, method, and research status.
-
-Historical material cannot override executable behavior or task-package rules.
+These files may describe superseded package shapes or runtime assumptions. They
+must not override the project guide, harness code, configuration, or live task
+packages. Task-related Markdown remains unchanged by documentation rewrites.
