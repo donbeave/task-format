@@ -1,6 +1,6 @@
-# Shared fixtures
+# Fixtures
 
-This directory contains static inputs shared by experiment runs. It is intentionally small: task-specific verification material lives with its task in `../tasks/TASK-*/trusted/`, where it can grow with the task series without becoming agent-authored application code.
+This directory contains deterministic inputs shared by experiment runs. It is not application source and not a place for task-specific verification.
 
 ## Default PostgreSQL seed
 

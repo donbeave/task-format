@@ -1,41 +1,29 @@
 # Experiment design
 
-## Question
+## Aim
 
-For the same bounded coding objective, which task-package structure makes agent output most predictable?
+Measure whether a change to task-package writing improves predictable,
+verifiable coding-agent work.
 
-## Design rule
+## Fair comparison
 
-Change one meaningful writing variable at a time. Keep the software objective, starting repository state, verification, container image, and agent configuration fixed for the comparison being made.
+Keep the software outcome, starting repository, trusted checks, container image,
+agent configuration, runtime limits, and host gate fixed. Change one writing
+variable at a time.
 
-Examples of candidate variables include checklist shape, rule placement, and how verification is surfaced. A variant earns adoption only after it is compared with the control format.
+## Lifecycle
 
-## Controlled run
+1. Lint the package.
+2. Create a fresh clone and record its baseline.
+3. Overlay trusted verification material.
+4. Run one agent in a persistent container.
+5. Run the gate outside the agent.
+6. Retain the record and promote only a pass.
 
-Each run uses:
+## Measures
 
-- A fresh clone of the experiment repository.
-- A recorded baseline commit.
-- One task package and its planner-owned verification support.
-- One fresh, persistent container and one agent session.
-- A host-side gate separate from the agent’s report.
+Compare gate pass rate, false-completion claims, scope violations, diff
+stability, retries, and rework across repeated runs. A single favorable run is
+not a format result.
 
-The same sequence prevents hidden state, changed tests, or a reused workspace from masquerading as a documentation effect.
-
-## Evidence
-
-The harness records outcomes that can be compared across repeated runs:
-
-- Gate pass or failure.
-- Completion claims that disagree with the gate.
-- Scope violations.
-- Diff stability and amount of rework.
-- Run artifacts needed to inspect an unexpected result.
-
-A result is useful only when the experiment preserved its constants and the gate could make a real verdict.
-
-## Current status
-
-The repository has a task/v4 control format, a Rust harness named taskfmt, and seven ordered pgtui task packages that exercise the lifecycle end to end. They are shakeout inputs for the harness and package design, not yet a completed controlled comparison matrix.
-
-The next research phase is repeated, one-variable-at-a-time ablations against that control.
+See the [research method](research/method.md) and [evidence standard](research/evidence.md).

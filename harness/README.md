@@ -1,12 +1,12 @@
-# taskfmt harness
+# Harness
 
-`taskfmt` runs bounded coding tasks with an AI agent, then independently checks the result before it can reach `main`.
+`taskfmt` runs one bounded coding task in an isolated container, verifies the result independently, and promotes only a passing result to `main`.
 
 AI agents can change a repository quickly. That speed is useful only when the requested outcome, allowed change surface, proof, and promotion rule are explicit. This harness makes those boundaries executable: one task runs in one fresh container, its result is gated on the host, and only a passing run can be promoted.
 
 The Rust crate and `taskfmt` binary live in this directory. Repository-level settings live in [`experiment.toml`](../experiment.toml).
 
-## What it does
+## Lifecycle
 
 For each task, `taskfmt`:
 
@@ -20,7 +20,7 @@ For each task, `taskfmt`:
 
 The harness supports Claude and Codex agent profiles. Images are built from [`images/`](images/); profile, runtime, repository, and path settings belong in [`experiment.toml`](../experiment.toml).
 
-## Concepts
+## Safety model
 
 - **Task package** — planner-owned instructions and verifier inputs. Start from the [task template](../reference/task-template/README.md); configured packages are under [`experiments/tasks/`](../experiments/tasks/).
 - **Trusted material** — tests, fixtures, support code, or other verifier inputs supplied by the planner. It is added to the run workspace before the agent starts and is outside the agent's allowed output paths.
@@ -30,7 +30,7 @@ The harness supports Claude and Codex agent profiles. Images are built from [`im
 
 Task-package Markdown, the launch prompt, and bundled task fixtures are executable inputs. Do not casually rewrite them while changing operator documentation.
 
-## Start an experiment
+## Common commands
 
 Preload the pinned prerequisite image, then build agent images when the local image cache is not ready:
 

@@ -1,10 +1,10 @@
-# Experiment corpus
+# Experiments
 
-This directory holds the inputs and local records for `task-format` experiments. It separates the thing being tested—the written task package—from the harness that runs it. That separation matters for coding agents: a result is meaningful only when every agent starts from the same kind of clean state and the machine, not the agent, decides whether the task passed.
+This directory contains the versioned inputs and generated records for the task-format study. The runner lives in [`../harness/`](../harness/README.md); this directory is the experiment data boundary.
 
 The executable harness lives in [`../harness/`](../harness/README.md). This directory contains no execution scripts.
 
-## Layout
+## Contents
 
 | Path | Purpose | Lifecycle |
 | --- | --- | --- |
@@ -12,7 +12,7 @@ The executable harness lives in [`../harness/`](../harness/README.md). This dire
 | [`fixtures/seed/`](fixtures/seed/) | Default PostgreSQL seed SQL copied into every run. | Shared static input. |
 | `runs/` | Workspaces, task snapshots, progress files, logs, and manifests created by dispatch. | Generated and gitignored. |
 
-## What a task package supplies
+## Package contract
 
 Each package contains the task contract (`README.md`), fixed decisions (`decisions.md`), gate configuration (`verify.toml`), and planner-owned verification material (`trusted/`). The task contract, decisions, and gate configuration are mounted read-only for the agent. The harness adds the standard task protocol from [`reference/task-template/`](../reference/task-template/) when a package does not carry it.
 
@@ -20,9 +20,9 @@ Before an agent starts, the harness creates a fresh clone of the experiment repo
 
 The series starts from an empty repository. TASK-001 creates the Rust workspace, and later tasks build `pgtui` one gated slice at a time. No task relies on fixture-supplied application code.
 
-## Operator workflow
+## Operator entry points
 
-Use `taskfmt` from the repository root:
+From the repository root:
 
 ```sh
 taskfmt lint                 # validate every task package
