@@ -61,18 +61,21 @@ RUN case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
 COPY --from=harness-taskfmt:latest /usr/local/bin/taskfmt /usr/local/bin/taskfmt
 RUN /usr/local/bin/taskfmt --version
 
-# --- unprivileged agent user + pinned rust toolchain (minimal profile PLUS the two components the
-#     corpus gate's own `[lint]` block invokes; `--profile minimal` omits them and rustup installs a
-#     PATH shim for each regardless, so their absence is only observable by running them) ---
+# --- unprivileged agent user + pinned rust toolchain (minimal profile PLUS the components the
+#     image needs: rustfmt/clippy for the corpus gate's own `[lint]` block, rust-analyzer as the
+#     server binary for the claude image's rust-analyzer-lsp plugin; `--profile minimal` omits them
+#     and rustup installs a PATH shim for each regardless, so their absence is only observable by
+#     running them) ---
 RUN useradd -m -s /bin/bash agent
 RUN curl -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh \
  && gosu agent env HOME=/home/agent sh /tmp/rustup-init.sh -y \
       --default-toolchain "${RUST_TOOLCHAIN}" --profile minimal \
  && gosu agent env HOME=/home/agent /home/agent/.cargo/bin/rustup \
-      component add --toolchain "${RUST_TOOLCHAIN}" rustfmt clippy \
+      component add --toolchain "${RUST_TOOLCHAIN}" rustfmt clippy rust-analyzer \
  && gosu agent env HOME=/home/agent /home/agent/.cargo/bin/rustc --version \
  && gosu agent env HOME=/home/agent /home/agent/.cargo/bin/cargo fmt --version \
  && gosu agent env HOME=/home/agent /home/agent/.cargo/bin/cargo clippy --version \
+ && gosu agent env HOME=/home/agent /home/agent/.cargo/bin/rust-analyzer --version \
  && rm -f /tmp/rustup-init.sh
 ENV RUSTUP_HOME=/home/agent/.rustup \
     CARGO_HOME=/home/agent/.cargo \
