@@ -75,9 +75,11 @@ Out of scope:
 
 Canonical typed acceptance blocks use taskfmt's Markdown profile. Each non-gate block has
 `Type`, `Class`, `Covers`, `Evidence`, and `Expected` metadata plus one exact `gherkin` fence.
-`Covers` names real `R-*` requirements. `Evidence` is the exact command; `Expected` is its exact
-passing result. A gate has no `Class`, `Covers`, or Gherkin body. These blocks are task metadata,
-not Cucumber feature files and have no runtime step definitions.
+`Covers` names real `R-*` requirements. `Evidence` is the exact command; use inline code for a
+short command or a fenced `sh` block for a long command. Break long shell chains after `&&` so
+each assertion is visible. `Expected` is the exact passing result. A gate has no `Class`, `Covers`,
+or Gherkin body. These blocks are task metadata, not Cucumber feature files and have no runtime
+step definitions.
 
 ### AC-001 — <primary success scenario>
 Type: scenario
@@ -96,7 +98,11 @@ Then the required observable outcome is true
 Type: scenario
 Class: failure
 Covers: R-002
-Evidence: `<focused command>`
+Evidence:
+```sh
+<focused command part one> &&
+<focused command part two>
+```
 Expected: `<expected result>`
 
 ```gherkin

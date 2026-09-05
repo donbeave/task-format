@@ -107,7 +107,22 @@ Then the workspace compiles successfully
 Type: invariant
 Class: policy
 Covers: R-001
-Evidence: `grep -qE '^ratatui = "=0\.30\.2"' Cargo.toml && grep -qE '^crossterm = "=0\.29\.0"' Cargo.toml && grep -qE '^tokio-postgres = "=0\.7\.18"' Cargo.toml && grep -qE '^turso = \{ version = "=0\.7\.2"' Cargo.toml && grep -qE '^tokio = \{ version = "=1\.53\.1"' Cargo.toml && grep -qE '^clap = \{ version = "=4\.6\.6"' Cargo.toml && grep -qE '^thiserror = "=2\.0\.20"' Cargo.toml && grep -qE '^directories = "=6\.0\.0"' Cargo.toml && grep -qE '^resvg = "=0\.48\.1"' Cargo.toml && grep -qE '^tempfile = "=3\.27\.0"' Cargo.toml && grep -qE '^testcontainers = "=0\.27\.3"' Cargo.toml && grep -qE '^testcontainers-modules = \{ version = "=0\.15\.0"' Cargo.toml && grep -qE '^nix = \{ version = "=0\.30\.1"' Cargo.toml`
+Evidence:
+```sh
+grep -qE '^ratatui = "=0\.30\.2"' Cargo.toml &&
+grep -qE '^crossterm = "=0\.29\.0"' Cargo.toml &&
+grep -qE '^tokio-postgres = "=0\.7\.18"' Cargo.toml &&
+grep -qE '^turso = \{ version = "=0\.7\.2"' Cargo.toml &&
+grep -qE '^tokio = \{ version = "=1\.53\.1"' Cargo.toml &&
+grep -qE '^clap = \{ version = "=4\.6\.6"' Cargo.toml &&
+grep -qE '^thiserror = "=2\.0\.20"' Cargo.toml &&
+grep -qE '^directories = "=6\.0\.0"' Cargo.toml &&
+grep -qE '^resvg = "=0\.48\.1"' Cargo.toml &&
+grep -qE '^tempfile = "=3\.27\.0"' Cargo.toml &&
+grep -qE '^testcontainers = "=0\.27\.3"' Cargo.toml &&
+grep -qE '^testcontainers-modules = \{ version = "=0\.15\.0"' Cargo.toml &&
+grep -qE '^nix = \{ version = "=0\.30\.1"' Cargo.toml
+```
 Expected: exit 0
 
 ```gherkin

@@ -155,7 +155,37 @@ pub fn parse(text: &str) -> AcceptanceDocument {
                             format!("{id} duplicate {key} metadata"),
                         );
                     }
-                    fields.insert(key, (strip_value(value), i + 1));
+                    let field_line = i + 1;
+                    let mut value = strip_value(value);
+                    if key == "evidence" && value.is_empty() {
+                        let mut fence_index = i + 1;
+                        while lines
+                            .get(fence_index)
+                            .is_some_and(|line| line.trim().is_empty())
+                        {
+                            fence_index += 1;
+                        }
+                        let fence = lines.get(fence_index).map(|line| line.trim());
+                        if matches!(fence, Some("```sh" | "```bash")) {
+                            i = fence_index + 1;
+                            let body_start = i + 1;
+                            let mut command = Vec::new();
+                            while i < lines.len() && lines[i].trim() != "```" {
+                                command.push(lines[i].trim_end());
+                                i += 1;
+                            }
+                            if i == lines.len() {
+                                err(
+                                    &mut doc.errors,
+                                    body_start,
+                                    format!("{id} unterminated Evidence shell fence"),
+                                );
+                            } else {
+                                value = command.join("\n").trim().to_string();
+                            }
+                        }
+                    }
+                    fields.insert(key, (value, field_line));
                 } else {
                     err(&mut doc.errors, i + 1, format!("{id} unexpected metadata"));
                 }
@@ -515,6 +545,32 @@ And the error is shown
             validate_shape(&doc).is_empty(),
             "{:?}",
             validate_shape(&doc)
+        );
+    }
+
+    #[test]
+    fn parses_fenced_multiline_evidence() {
+        let text = SCENARIO.replace(
+            "Evidence: `cargo test ac_001`",
+            "Evidence:\n\n```sh\ngrep -q first Cargo.toml &&\ngrep -q second Cargo.toml\n```",
+        );
+        let doc = parse(&text);
+        assert_eq!(
+            doc.criteria[0].evidence,
+            "grep -q first Cargo.toml &&\ngrep -q second Cargo.toml"
+        );
+        assert!(doc.errors.is_empty(), "{:?}", doc.errors);
+        assert!(validate_shape(&doc).is_empty());
+    }
+
+    #[test]
+    fn rejects_unterminated_fenced_evidence() {
+        let text = "### AC-001 — Broken\nType: scenario\nCovers: R-001\nEvidence:\n```sh\ncargo test ac_001";
+        let doc = parse(&text);
+        assert!(
+            doc.errors
+                .iter()
+                .any(|error| error.message.contains("unterminated Evidence shell fence"))
         );
     }
 

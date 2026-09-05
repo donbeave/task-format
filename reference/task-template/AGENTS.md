@@ -20,7 +20,8 @@ The task README uses canonical typed acceptance blocks. Each non-gate `AC-*` blo
 `Class`, real `Covers` requirement IDs, exact `Evidence` and `Expected` fields, and one exact
 ` ```gherkin ` fence containing only constrained Given/When/Then-shaped behavior. A gate block
 has `Type: gate`, exact `Evidence`/`Expected`, and no body. These are task metadata, not Cucumber
-feature files and have no runtime step definitions.
+feature files and have no runtime step definitions. `Evidence` uses inline code for a short
+command or one ` ```sh ` fence for a long command; a shell fence still represents one command.
 
 ## Protocol
 
