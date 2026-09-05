@@ -30,7 +30,7 @@ Execution protocol, progress grammar, report format: `/task/AGENTS.md`. This fil
 
 Current behavior:
 
-- TASK-003 completed the create form; `Enter` on the connection list is still a no-op, `db/` is placeholders only and there is no browser screen, and `pgtui` does not link `tokio-postgres` into `src/`.
+- TASK-003 completed the create form; `Enter` on the connection list is still a no-op, `db/mod.rs` contains only D-027 placeholder types, `db/postgres.rs` and the browser screen do not exist, and `pgtui` does not link `tokio-postgres` into `src/`.
 - Trusted tests `pg_connect_test.rs`, `pg_runtime_connect_test.rs`, `app_browser_test.rs`, `screen_browser_test.rs` are committed on the run base commit and fail to compile; `tests/fixtures/seed.sql` and `tests/support/fake_data.rs` are already there.
 
 Desired behavior:
@@ -50,7 +50,7 @@ Baseline, from the repo root:
 cargo test -p pgtui --test pg_connect_test
 ```
 
-Expected before this change: a compile error — `crates/pgtui/src/db` does not exist.
+Expected before this change: a compile error — `pgtui::db::PgSession` is unresolved because TASK-003 provides only the D-027 `db/mod.rs` placeholder.
 
 ## Preconditions
 
@@ -230,13 +230,13 @@ Static plan. Hierarchical IDs, four spaces per level, max depth 4. Every leaf na
 <!-- checklist:start -->
 - [ ] **1** Baseline and environment are reproduced.
     - [ ] **1.1** Preconditions `P-001..P-005` pass — evidence: each listed command exits 0.
-    - [ ] **1.2** Baseline failure recorded in `progress.md` `BASELINE:` — evidence: `cargo test -p pgtui --test pg_connect_test` fails to compile with `PgSession` unresolved.
+    - [ ] **1.2** Baseline failure recorded in `progress.md` `BASELINE:` — evidence: `cargo test -p pgtui --test pg_connect_test` fails to compile with `pgtui::db::PgSession` unresolved.
 - [ ] **2** Database layer is implemented.
     - [ ] **2.1** D-026 types and `quote_ident` in `db/mod.rs` (`R-001`) — evidence: `grep -q 'pub const PREVIEW_LIMIT: usize = 500' crates/pgtui/src/db/mod.rs && grep -q 'pub fn quote_ident' crates/pgtui/src/db/mod.rs` exits 0.
     - [ ] **2.2** Connection setup is complete.
         - [ ] **2.2.1** Seed tables are listed in order (`R-002`, `R-004`, `AC-001`) — evidence: `cargo test -p pgtui --test pg_connect_test` prints `4 passed` for table order.
         - [ ] **2.2.2** Connection failures map to decided errors (`R-003`, `AC-002`) — evidence: `cargo test -p pgtui --test pg_connect_test` prints `4 passed` for failure mapping.
-    - [ ] **2.3** Only `simple_query` is used under `db/` (`R-002`) — evidence: `! grep -rnE 'query_one|query_raw|\.prepare\(' crates/pgtui/src/db` exits 0.
+    - [ ] **2.3** Only `simple_query` is used under `db/` (`R-002`) — evidence: `! grep -rnE '\.query\(|query_one|query_raw|\.prepare\(|\.execute\(' crates/pgtui/src/db` exits 0.
 - [ ] **3** Connect flow is wired.
     - [ ] **3.1** `Effect::Connect` executes and replies `Msg::Connected` (`AC-003`) — evidence: `cargo test -p pgtui --test pg_runtime_connect_test` prints `1 passed`.
     - [ ] **3.2** Browser state transitions and sidebar cursors per D-033/D-010 (`AC-004`) — evidence: `cargo test -p pgtui --test app_browser_test` prints `6 passed`.

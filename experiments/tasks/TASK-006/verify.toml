@@ -72,7 +72,7 @@ paths = [
 ]
 
 [[forbidden_patterns]]
-regex = 'query_one|query_raw|\.prepare\('
+regex = '\.query\(|query_one|query_raw|\.prepare\(|\.execute\('
 paths = [
   "crates/pgtui/src/db",
 ]

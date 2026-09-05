@@ -47,10 +47,10 @@ Code flow: `keys.rs` routes editing keys while `screen == CustomSql`; `Enter` tr
 Baseline, from the repo root:
 
 ```sh
-cargo test -p pgtui --test pg_custom_sql_test
+cargo test -p pgtui --test app_custom_sql_test x_from_browser_opens_sql_screen
 ```
 
-Expected before this change: a compile error — `Screen::CustomSql` is never entered and `CustomSql`-specific handling is missing.
+Expected before this change: `x_from_browser_opens_sql_screen` fails because `x` leaves the app on `Screen::Browser` instead of entering `Screen::CustomSql`.
 
 ## Preconditions
 
@@ -254,7 +254,7 @@ Static plan. Hierarchical IDs, four spaces per level, max depth 4. Every leaf na
 <!-- checklist:start -->
 - [ ] **1** Baseline and environment are reproduced.
     - [ ] **1.1** Preconditions `P-001..P-005` pass — evidence: each listed command exits 0.
-    - [ ] **1.2** Baseline failure recorded in `progress.md` `BASELINE:` — evidence: `cargo test -p pgtui --test pg_custom_sql_test` fails to compile or reports `CustomSql` unreachable.
+    - [ ] **1.2** Baseline failure recorded in `progress.md` `BASELINE:` — evidence: `cargo test -p pgtui --test app_custom_sql_test x_from_browser_opens_sql_screen` fails because `x` leaves the app on `Screen::Browser`.
 - [ ] **2** Screen state is implemented.
     - [ ] **2.1** Custom SQL opens and edits (`R-001`, `AC-001`) — evidence: `cargo test -p pgtui --test app_custom_sql_test` prints `9 passed` for input editing.
     - [ ] **2.2** Custom SQL app behavior is complete (`R-001`, `R-003`, `R-004`).
