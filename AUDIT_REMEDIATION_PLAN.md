@@ -1,5 +1,22 @@
 # Task Format Readiness and Remediation Plan
 
+## Owner direction (resolved 2026-09-05)
+
+This repository is a research product executed inside an isolation boundary chosen and operated by
+the user. `taskfmt` may execute verification and Git commands directly in that environment and
+verification requires network access. The executor checkout and its Git metadata are trusted at
+this layer; nested rootless containers, credential stripping, network denial, and a
+malicious-workspace threat model are not product requirements.
+
+Only the latest state on `main` matters. Do not add legacy schema readers, compatibility modes,
+migrations, or preservation machinery for old run artifacts. Existing formats may be replaced
+directly. Prefer one strict current schema and delete superseded paths.
+
+These decisions supersede contrary recommendations below. Keep applicable correctness goals:
+fail-closed checks, one machine authority, executable expected results, strict progress,
+exact-tree promotion, consistent task packages, source-located diagnostics, and separate
+lifecycle/study semantics.
+
 ## Current verdict
 
 **NOT READY for real-use promotion.** The supplied audit's verdict is correct, but its trust analysis is incomplete. The current design has four blocking trust-boundary failures:
