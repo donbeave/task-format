@@ -1,7 +1,7 @@
 //! `verify.toml` — declarative gate inputs (schema `verify/v1`). Replaces the sourced
 //! `verify.config` bash file: data only, no executable content.
 
-use std::path::Path;
+use std::path::{Component, Path};
 
 use serde::{Deserialize, Serialize};
 
@@ -54,13 +54,49 @@ impl VerifyConfig {
         if cfg.schema != SCHEMA {
             anyhow::bail!("verify.toml schema is {:?}, want {SCHEMA:?}", cfg.schema);
         }
+        cfg.validate_paths()?;
         Ok(cfg)
+    }
+
+    fn validate_paths(&self) -> anyhow::Result<()> {
+        for (field, values) in [
+            ("required_paths", &self.required_paths),
+            ("forbidden_paths", &self.forbidden_paths),
+            ("allowed_globs", &self.allowed_globs),
+        ] {
+            for value in values {
+                validate_repo_relative(field, value)?;
+            }
+        }
+        for pattern in &self.forbidden_patterns {
+            for value in &pattern.paths {
+                validate_repo_relative("forbidden_patterns.paths", value)?;
+            }
+        }
+        Ok(())
     }
 
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let text = std::fs::read_to_string(path)?;
         Self::parse(&text)
     }
+}
+
+fn validate_repo_relative(field: &str, value: &str) -> anyhow::Result<()> {
+    if value.is_empty() {
+        anyhow::bail!("{field} contains an empty path");
+    }
+    let path = Path::new(value);
+    if path.is_absolute() {
+        anyhow::bail!("{field} path must be repository-relative: {value:?}");
+    }
+    for component in path.components() {
+        match component {
+            Component::Normal(part) if !part.is_empty() => {}
+            _ => anyhow::bail!("{field} contains an unsafe path: {value:?}"),
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -109,5 +145,18 @@ mod tests {
         assert!(cfg.focused.commands.is_empty());
         assert!(cfg.forbidden_paths.is_empty());
         assert!(cfg.lint.commands.is_empty());
+    }
+
+    #[test]
+    fn path_fields_reject_absolute_traversal_and_empty_values() {
+        for body in [
+            "required_paths = [\"/etc/passwd\"]",
+            "forbidden_paths = [\"../secret\"]",
+            "allowed_globs = [\"\"]",
+            "forbidden_patterns = [{ regex = \"x\", paths = [\"src/../secret\"] }]",
+        ] {
+            let text = format!("schema = \"verify/v1\"\n{body}\n");
+            assert!(VerifyConfig::parse(&text).is_err(), "accepted {body}");
+        }
     }
 }

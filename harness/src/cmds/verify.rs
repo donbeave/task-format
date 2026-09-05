@@ -22,6 +22,7 @@ pub fn run(
         base,
         log_dir: log_dir.map(PathBuf::from),
         fail_fast,
+        enforce_task_contract: true,
     };
     let output = gate::run(opts);
     print!("{}", output.text);

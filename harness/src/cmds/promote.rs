@@ -3,11 +3,9 @@
 
 use std::path::Path;
 
-use anyhow::{Context, bail};
+use anyhow::bail;
 
 use crate::cmds::Ctx;
-use crate::ops::git;
-use crate::redact;
 use crate::runstate::{GateRecord, Manifest};
 
 pub fn run(ctx: &Ctx, run_id: &str, yes: bool) -> anyhow::Result<i32> {
@@ -17,67 +15,15 @@ pub fn run(ctx: &Ctx, run_id: &str, yes: bool) -> anyhow::Result<i32> {
 }
 
 /// Promote one run. Any refusal happens before a push is attempted.
-pub fn promote_run(ctx: &Ctx, run_dir: &Path, yes: bool) -> anyhow::Result<()> {
+pub fn promote_run(_ctx: &Ctx, run_dir: &Path, _yes: bool) -> anyhow::Result<()> {
     let workspace = run_dir.join("workspace");
     if !workspace.is_dir() {
         bail!("no workspace at {}", workspace.display());
     }
-    let mut manifest = Manifest::load(run_dir).context("reading the run manifest")?;
 
-    // structural refusal: the manifest must already hold a PASS verdict
-    let Some(gate) = manifest.gate.as_ref() else {
-        bail!(
-            "gate has not been run for {} — refusing to push (run `taskfmt gate` first)",
-            manifest.run
-        );
-    };
-    if !gate.passed() {
-        bail!(
-            "gate is {} for {} (last line {:?}) — never pushing a failed gate",
-            gate.verdict,
-            manifest.run,
-            gate.last_line
-        );
-    }
-    let head = git::head(&workspace)?;
-    if head != gate.head {
-        bail!(
-            "workspace HEAD {head} differs from the gated HEAD {} — re-run `taskfmt gate` before promoting",
-            gate.head
-        );
-    }
-    if let Some(pushed) = manifest.result_sha.as_ref() {
-        bail!("{} was already promoted ({pushed})", manifest.run);
-    }
-
-    // built ONCE and shown verbatim in the plan: the confirmation the operator answers is the
-    // message that actually lands, not a second rendering of it that can drift.
-    let message = commit_message(&manifest, gate, &title_of(run_dir));
-
-    let mut plan = vec![
-        format!("git -C {} add -A", workspace.display()),
-        "git commit -s with the message:".to_string(),
-    ];
-    plan.extend(message.lines().map(|line| format!("    {line}")));
-    plan.push(format!("git push origin main -> {}", manifest.repo_url));
-    let interaction = crate::cmds::repo::subcommand_interaction(&ctx.interaction, yes);
-    interaction
-        .confirm(&format!("promote {}", manifest.run), &plan)?
-        .or_decline("promoting")?;
-
-    git::add_all(&workspace)?;
-    if !git::status_porcelain(&workspace)?.is_empty() {
-        git::commit(&workspace, &message, true, false)?;
-    }
-    let result_sha = git::head(&workspace)?;
-    git::push(&workspace, "origin", "main").context("git push origin main")?;
-    manifest.result_sha = Some(result_sha.clone());
-    manifest.save(run_dir)?;
-    redact::emit(&format!(
-        "PROMOTE {} {} -> {}",
-        manifest.run, result_sha, manifest.repo_url
-    ));
-    Ok(())
+    // Security stopgap: current records do not bind an immutable tree, trusted Git metadata, or
+    // isolated verifier evidence. Promotion must remain unavailable until run/v1 does all three.
+    bail!("promotion disabled: legacy gate records do not prove an isolated immutable candidate");
 }
 
 /// The commit message a promoted run pushes into the experiment repo: `<TASK>: <README title>`, a

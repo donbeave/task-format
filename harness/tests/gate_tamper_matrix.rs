@@ -72,6 +72,7 @@ fn gate_at(work: &Path, task: &Path, logs: &Path, progress: &Path) -> gate::Gate
         base: Some("baseline".to_string()),
         log_dir: Some(logs.to_path_buf()),
         fail_fast: false,
+        enforce_task_contract: false,
     })
 }
 
@@ -291,6 +292,7 @@ fn scope_whitelist_and_base_resolution() {
         base: None,
         log_dir: Some(logs.to_path_buf()),
         fail_fast: false,
+        enforce_task_contract: false,
     });
     assert!(
         output.failed_checks.contains(&"scope".to_string()),
@@ -479,6 +481,7 @@ fn scope_gate(work: &Path, task: &Path, base: &str) -> gate::GateOutput {
         base: Some(base.to_string()),
         log_dir: Some(work.parent().unwrap().join("logs")),
         fail_fast: false,
+        enforce_task_contract: false,
     })
 }
 
@@ -679,4 +682,79 @@ fn commands_run_with_pipefail_failing_stage_fails_check() {
     let out = command_gate(tmp.path(), &["false | true"]);
     assert!(!out.is_pass(), "{}", out.text);
     assert_eq!(out.failed_checks, vec!["focused.1"], "{}", out.text);
+}
+
+#[test]
+fn forbidden_pattern_errors_fail_closed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (work, task) = fixture(tmp.path());
+    let config = VERIFY_TOML.replacen(
+        "allowed_globs = [\"*\"]",
+        "allowed_globs = [\"*\"]\nforbidden_patterns = [{ regex = \"[\" }]",
+        1,
+    );
+    std::fs::write(task.join("verify.toml"), config).unwrap();
+    let output = gate::run(GateOpts {
+        root: work,
+        task_dir: task,
+        progress: None,
+        base: Some("baseline".to_string()),
+        log_dir: Some(tmp.path().join("logs")),
+        fail_fast: false,
+        enforce_task_contract: false,
+    });
+    assert_eq!(output.failed_checks, ["forbidden_patterns"]);
+    assert!(output.text.contains("failed rc=2"), "{}", output.text);
+}
+
+#[test]
+fn fail_fast_stops_all_later_groups() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (work, task) = fixture(tmp.path());
+    let canary = tmp.path().join("later-ran");
+    let config = VERIFY_TOML
+        .replacen("commands = []", "commands = [\"false\"]", 1)
+        .replacen(
+            "[regression]\ncommands = []",
+            &format!("[regression]\ncommands = [\"touch {}\"]", canary.display()),
+            1,
+        );
+    std::fs::write(task.join("verify.toml"), config).unwrap();
+    let output = gate::run(GateOpts {
+        root: work,
+        task_dir: task,
+        progress: None,
+        base: Some("baseline".to_string()),
+        log_dir: Some(tmp.path().join("logs")),
+        fail_fast: true,
+        enforce_task_contract: false,
+    });
+    assert_eq!(output.failed_checks, ["focused.1"]);
+    assert!(!canary.exists(), "later regression command ran");
+    assert!(output.check("regression.1").is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn required_path_symlink_escape_fails() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (work, task) = fixture(tmp.path());
+    std::os::unix::fs::symlink(tmp.path(), work.join("escape")).unwrap();
+    let config = VERIFY_TOML.replacen(
+        "allowed_globs = [\"*\"]",
+        "allowed_globs = [\"*\"]\nrequired_paths = [\"escape\"]",
+        1,
+    );
+    std::fs::write(task.join("verify.toml"), config).unwrap();
+    let output = gate::run(GateOpts {
+        root: work,
+        task_dir: task,
+        progress: None,
+        base: Some("baseline".to_string()),
+        log_dir: Some(tmp.path().join("logs")),
+        fail_fast: false,
+        enforce_task_contract: false,
+    });
+    assert_eq!(output.failed_checks, ["required_paths"]);
+    assert!(output.text.contains("resolves outside repository"));
 }

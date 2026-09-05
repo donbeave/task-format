@@ -651,7 +651,7 @@ cargo test ac_001
     #[test]
     fn rejects_unterminated_fenced_evidence() {
         let text = SCENARIO.trim_end_matches("```\n");
-        let doc = parse(&text);
+        let doc = parse(text);
         assert!(
             doc.errors
                 .iter()

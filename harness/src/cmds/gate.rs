@@ -57,6 +57,7 @@ pub fn gate_run(
         base: Some(base),
         log_dir: Some(out_dir.join("gate-logs")),
         fail_fast: false,
+        enforce_task_contract: true,
     });
 
     let gate_log = out_dir.join("gate.log");

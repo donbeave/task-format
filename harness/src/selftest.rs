@@ -268,6 +268,7 @@ pub fn run() -> Report {
             base: Some("baseline".to_string()),
             log_dir: Some(logs.clone()),
             fail_fast: false,
+            enforce_task_contract: false,
         })
     };
 
@@ -355,6 +356,7 @@ pub fn run() -> Report {
             base: Some("baseline".to_string()),
             log_dir: Some(logs.clone()),
             fail_fast: false,
+            enforce_task_contract: false,
         });
         let ok = if *want_pass {
             output.is_pass()
@@ -436,7 +438,7 @@ fn lint_mutants(readme: &str) -> Vec<(&'static str, String)> {
     out.push((
         "uncited requirement (C3)",
         readme
-            .replacen("Covers: R-001, R-003", "Covers: R-001", 1)
+            .replacen("- **Covers:** `R-001, R-003`", "- **Covers:** `R-001`", 1)
             .replacen("(`R-001`, `R-003`)", "(`R-001`)", 1),
     ));
     out.push((

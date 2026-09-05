@@ -221,6 +221,7 @@ pub fn run(opts: SelfcheckOpts) -> anyhow::Result<Report> {
             base: Some(opts.base.clone()),
             log_dir: Some(logs.join(phase)),
             fail_fast: false,
+            enforce_task_contract: false,
         })
     };
 

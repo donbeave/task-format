@@ -10,7 +10,6 @@ use std::process::Command;
 
 use regex::Regex;
 
-use crate::acceptance;
 use crate::ops;
 use crate::progress::ProgressFile;
 use crate::taskfile::{self};
@@ -41,6 +40,8 @@ pub struct GateOpts {
     pub log_dir: Option<PathBuf>,
     /// Stop at the first failing check.
     pub fail_fast: bool,
+    /// Enforce the complete task-package lint contract before verification.
+    pub enforce_task_contract: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -118,6 +119,7 @@ struct Session {
     checks: Vec<CheckResult>,
     log_dir: PathBuf,
     fail_fast: bool,
+    halted: bool,
     root: PathBuf,
 }
 
@@ -128,6 +130,9 @@ impl Session {
 
     /// Run one named check. Returns `false` when a `--fail-fast` run must stop.
     fn check(&mut self, name: &str, body: impl FnOnce() -> CheckBody) -> bool {
+        if self.halted {
+            return false;
+        }
         let (report, rc) = match body() {
             Ok(lines) => (lines, 0),
             Err((lines, rc)) => (lines, rc),
@@ -163,7 +168,8 @@ impl Session {
                     .push(format!("  | {}", crate::redact::scrub(line)));
             }
             self.lines.push("---".to_string());
-            !self.fail_fast
+            self.halted = self.fail_fast;
+            !self.halted
         }
     }
 
@@ -233,6 +239,7 @@ fn run_inner(opts: GateOpts) -> anyhow::Result<GateOutput> {
         checks: Vec::new(),
         log_dir,
         fail_fast: opts.fail_fast,
+        halted: false,
         root: root.clone(),
     };
 
@@ -266,39 +273,18 @@ fn run_inner(opts: GateOpts) -> anyhow::Result<GateOutput> {
         rc: 0,
     });
 
-    // Typed acceptance blocks are part of the direct gate contract. Legacy table packages remain
-    // governed by their existing checks and do not enter this path.
-    let typed_readme = task_file.clone();
-    session.check("typed_acceptance", move || {
-        if !typed_readme.is_file() {
-            return Ok(Vec::new());
-        }
-        let text = std::fs::read_to_string(&typed_readme).map_err(|err| {
-            (
-                vec![format!("cannot read {}: {err}", typed_readme.display())],
-                1,
-            )
-        })?;
-        let doc = acceptance::parse(&text);
-        if !doc.detected {
-            return Ok(Vec::new());
-        }
-        let errors = acceptance::validate_shape(&doc);
-        if errors.is_empty() {
-            Ok(vec![format!(
-                "typed acceptance blocks={}",
-                doc.criteria.len()
-            )])
-        } else {
-            Err((
-                errors
-                    .into_iter()
-                    .map(|e| format!("line {}: {}", e.line, e.message))
-                    .collect(),
-                1,
-            ))
-        }
-    });
+    // Direct gate enforces the same complete package contract as dispatch lint.
+    if opts.enforce_task_contract {
+        let lint_task_dir = task_dir.clone();
+        session.check("task_lint", move || {
+            let report = crate::lint::lint_path(&lint_task_dir);
+            if report.passed() {
+                Ok(report.render().lines().map(str::to_string).collect())
+            } else {
+                Err((report.render().lines().map(str::to_string).collect(), 1))
+            }
+        });
+    }
 
     // ---------- scope ----------
     let base = resolve_base(&opts.base, &cfg);
@@ -443,6 +429,11 @@ fn check_required_paths(root: &Path, paths: &[String]) -> CheckBody {
     let mut lines = Vec::new();
     let mut rc = 0;
     for p in paths {
+        if let Err(err) = confined_path(root, p) {
+            lines.push(format!("UNSAFE {p}: {err}"));
+            rc = 1;
+            continue;
+        }
         if root.join(p).exists() {
             lines.push(format!("ok {p}"));
         } else {
@@ -466,6 +457,11 @@ fn check_forbidden_paths(root: &Path, base: &str, paths: &[String]) -> CheckBody
     };
     let mut rc = 0;
     for p in paths {
+        if let Err(err) = confined_path(root, p) {
+            lines.push(format!("UNSAFE {p}: {err}"));
+            rc = 1;
+            continue;
+        }
         let dir_prefix = format!("{p}/");
         if changed.iter().any(|f| f == p || f.starts_with(&dir_prefix)) {
             lines.push(format!("CHANGED {p}"));
@@ -486,21 +482,62 @@ fn check_forbidden_patterns(root: &Path, patterns: &[verifycfg::ForbiddenPattern
         } else {
             entry.paths.clone()
         };
+        for scope in &scopes {
+            if let Err(err) = confined_path(root, scope) {
+                lines.push(format!("UNSAFE {scope}: {err}"));
+                rc = 1;
+            }
+        }
+        if rc != 0 {
+            continue;
+        }
         let mut cmd = Command::new("grep");
         cmd.current_dir(root)
             .args(["-rIEn", "--exclude-dir=.git", "-e", &entry.regex, "--"]);
         cmd.args(&scopes);
-        let captured = ops::capture(&mut cmd).unwrap_or_else(|_| ops::Captured::default());
-        let hits = captured.stdout.trim_end().to_string();
-        if hits.is_empty() {
-            lines.push(format!("ok /{}/ absent", entry.regex));
-        } else {
-            lines.push(format!("FORBIDDEN /{}/ found:", entry.regex));
-            lines.extend(hits.lines().map(str::to_string));
-            rc = 1;
+        match ops::capture(&mut cmd) {
+            Ok(captured) if captured.status == 1 => {
+                lines.push(format!("ok /{}/ absent", entry.regex));
+            }
+            Ok(captured) if captured.status == 0 => {
+                lines.push(format!("FORBIDDEN /{}/ found:", entry.regex));
+                lines.extend(captured.stdout.trim_end().lines().map(str::to_string));
+                rc = 1;
+            }
+            Ok(captured) => {
+                lines.push(format!(
+                    "pattern check /{}/ failed rc={}",
+                    entry.regex, captured.status
+                ));
+                lines.extend(captured.stderr.trim_end().lines().map(str::to_string));
+                rc = 1;
+            }
+            Err(err) => {
+                lines.push(format!(
+                    "pattern check /{}/ failed to start: {err}",
+                    entry.regex
+                ));
+                rc = 1;
+            }
         }
     }
     if rc == 0 { Ok(lines) } else { Err((lines, rc)) }
+}
+
+fn confined_path(root: &Path, relative: &str) -> anyhow::Result<PathBuf> {
+    let canonical_root = root.canonicalize()?;
+    let candidate = root.join(relative);
+    let mut existing = candidate.as_path();
+    while !existing.exists() {
+        existing = existing
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("no existing parent"))?;
+    }
+    let resolved = existing.canonicalize()?;
+    if !resolved.starts_with(&canonical_root) {
+        anyhow::bail!("resolves outside repository");
+    }
+    Ok(candidate)
 }
 
 fn run_shell(root: &Path, cmd: &str) -> CheckBody {
