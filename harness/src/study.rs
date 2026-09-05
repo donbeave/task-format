@@ -1,14 +1,17 @@
 //! Immutable, non-lifecycle format studies (`study/v1`).
 //!
 //! A study is deliberately not an experiment: it has no run manifest, no remote state and no
-//! promotion import.  It repeatedly gates detached copies of one recorded candidate tree.
+//! promotion import.  It gates distinct material task-package overlays against fresh detached
+//! copies of one recorded base tree.
 
 use std::cmp::Reverse;
-use std::path::Path;
+use std::collections::BTreeMap;
+use std::path::{Component, Path, PathBuf};
 use std::time::Instant;
 
-use anyhow::{Context, bail, ensure};
+use anyhow::{Context, ensure};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::gate::{self, GateOpts};
 use crate::ops::git;
@@ -51,6 +54,12 @@ pub struct VerifierIdentity {
 pub struct Variant {
     pub id: String,
     pub claim: String,
+    /// Relative directory overlaid onto a fresh copy of the trusted task package for this
+    /// observation.  It is deliberately material rather than a label: the gate receives this
+    /// package, not the unmodified `--task-dir` package.
+    pub overlay: String,
+    /// Canonical digest of the overlay directory, pinned in the study design.
+    pub sha256: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,6 +75,8 @@ pub struct Observation {
     pub schema: &'static str,
     pub observation_id: String,
     pub assignment: AssignmentRecord,
+    pub variant: VariantIdentityRecord,
+    pub task: TaskIdentityRecord,
     pub package_id: String,
     pub base_tree: String,
     pub candidate_tree: String,
@@ -90,6 +101,17 @@ pub struct AssignmentRecord {
     pub repeat: u32,
     pub block: u32,
     pub order: usize,
+}
+#[derive(Debug, Serialize)]
+pub struct VariantIdentityRecord {
+    pub id: String,
+    pub overlay: String,
+    pub sha256: String,
+}
+#[derive(Debug, Serialize)]
+pub struct TaskIdentityRecord {
+    pub task_id: String,
+    pub readme_sha256: String,
 }
 #[derive(Debug, Serialize)]
 pub struct VerifierIdentityRecord {
@@ -147,6 +169,7 @@ impl StudyConfig {
         );
         ensure!(!self.variants.is_empty(), "variants empty");
         let mut ids = std::collections::BTreeSet::new();
+        let mut materials = std::collections::BTreeSet::new();
         for variant in &self.variants {
             ensure!(
                 !variant.id.trim().is_empty() && ids.insert(&variant.id),
@@ -157,6 +180,22 @@ impl StudyConfig {
                 !variant.claim.trim().is_empty(),
                 "variant {} claim empty",
                 variant.id
+            );
+            ensure!(
+                plain_relative(Path::new(&variant.overlay)),
+                "variant {} overlay must be a non-empty relative path of plain components",
+                variant.id
+            );
+            ensure!(
+                sha256(&variant.sha256),
+                "variant {} sha256 invalid",
+                variant.id
+            );
+            ensure!(
+                materials.insert(&variant.sha256),
+                "variant {} reuses overlay material identity {}",
+                variant.id,
+                variant.sha256
             );
         }
         Ok(())
@@ -198,30 +237,41 @@ pub fn run(config: &Path, root: &Path, task_dir: &Path, out: &Path) -> anyhow::R
     let cfg = StudyConfig::load(config)?;
     let verify_path = task_dir.join(crate::verifycfg::FILE_NAME);
     let verifier = VerifyConfig::load(&verify_path)?;
-    verify_invariants(&cfg, &verifier, &digest_file(&verify_path)?)?;
+    let verifier_sha256 = digest_file(&verify_path)?;
+    verify_invariants(&cfg, &verifier, &verifier_sha256)?;
     ensure!(
         git::is_repo(root),
         "study root is not a git repository: {}",
         root.display()
     );
+    // A study deliberately does not inspect HEAD.  Every cell starts with a fresh materialization
+    // of the configured immutable base; a changed local branch cannot become a hidden variant.
+    let base_tree = git::rev_parse(root, &format!("{}^{{tree}}", cfg.base_tree))?;
+    ensure!(
+        base_tree == cfg.base_tree,
+        "study base_tree must name a tree object"
+    );
     let parent = git::head(root)?;
-    // Studies inspect a committed immutable candidate only.  Unlike lifecycle gating, they must
-    // not stage an executor's mutable workspace or alter its index.
-    let candidate_tree = git::rev_parse(root, "HEAD^{tree}")?;
-    let diff = diff_metrics(root, &cfg.base_tree)?;
+    let diff = DiffMetrics {
+        files: 0,
+        additions: 0,
+        deletions: 0,
+    };
+    let config_dir = config
+        .parent()
+        .context("study config has no parent directory")?;
+    let prepared = prepare_variants(&cfg, config_dir, task_dir, &verifier_sha256)?;
     let mut lines = String::new();
     let mut failures = 0;
     for assignment in assignments(&cfg) {
-        let variant = cfg
-            .variants
-            .iter()
-            .find(|v| v.id == assignment.variant)
+        let variant = prepared
+            .get(&assignment.variant)
             .expect("assignment variant exists");
-        let frozen = git::detached_tree_worktree(root, &candidate_tree, &parent)?;
+        let frozen = git::detached_tree_worktree(root, &base_tree, &parent)?;
         let started = Instant::now();
         let output = gate::run(GateOpts {
             root: frozen.path().to_path_buf(),
-            task_dir: task_dir.to_path_buf(),
+            task_dir: variant.package.path().to_path_buf(),
             progress: None,
             base: Some(cfg.base_tree.clone()),
             log_dir: None,
@@ -240,9 +290,18 @@ pub fn run(config: &Path, root: &Path, task_dir: &Path, out: &Path) -> anyhow::R
                 block: assignment.block,
                 order: assignment.order,
             },
+            variant: VariantIdentityRecord {
+                id: variant.spec.id.clone(),
+                overlay: variant.spec.overlay.clone(),
+                sha256: variant.actual_sha256.clone(),
+            },
+            task: TaskIdentityRecord {
+                task_id: verifier.task_id.clone(),
+                readme_sha256: digest_file(&variant.package.path().join("README.md"))?,
+            },
             package_id: cfg.package_id.clone(),
             base_tree: cfg.base_tree.clone(),
-            candidate_tree: candidate_tree.clone(),
+            candidate_tree: base_tree.clone(),
             verifier: VerifierIdentityRecord {
                 task_id: cfg.verifier.task_id.clone(),
                 sha256: cfg.verifier.sha256.clone(),
@@ -251,7 +310,7 @@ pub fn run(config: &Path, root: &Path, task_dir: &Path, out: &Path) -> anyhow::R
             image: cfg.image.clone(),
             agent: cfg.agent.clone(),
             model: cfg.model.clone(),
-            normalized_claim: normalize_claim(&variant.claim),
+            normalized_claim: normalize_claim(&variant.spec.claim),
             gate: GateRecord {
                 result: if passed { "pass" } else { "fail" }.to_string(),
                 exit: output.exit,
@@ -277,6 +336,127 @@ pub fn run(config: &Path, root: &Path, task_dir: &Path, out: &Path) -> anyhow::R
         out.display()
     );
     Ok(if failures == 0 { 0 } else { 1 })
+}
+
+struct PreparedVariant<'a> {
+    spec: &'a Variant,
+    actual_sha256: String,
+    package: tempfile::TempDir,
+}
+
+fn prepare_variants<'a>(
+    cfg: &'a StudyConfig,
+    config_dir: &Path,
+    task_dir: &Path,
+    verifier_sha256: &str,
+) -> anyhow::Result<BTreeMap<String, PreparedVariant<'a>>> {
+    let mut prepared = BTreeMap::new();
+    for spec in &cfg.variants {
+        let overlay = resolve_overlay(config_dir, &spec.overlay)?;
+        let actual_sha256 = digest_overlay(&overlay)?;
+        ensure!(
+            actual_sha256 == spec.sha256,
+            "variant {} overlay sha256 differs from study config",
+            spec.id
+        );
+        let package = tempfile::Builder::new()
+            .prefix("taskfmt-study-package-")
+            .tempdir()
+            .context("creating fresh study package")?;
+        crate::ops::copy_tree(task_dir, package.path())?;
+        crate::ops::copy_tree(&overlay, package.path())?;
+        let materialized_verifier = package.path().join(crate::verifycfg::FILE_NAME);
+        ensure!(
+            digest_file(&materialized_verifier)? == verifier_sha256,
+            "variant {} changes the invariant verifier",
+            spec.id
+        );
+        let materialized = VerifyConfig::load(&materialized_verifier)?;
+        verify_invariants(cfg, &materialized, verifier_sha256)?;
+        prepared.insert(
+            spec.id.clone(),
+            PreparedVariant {
+                spec,
+                actual_sha256,
+                package,
+            },
+        );
+    }
+    Ok(prepared)
+}
+
+fn resolve_overlay(config_dir: &Path, overlay: &str) -> anyhow::Result<PathBuf> {
+    let rel = Path::new(overlay);
+    ensure!(
+        plain_relative(rel),
+        "overlay is not a plain relative path: {overlay}"
+    );
+    let root = config_dir
+        .canonicalize()
+        .with_context(|| format!("canonicalizing study directory {}", config_dir.display()))?;
+    let resolved = config_dir
+        .join(rel)
+        .canonicalize()
+        .with_context(|| format!("canonicalizing variant overlay {overlay}"))?;
+    ensure!(
+        resolved.starts_with(&root) && resolved.is_dir(),
+        "variant overlay must be a directory below the study config: {overlay}"
+    );
+    Ok(resolved)
+}
+
+fn plain_relative(path: &Path) -> bool {
+    !path.as_os_str().is_empty()
+        && path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+}
+
+/// Canonical material identity for an overlay.  Directory, file, and byte boundaries all enter
+/// the digest; symlinks and special files are refused so an identity cannot change at use time.
+fn digest_overlay(root: &Path) -> anyhow::Result<String> {
+    let mut entries = Vec::new();
+    for entry in walkdir::WalkDir::new(root).follow_links(false) {
+        let entry = entry?;
+        let rel = entry.path().strip_prefix(root)?;
+        if rel.as_os_str().is_empty() {
+            continue;
+        }
+        ensure!(
+            entry.file_type().is_dir() || entry.file_type().is_file(),
+            "overlay contains non-regular entry: {}",
+            rel.display()
+        );
+        ensure!(
+            !rel.components()
+                .any(|part| matches!(part, Component::Normal(name) if name == ".git")),
+            "overlay must not contain .git: {}",
+            rel.display()
+        );
+        entries.push((rel.to_path_buf(), entry.file_type().is_dir()));
+    }
+    ensure!(!entries.is_empty(), "overlay is empty");
+    entries.sort_by(|left, right| left.0.cmp(&right.0));
+    let mut hasher = Sha256::new();
+    for (rel, is_dir) in entries {
+        let text = rel
+            .to_str()
+            .context("overlay path is not UTF-8")?
+            .replace(std::path::MAIN_SEPARATOR, "/");
+        hasher.update(if is_dir { b"d" } else { b"f" });
+        hasher.update((text.len() as u64).to_le_bytes());
+        hasher.update(text.as_bytes());
+        if !is_dir {
+            let bytes = std::fs::read(root.join(rel))?;
+            hasher.update((bytes.len() as u64).to_le_bytes());
+            hasher.update(bytes);
+        }
+    }
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
 }
 
 fn normalize_claim(claim: &str) -> String {
@@ -317,30 +497,6 @@ fn rank(seed: u64, block: u32, repeat: u32, id: &str) -> u64 {
         })
 }
 
-fn diff_metrics(root: &Path, base: &str) -> anyhow::Result<DiffMetrics> {
-    let output = git::output(std::process::Command::new("git").current_dir(root).args([
-        "diff",
-        "--numstat",
-        base,
-    ]))?;
-    let mut result = DiffMetrics {
-        files: 0,
-        additions: 0,
-        deletions: 0,
-    };
-    for row in output.lines() {
-        let mut fields = row.splitn(3, '\t');
-        let (Some(add), Some(delete), Some(_path)) = (fields.next(), fields.next(), fields.next())
-        else {
-            bail!("invalid git numstat row");
-        };
-        result.files += 1;
-        result.additions += add.parse::<u32>().unwrap_or(0);
-        result.deletions += delete.parse::<u32>().unwrap_or(0);
-    }
-    Ok(result)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -359,10 +515,14 @@ mod tests {
                 Variant {
                     id: "a".into(),
                     claim: "A".into(),
+                    overlay: "variants/a".into(),
+                    sha256: "a".repeat(64),
                 },
                 Variant {
                     id: "b".into(),
                     claim: "B".into(),
+                    overlay: "variants/b".into(),
+                    sha256: "b".repeat(64),
                 },
             ],
             repeats: 2,
@@ -393,6 +553,9 @@ mod tests {
         assert!(c.validate().is_err());
         c = cfg();
         c.variants.clear();
+        assert!(c.validate().is_err());
+        c = cfg();
+        c.variants[1].sha256 = c.variants[0].sha256.clone();
         assert!(c.validate().is_err());
     }
     #[test]
@@ -445,6 +608,14 @@ mod tests {
         git::add_all_including_ignored(&root).unwrap();
         git::commit(&root, "baseline", false, false).unwrap();
         let base_tree = git::rev_parse(&root, "HEAD^{tree}").unwrap();
+        std::fs::write(
+            root.join("src/after-base.rs"),
+            "// must not enter a study cell\n",
+        )
+        .unwrap();
+        git::add_all_including_ignored(&root).unwrap();
+        git::commit(&root, "changed HEAD", false, false).unwrap();
+        assert_ne!(git::rev_parse(&root, "HEAD^{tree}").unwrap(), base_tree);
 
         let task = temp.path().join("task");
         std::fs::create_dir_all(&task).unwrap();
@@ -473,9 +644,34 @@ mod tests {
             .replace("argv = [\"taskfmt\", \"verify\"]", "argv = [\"true\"]");
         let verifier_path = task.join("verify.toml");
         std::fs::write(&verifier_path, verify).unwrap();
+        let original_readme = std::fs::read_to_string(task.join("README.md")).unwrap();
+        let overlays = temp.path().join("overlays");
+        let a = overlays.join("a");
+        let b = overlays.join("b");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        std::fs::write(
+            a.join("README.md"),
+            original_readme.replace(
+                "Reject expired refresh tokens before session rotation",
+                "Variant A expired refresh-token ordering",
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            b.join("README.md"),
+            original_readme.replace(
+                "Reject expired refresh tokens before session rotation",
+                "Variant B expired refresh-token ordering",
+            ),
+        )
+        .unwrap();
+        let a_sha = digest_overlay(&a).unwrap();
+        let b_sha = digest_overlay(&b).unwrap();
+        assert_ne!(a_sha, b_sha);
         let study_path = temp.path().join("study.toml");
         std::fs::write(&study_path, format!(
-            "schema = \"study/v1\"\ncase_id = \"failure-capture\"\ninvariant_outcome = \"same verifier\"\npackage_id = \"TASK-042\"\nbase_tree = \"{base_tree}\"\nrepeats = 2\nblocks = 1\nrandom_seed = 1\nprimary_endpoint = \"gate\"\nartifact_policy = \"ndjson\"\nimage = \"none\"\nagent = \"test\"\nmodel = \"test\"\n[verifier]\ntask_id = \"TASK-042\"\nsha256 = \"{}\"\n[[variants]]\nid = \"a\"\nclaim = \"first\"\n[[variants]]\nid = \"b\"\nclaim = \"second\"\n", digest_file(&verifier_path).unwrap())).unwrap();
+            "schema = \"study/v1\"\ncase_id = \"failure-capture\"\ninvariant_outcome = \"same verifier\"\npackage_id = \"TASK-042\"\nbase_tree = \"{base_tree}\"\nrepeats = 2\nblocks = 1\nrandom_seed = 1\nprimary_endpoint = \"gate\"\nartifact_policy = \"ndjson\"\nimage = \"none\"\nagent = \"test\"\nmodel = \"test\"\n[verifier]\ntask_id = \"TASK-042\"\nsha256 = \"{}\"\n[[variants]]\nid = \"a\"\nclaim = \"first\"\noverlay = \"overlays/a\"\nsha256 = \"{a_sha}\"\n[[variants]]\nid = \"b\"\nclaim = \"second\"\noverlay = \"overlays/b\"\nsha256 = \"{b_sha}\"\n", digest_file(&verifier_path).unwrap())).unwrap();
         let out = temp.path().join("observations.ndjson");
         assert_eq!(run(&study_path, &root, &task, &out).unwrap(), 1);
         let records: Vec<serde_json::Value> = std::fs::read_to_string(out)
@@ -493,5 +689,27 @@ mod tests {
                 .iter()
                 .all(|record| record["gate"]["result"] == "fail")
         );
+        assert!(records.iter().all(|record| {
+            record["base_tree"] == base_tree
+                && record["candidate_tree"] == base_tree
+                && record["verifier"]["sha256"] == digest_file(&verifier_path).unwrap()
+                && record["task"]["task_id"] == "TASK-042"
+        }));
+        let variants: BTreeMap<_, _> = records
+            .iter()
+            .map(|record| {
+                (
+                    record["variant"]["id"].as_str().unwrap(),
+                    record["task"]["readme_sha256"].as_str().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(variants.len(), 2);
+        assert_ne!(variants["a"], variants["b"]);
+        assert!(records.iter().all(|record| {
+            let variant = record["variant"]["id"].as_str().unwrap();
+            record["variant"]["sha256"].as_str()
+                == Some(if variant == "a" { &a_sha } else { &b_sha })
+        }));
     }
 }

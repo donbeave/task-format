@@ -73,6 +73,279 @@ impl State {
     }
 }
 
+#[cfg(test)]
+mod exhaustive_tests {
+    use super::*;
+
+    fn task() -> TaskFile {
+        TaskFile::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/example/README.md"))
+            .unwrap()
+    }
+
+    fn text(events: &str, state: &str, current: &str, latest: u64) -> String {
+        format!(
+            "---\nschema: progress/v1\ntask: TASK-042\nstate: {state}\ncurrent: {current}\nlatest_event: {latest}\n---\n\n## Events\n{events}\n\n## Handoff\nCURRENT_FAILURE: none\n"
+        )
+    }
+
+    #[test]
+    fn rejects_header_and_section_grammar() {
+        let initial = text("- 1 | STARTED | 1.1", "IN_PROGRESS", "1.1", 1);
+        let cases = [
+            (
+                "opening",
+                initial.replacen("---", "xxx", 1),
+                "opening header fence",
+            ),
+            (
+                "closing",
+                initial.replacen("\n---\n\n## Events", "\n###\n\n## Events", 1),
+                "missing closing header fence",
+            ),
+            (
+                "header syntax",
+                initial.replacen("state: IN_PROGRESS", "state=IN_PROGRESS", 1),
+                "malformed header",
+            ),
+            (
+                "unknown header",
+                initial.replacen("state: IN_PROGRESS", "extra: nope\nstate: IN_PROGRESS", 1),
+                "unknown header",
+            ),
+            (
+                "duplicate header",
+                initial.replacen(
+                    "state: IN_PROGRESS",
+                    "state: IN_PROGRESS\nstate: IN_PROGRESS",
+                    1,
+                ),
+                "duplicate header",
+            ),
+            (
+                "missing header",
+                initial.replacen("current: 1.1\n", "", 1),
+                "missing header `current`",
+            ),
+            (
+                "bad schema",
+                initial.replacen("progress/v1", "progress/v0", 1),
+                "expected schema",
+            ),
+            (
+                "bad task",
+                initial.replacen("TASK-042", "TASK-999", 1),
+                "does not match",
+            ),
+            (
+                "bad state",
+                initial.replacen("IN_PROGRESS", "WAITING", 1),
+                "unknown state",
+            ),
+            (
+                "zero latest",
+                initial.replacen("latest_event: 1", "latest_event: 0", 1),
+                "latest_event must be positive",
+            ),
+            (
+                "non-numeric latest",
+                initial.replacen("latest_event: 1", "latest_event: one", 1),
+                "latest_event must be a positive integer",
+            ),
+            (
+                "header separator",
+                initial.replacen("---\n\n## Events", "---\n## Events", 1),
+                "expected one blank line",
+            ),
+            (
+                "events heading",
+                initial.replacen("## Events", "## Event", 1),
+                "missing or misplaced `## Events`",
+            ),
+            (
+                "handoff separator",
+                initial.replacen("\n\n## Handoff", "\n## Handoff", 1),
+                "malformed event row",
+            ),
+            (
+                "handoff heading",
+                initial.replacen("## Handoff", "## Hand Off", 1),
+                "missing or misplaced `## Handoff`",
+            ),
+        ];
+        for (name, candidate, want) in cases {
+            let error = ProgressFile::parse(&candidate, &task())
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(want), "{name}: {error}");
+        }
+    }
+
+    #[test]
+    fn rejects_event_grammar_and_every_invalid_transition() {
+        let cases = [
+            (
+                "empty events",
+                text("", "IN_PROGRESS", "1.1", 1),
+                "events must not be empty",
+            ),
+            (
+                "row prefix",
+                text("* 1 | STARTED | 1.1", "IN_PROGRESS", "1.1", 1),
+                "malformed event row",
+            ),
+            (
+                "row fields",
+                text("- 1 | STARTED", "IN_PROGRESS", "1.1", 1),
+                "malformed event row",
+            ),
+            (
+                "unknown status",
+                text("- 1 | WAITING | 1.1", "IN_PROGRESS", "1.1", 1),
+                "unknown event status",
+            ),
+            (
+                "zero sequence",
+                text("- 0 | STARTED | 1.1", "IN_PROGRESS", "1.1", 1),
+                "invalid event sequence",
+            ),
+            (
+                "gapped sequence",
+                text("- 2 | STARTED | 1.1", "IN_PROGRESS", "1.1", 2),
+                "must start at 1 and be contiguous",
+            ),
+            (
+                "unknown leaf",
+                text("- 1 | STARTED | 9.9", "IN_PROGRESS", "9.9", 1),
+                "unknown checklist leaf",
+            ),
+            (
+                "started active",
+                text(
+                    "- 1 | STARTED | 1.1\n- 2 | STARTED | 2.1",
+                    "IN_PROGRESS",
+                    "2.1",
+                    2,
+                ),
+                "STARTED while",
+            ),
+            (
+                "done inactive",
+                text("- 1 | DONE | 1.1", "DONE", "NONE", 1),
+                "DONE requires active",
+            ),
+            (
+                "failed inactive",
+                text("- 1 | FAILED | 1.1", "IN_PROGRESS", "NONE", 1),
+                "FAILED requires active",
+            ),
+            (
+                "restart completed",
+                text(
+                    "- 1 | STARTED | 1.1\n- 2 | DONE | 1.1\n- 3 | STARTED | 1.1",
+                    "IN_PROGRESS",
+                    "1.1",
+                    3,
+                ),
+                "STARTED completed",
+            ),
+            (
+                "reopen incomplete",
+                text("- 1 | REOPENED | 1.1", "IN_PROGRESS", "1.1", 1),
+                "REOPENED requires completed inactive",
+            ),
+            (
+                "blocked inactive",
+                text("- 1 | BLOCKED | 1.1", "BLOCKED", "1.1", 1),
+                "BLOCKED requires active",
+            ),
+            (
+                "replan inactive",
+                text("- 1 | NEEDS_REPLAN | 1.1", "NEEDS_REPLAN", "1.1", 1),
+                "NEEDS_REPLAN requires active",
+            ),
+            (
+                "after terminal",
+                text(
+                    "- 1 | STARTED | 1.1\n- 2 | BLOCKED | 1.1\n- 3 | DONE | 1.1",
+                    "BLOCKED",
+                    "1.1",
+                    3,
+                ),
+                "event follows terminal state",
+            ),
+        ];
+        for (name, candidate, want) in cases {
+            let error = ProgressFile::parse(&candidate, &task())
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(want), "{name}: {error}");
+        }
+    }
+
+    #[test]
+    fn rejects_header_event_disagreement_and_state_machine_in_handoff() {
+        let initial = text("- 1 | STARTED | 1.1", "IN_PROGRESS", "1.1", 1);
+        let cases = [
+            (
+                "latest mismatch",
+                initial.replacen("latest_event: 1", "latest_event: 2", 1),
+                "latest_event does not match",
+            ),
+            (
+                "state mismatch",
+                initial.replacen("state: IN_PROGRESS", "state: DONE", 1),
+                "disagrees with derived",
+            ),
+            (
+                "current mismatch",
+                initial.replacen("current: 1.1", "current: NONE", 1),
+                "disagrees with derived",
+            ),
+            (
+                "event in handoff",
+                initial.replacen("CURRENT_FAILURE: none", "- 2 | DONE | 1.1", 1),
+                "not allowed in handoff",
+            ),
+            (
+                "events heading in handoff",
+                initial.replacen("CURRENT_FAILURE: none", "## Events", 1),
+                "not allowed in handoff",
+            ),
+            (
+                "fence in handoff",
+                initial.replacen("CURRENT_FAILURE: none", "---", 1),
+                "not allowed in handoff",
+            ),
+        ];
+        for (name, candidate, want) in cases {
+            let error = ProgressFile::parse(&candidate, &task())
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(want), "{name}: {error}");
+        }
+    }
+
+    #[test]
+    fn reduces_failed_retried_reopened_and_terminal_streams_deterministically() {
+        let retry = "- 1 | STARTED | 1.1\n- 2 | FAILED | 1.1\n- 3 | STARTED | 1.1";
+        let retry = ProgressFile::parse(&text(retry, "IN_PROGRESS", "1.1", 3), &task()).unwrap();
+        assert_eq!(retry.state, State::InProgress);
+        assert_eq!(retry.current.as_deref(), Some("1.1"));
+        assert!(retry.completed.is_empty());
+
+        let reopened = "- 1 | STARTED | 1.1\n- 2 | DONE | 1.1\n- 3 | REOPENED | 1.1";
+        let reopened =
+            ProgressFile::parse(&text(reopened, "IN_PROGRESS", "1.1", 3), &task()).unwrap();
+        assert_eq!(reopened.state, State::InProgress);
+        assert!(reopened.completed.is_empty());
+
+        let blocked = "- 1 | STARTED | 1.1\n- 2 | BLOCKED | 1.1";
+        let blocked = ProgressFile::parse(&text(blocked, "BLOCKED", "1.1", 2), &task()).unwrap();
+        assert_eq!(blocked.state, State::Blocked);
+        assert_eq!(blocked.current.as_deref(), Some("1.1"));
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventStatus {
     Started,

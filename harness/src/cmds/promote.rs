@@ -301,6 +301,30 @@ mod tests {
         assert!(Manifest::load(&run_dir).unwrap().result_sha.is_none());
     }
 
+    #[test]
+    fn promotion_refuses_terminal_progress_without_a_gate_record() {
+        let (_tmp, run_dir, _bare, _parent, _tree) = gated_run();
+        let mut manifest = Manifest::load(&run_dir).unwrap();
+        manifest.gate = None;
+        manifest.save(&run_dir).unwrap();
+
+        // A completed progress stream is coordination data. It deliberately cannot stand in
+        // for gate identity/evidence fields, so it never authorizes a push.
+        std::fs::create_dir_all(run_dir.join("progress")).unwrap();
+        std::fs::write(
+            run_dir.join("progress/progress.md"),
+            "---\nschema: progress/v1\ntask: TASK-042\nstate: DONE\ncurrent: NONE\nlatest_event: 10\n---\n\n## Events\n- 1 | STARTED | 1.1\n- 2 | DONE | 1.1\n- 3 | STARTED | 2.1\n- 4 | DONE | 2.1\n- 5 | STARTED | 2.2\n- 6 | DONE | 2.2\n- 7 | STARTED | 2.3\n- 8 | DONE | 2.3\n- 9 | STARTED | 3.1\n- 10 | DONE | 3.1\n\n## Handoff\nCURRENT_FAILURE: none\n",
+        )
+        .unwrap();
+
+        let error = promote_fixture(&run_dir).unwrap_err().to_string();
+        assert!(
+            error.contains("promotion refused: no gate record"),
+            "{error}"
+        );
+        assert!(Manifest::load(&run_dir).unwrap().result_sha.is_none());
+    }
+
     fn promote_fixture(run_dir: &Path) -> anyhow::Result<()> {
         let ctx = Ctx {
             config_path: std::path::PathBuf::new(),
