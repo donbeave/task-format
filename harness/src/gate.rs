@@ -791,114 +791,38 @@ pub fn checklist_normalized(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// The progress check, ported from `check_progress` in verify.sh.
+/// Progress is coordination state only. It must be a complete, internally-consistent event
+/// stream; verifier checks still run independently and are the only completion evidence.
 fn check_progress(task_file: &Path, progress_file: &Path) -> CheckBody {
-    let mut lines: Vec<String> = Vec::new();
-
     if !progress_file.is_file() {
         return fail(vec![format!("missing {}", progress_file.display())]);
     }
     if !task_file.is_file() {
         return fail(vec![format!("missing {}", task_file.display())]);
     }
-    let task_text = match std::fs::read_to_string(task_file) {
-        Ok(text) => text,
-        Err(err) => return fail(vec![format!("cannot read {}: {err}", task_file.display())]),
-    };
-    let progress_text = match std::fs::read_to_string(progress_file) {
-        Ok(text) => text,
+    let task = match taskfile::TaskFile::load(task_file) {
+        Ok(task) => task,
         Err(err) => {
             return fail(vec![format!(
-                "cannot read {}: {err}",
-                progress_file.display()
+                "cannot parse {}: {err:#}",
+                task_file.display()
             )]);
         }
     };
-
-    let expected = checklist_normalized(&task_text);
-    let actual = checklist_normalized(&progress_text);
-    if expected.is_empty() {
+    let progress = match ProgressFile::load(progress_file, &task) {
+        Ok(progress) => progress,
+        Err(err) => return fail(vec![format!("progress parse failed: {err:#}")]),
+    };
+    if progress.state != crate::progress::State::Done {
         return fail(vec![format!(
-            "no checklist block in {}",
-            task_file.display()
+            "state={} (want DONE)",
+            progress.state.as_str()
         )]);
     }
-    if expected != actual {
-        let mut out = vec!["checklist text/structure differs from README.md:".to_string()];
-        out.extend(unified_diff(&expected, &actual));
-        return fail(out);
-    }
-
-    // structural analysis of the progress checklist: the raw lines, not the normalized copy —
-    // normalization erases the very [x] token this check is judging
-    let items = taskfile::parse_checklist(&taskfile::checklist_block(&progress_text));
-    let leaves = taskfile::leaf_flags(&items);
-    let mut bad: Vec<String> = Vec::new();
-    let mut leaf_count = 0usize;
-    let mut checked_count = 0usize;
-    for (i, item) in items.iter().enumerate() {
-        if !item.well_formed {
-            bad.push(format!("BAD LINE: {}", item.raw));
-            continue;
-        }
-        if item.id.split('.').count() != item.depth + 1 {
-            bad.push(format!("DEPTH/ID MISMATCH: {}", item.raw));
-        }
-        if leaves[i] {
-            leaf_count += 1;
-            if item.checked {
-                checked_count += 1;
-            } else {
-                bad.push(format!("UNCHECKED LEAF {}", item.id));
-            }
-        } else {
-            let children: Vec<bool> = items[i + 1..]
-                .iter()
-                .take_while(|candidate| candidate.depth > item.depth)
-                .map(|candidate| candidate.checked)
-                .collect();
-            let all_kids = children.iter().all(|checked| *checked);
-            if item.checked && !all_kids {
-                bad.push(format!("PARENT CHECKED WITH UNCHECKED CHILD {}", item.id));
-            }
-            if !item.checked && all_kids {
-                bad.push(format!("PARENT UNCHECKED BUT CHILDREN DONE {}", item.id));
-            }
-        }
-    }
-    lines.push(format!("leaves={leaf_count} checked={checked_count}"));
-    if !bad.is_empty() {
-        return Err((bad, 1));
-    }
-
-    // header fields
-    let task = extract(&progress_text, r"^TASK: *(TASK-[0-9]+)");
-    let id = extract(&task_text, r#"^id: *"?(TASK-[0-9]+)"?"#);
-    let state = extract(&progress_text, r"^STATE: *([A-Z_]+)");
-    let current = extract(&progress_text, r"^CURRENT: *([0-9.]+|NONE)");
-    let baseline = extract(&progress_text, r"^BASELINE: *(.*[^ ])");
-
-    if task.is_empty() || task != id {
-        return fail(vec![format!("TASK={task} (want {id} from README.md)")]);
-    }
-    if state != "DONE" {
-        return fail(vec![format!("STATE={state} (want DONE)")]);
-    }
-    if current != "NONE" {
-        return fail(vec![format!("CURRENT={current} (want NONE)")]);
-    }
-    if baseline.is_empty() || baseline == "<not run>" {
-        return fail(vec![
-            "BASELINE not recorded (want '<command> -> <observed result>')".to_string(),
-        ]);
-    }
-    if let Err(err) = ProgressFile::parse(&progress_text) {
-        return fail(vec![format!("progress parse failed: {err:#}")]);
-    }
-    lines.push(format!(
-        "ok TASK={task} STATE=DONE CURRENT=NONE BASELINE recorded"
-    ));
-    Ok(lines)
+    Ok(vec![format!(
+        "ok task={} state=DONE events={}",
+        progress.task, progress.latest_event
+    )])
 }
 
 /// First capture group of the first matching line, or an empty string.
@@ -916,6 +840,7 @@ pub fn extract(text: &str, pattern: &str) -> String {
 
 /// Minimal line diff: `- removed`, `+ added` (the shell original piped `diff`; the reader only
 /// needs the offending lines).
+#[cfg(test)]
 fn unified_diff(expected: &[String], actual: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     for (i, line) in expected.iter().enumerate() {

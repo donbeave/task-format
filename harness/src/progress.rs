@@ -1,16 +1,16 @@
-//! progress.md: generation (`progress-init`) and parsing.
+//! Strict, derived `progress/v1` coordination state.
 //!
-//! `progress.md` is derived state — generated from `README.md` at dispatch, never committed. The
-//! header sits between `---` fences so a markdown viewer renders it; the checklist block is a
-//! verbatim copy of the README one (only the `[ ]`/`[x]` tokens may ever differ).
+//! Progress records leaf transitions only. The completion gate supplies completion evidence.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use anyhow::{Context, bail};
-use regex::Regex;
+use anyhow::{Context, bail, ensure};
 
 use crate::lint;
 use crate::taskfile::{self, TaskFile};
+
+pub const SCHEMA: &str = "progress/v1";
 
 #[derive(Debug, Clone)]
 pub struct GeneratedProgress {
@@ -19,13 +19,9 @@ pub struct GeneratedProgress {
     pub body: String,
 }
 
-/// Generate the initial `progress.md` body for a task package. Lints first: an invalid contract
-/// never yields a progress file.
+/// Generate the only valid initial event stream.
 pub fn generate(task_dir: &Path) -> anyhow::Result<GeneratedProgress> {
     let readme = task_dir.join("README.md");
-    if !readme.is_file() {
-        bail!("progress-init: missing {}", readme.display());
-    }
     let text = std::fs::read_to_string(&readme)
         .with_context(|| format!("cannot read {}", readme.display()))?;
     let findings = lint::lint_text(&text, &readme);
@@ -33,157 +29,413 @@ pub fn generate(task_dir: &Path) -> anyhow::Result<GeneratedProgress> {
         .iter()
         .filter(|f| f.severity == lint::Severity::Error)
         .count();
-    if errors > 0 {
-        let report = lint::LintReport {
-            target: readme,
-            findings,
-        };
-        bail!(
-            "progress-init: README.md failed task-lint ({} error(s)); not generating\n{}",
-            errors,
-            report.render()
-        );
+    if errors != 0 {
+        bail!("progress-init: README.md failed task-lint ({errors} error(s)); not generating");
     }
-
-    let tf = TaskFile::parse(text, &readme)?;
-    let id = tf.frontmatter.id.clone();
-    if id.is_empty() {
-        bail!("progress-init: README.md has no id in its frontmatter");
-    }
-    let items = taskfile::parse_checklist(&tf.checklist);
-    let first_leaf = taskfile::first_leaf(&items).ok_or_else(|| {
-        anyhow::anyhow!(
-            "progress-init: no checklist leaf found in {}",
-            readme.display()
-        )
-    })?;
-
-    let mut body = String::new();
-    body.push_str("---\n");
-    body.push_str(&format!("TASK: {id}\n"));
-    body.push_str("STATE: IN_PROGRESS\n");
-    body.push_str(&format!("CURRENT: {first_leaf}\n"));
-    body.push_str("BASELINE: <not run>\n");
-    body.push_str("---\n\n");
-    body.push_str(&format!("{}\n", taskfile::CHECKLIST_START));
-    for line in &tf.checklist {
-        body.push_str(line);
-        body.push('\n');
-    }
-    body.push_str(&format!("{}\n\n", taskfile::CHECKLIST_END));
-    body.push_str("## Log\n\n");
-    body.push_str("## Handoff\n");
-    body.push_str("CURRENT_FAILURE: none\n");
-    body.push_str("DECISIONS: none\n");
-
+    let task = TaskFile::parse(text, &readme)?;
+    let leaves = checklist_leaves(&task)?;
+    let first_leaf = leaves[0].clone();
+    let body = format!(
+        "---\nschema: {SCHEMA}\ntask: {}\nstate: IN_PROGRESS\ncurrent: {first_leaf}\nlatest_event: 1\n---\n\n## Events\n- 1 | STARTED | {first_leaf}\n\n## Handoff\nCURRENT_FAILURE: none\nDECISIONS: none\n",
+        task.id()
+    );
     Ok(GeneratedProgress {
-        task: id,
+        task: task.id().to_string(),
         first_leaf,
         body,
     })
 }
 
-/// Parse the parts of a progress file the gate and the status machinery need.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum State {
+    InProgress,
+    Done,
+    Blocked,
+    NeedsReplan,
+}
+impl State {
+    fn parse(value: &str) -> anyhow::Result<Self> {
+        match value {
+            "IN_PROGRESS" => Ok(Self::InProgress),
+            "DONE" => Ok(Self::Done),
+            "BLOCKED" => Ok(Self::Blocked),
+            "NEEDS_REPLAN" => Ok(Self::NeedsReplan),
+            _ => bail!("progress: unknown state `{value}`"),
+        }
+    }
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::InProgress => "IN_PROGRESS",
+            Self::Done => "DONE",
+            Self::Blocked => "BLOCKED",
+            Self::NeedsReplan => "NEEDS_REPLAN",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventStatus {
+    Started,
+    Done,
+    Failed,
+    Reopened,
+    Blocked,
+    NeedsReplan,
+}
+impl EventStatus {
+    fn parse(value: &str) -> anyhow::Result<Self> {
+        match value {
+            "STARTED" => Ok(Self::Started),
+            "DONE" => Ok(Self::Done),
+            "FAILED" => Ok(Self::Failed),
+            "REOPENED" => Ok(Self::Reopened),
+            "BLOCKED" => Ok(Self::Blocked),
+            "NEEDS_REPLAN" => Ok(Self::NeedsReplan),
+            _ => bail!("progress: unknown event status `{value}`"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Event {
+    pub sequence: u64,
+    pub status: EventStatus,
+    pub leaf: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct ProgressFile {
     pub task: String,
-    pub state: String,
-    pub current: String,
-    pub baseline: String,
-    pub checklist: Vec<String>,
-    pub log_lines: Vec<String>,
+    pub state: State,
+    pub current: Option<String>,
+    pub latest_event: u64,
+    pub events: Vec<Event>,
+    pub completed: BTreeSet<String>,
+    pub handoff: Vec<String>,
 }
 
 impl ProgressFile {
-    pub fn load(path: &Path) -> anyhow::Result<Self> {
+    pub fn load(path: &Path, task: &TaskFile) -> anyhow::Result<Self> {
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("cannot read progress file {}", path.display()))?;
-        Self::parse(&text)
+        Self::parse(&text, task)
     }
 
-    pub fn parse(text: &str) -> anyhow::Result<Self> {
-        let mut out = ProgressFile::default();
-        let mut in_checklist = false;
-        for line in text.lines() {
-            let trimmed = line.trim_end();
-            if trimmed == taskfile::CHECKLIST_START {
-                in_checklist = true;
-                continue;
-            }
-            if trimmed == taskfile::CHECKLIST_END {
-                in_checklist = false;
-                continue;
-            }
-            if in_checklist {
-                out.checklist.push(line.to_string());
-                continue;
-            }
-            let content = line.trim();
-            if let Some(rest) = content.strip_prefix("TASK:") {
-                out.task = rest.trim().to_string();
-            } else if let Some(rest) = content.strip_prefix("STATE:") {
-                out.state = rest.trim().to_string();
-            } else if let Some(rest) = content.strip_prefix("CURRENT:") {
-                out.current = rest.trim().to_string();
-            } else if let Some(rest) = content.strip_prefix("BASELINE:") {
-                out.baseline = rest.trim().to_string();
-            } else if let Some(rest) = content.strip_prefix("- ") {
-                out.log_lines.push(rest.to_string());
-            }
+    /// Parse every byte of the state machine. Header claims must equal event reduction.
+    pub fn parse(text: &str, task: &TaskFile) -> anyhow::Result<Self> {
+        let lines: Vec<&str> = text.lines().collect();
+        ensure!(
+            lines.first() == Some(&"---"),
+            "progress: missing opening header fence"
+        );
+        let close = lines
+            .iter()
+            .skip(1)
+            .position(|line| *line == "---")
+            .map(|index| index + 1)
+            .ok_or_else(|| anyhow::anyhow!("progress: missing closing header fence"))?;
+        let mut headers = BTreeMap::new();
+        for line in &lines[1..close] {
+            let (key, value) = line
+                .split_once(": ")
+                .ok_or_else(|| anyhow::anyhow!("progress: malformed header `{line}`"))?;
+            ensure!(
+                !key.is_empty() && !value.is_empty() && !value.contains('\r'),
+                "progress: malformed header `{line}`"
+            );
+            ensure!(
+                matches!(
+                    key,
+                    "schema" | "task" | "state" | "current" | "latest_event"
+                ),
+                "progress: unknown header `{key}`"
+            );
+            ensure!(
+                headers.insert(key, value).is_none(),
+                "progress: duplicate header `{key}`"
+            );
         }
-        Ok(out)
+        for key in ["schema", "task", "state", "current", "latest_event"] {
+            ensure!(
+                headers.contains_key(key),
+                "progress: missing header `{key}`"
+            );
+        }
+        ensure!(
+            headers["schema"] == SCHEMA,
+            "progress: expected schema `{SCHEMA}`"
+        );
+        ensure!(
+            headers["task"] == task.id(),
+            "progress: task `{}` does not match `{}`",
+            headers["task"],
+            task.id()
+        );
+        let declared_state = State::parse(headers["state"])?;
+        let declared_current = match headers["current"] {
+            "NONE" => None,
+            value => Some(value.to_string()),
+        };
+        let declared_latest = headers["latest_event"]
+            .parse::<u64>()
+            .context("progress: latest_event must be a positive integer")?;
+        ensure!(
+            declared_latest > 0,
+            "progress: latest_event must be positive"
+        );
+
+        let mut cursor = close + 1;
+        ensure!(
+            lines.get(cursor) == Some(&""),
+            "progress: expected one blank line after header"
+        );
+        cursor += 1;
+        ensure!(
+            lines.get(cursor) == Some(&"## Events"),
+            "progress: missing or misplaced `## Events`"
+        );
+        cursor += 1;
+        let events_start = cursor;
+        while let Some(line) = lines.get(cursor) {
+            if line.is_empty() {
+                break;
+            }
+            ensure!(
+                line.starts_with("- "),
+                "progress: malformed event row `{line}`"
+            );
+            cursor += 1;
+        }
+        let events_end = cursor;
+        ensure!(
+            events_end > events_start,
+            "progress: events must not be empty"
+        );
+        ensure!(
+            lines.get(cursor) == Some(&""),
+            "progress: expected blank line before handoff"
+        );
+        cursor += 1;
+        ensure!(
+            lines.get(cursor) == Some(&"## Handoff"),
+            "progress: missing or misplaced `## Handoff`"
+        );
+        cursor += 1;
+        let handoff = lines[cursor..]
+            .iter()
+            .map(|line| (*line).to_string())
+            .collect::<Vec<_>>();
+        ensure!(
+            !handoff
+                .iter()
+                .any(|line| line == "## Events" || line == "---" || line.starts_with("- ")),
+            "progress: state-machine content is not allowed in handoff"
+        );
+
+        let mut events = Vec::new();
+        for line in &lines[events_start..events_end] {
+            let parts: Vec<_> = line
+                .strip_prefix("- ")
+                .expect("validated prefix")
+                .split(" | ")
+                .collect();
+            ensure!(
+                parts.len() == 3 && parts.iter().all(|part| !part.is_empty()),
+                "progress: malformed event row `{line}`"
+            );
+            let sequence = parts[0]
+                .parse::<u64>()
+                .with_context(|| format!("progress: invalid event sequence in `{line}`"))?;
+            ensure!(sequence > 0, "progress: invalid event sequence in `{line}`");
+            events.push(Event {
+                sequence,
+                status: EventStatus::parse(parts[1])?,
+                leaf: parts[2].to_string(),
+            });
+        }
+        let leaves = checklist_leaves(task)?;
+        let (state, current, completed) = reduce(&events, &leaves)?;
+        ensure!(
+            events
+                .last()
+                .is_some_and(|event| event.sequence == declared_latest),
+            "progress: latest_event does not match the final event"
+        );
+        ensure!(
+            state == declared_state,
+            "progress: state={} disagrees with derived {}",
+            declared_state.as_str(),
+            state.as_str()
+        );
+        ensure!(
+            current == declared_current,
+            "progress: current={:?} disagrees with derived {:?}",
+            declared_current,
+            current
+        );
+        Ok(Self {
+            task: task.id().to_string(),
+            state,
+            current,
+            latest_event: declared_latest,
+            events,
+            completed,
+            handoff,
+        })
     }
 }
 
-/// Header value of a progress file (`TASK`, `STATE`, `CURRENT`, `BASELINE`).
-pub fn header_value(text: &str, key: &str) -> Option<String> {
-    let re = Regex::new(&format!(r"^{key} *:? *(.*)$")).ok()?;
-    text.lines().find_map(|line| re.captures(line)).map(|caps| {
-        caps.get(1)
-            .map(|m| m.as_str().trim().to_string())
-            .unwrap_or_default()
-    })
+fn checklist_leaves(task: &TaskFile) -> anyhow::Result<Vec<String>> {
+    let items = taskfile::parse_checklist(&task.checklist);
+    ensure!(
+        !items.is_empty() && items.iter().all(|item| item.well_formed),
+        "progress: task checklist is malformed"
+    );
+    let flags = taskfile::leaf_flags(&items);
+    Ok(items
+        .into_iter()
+        .zip(flags)
+        .filter_map(|(item, leaf)| leaf.then_some(item.id))
+        .collect())
+}
+
+fn reduce(
+    events: &[Event],
+    leaves: &[String],
+) -> anyhow::Result<(State, Option<String>, BTreeSet<String>)> {
+    let known: BTreeSet<_> = leaves.iter().cloned().collect();
+    let mut completed = BTreeSet::new();
+    let mut active: Option<String> = None;
+    let mut terminal = None;
+    for (index, event) in events.iter().enumerate() {
+        ensure!(
+            event.sequence == (index + 1) as u64,
+            "progress: event sequence must start at 1 and be contiguous"
+        );
+        ensure!(
+            known.contains(&event.leaf),
+            "progress: event references unknown checklist leaf `{}`",
+            event.leaf
+        );
+        ensure!(terminal.is_none(), "progress: event follows terminal state");
+        match event.status {
+            EventStatus::Started => {
+                ensure!(
+                    active.is_none(),
+                    "progress: STARTED while `{}` is active",
+                    active.as_deref().unwrap_or("")
+                );
+                ensure!(
+                    !completed.contains(&event.leaf),
+                    "progress: STARTED completed leaf `{}`",
+                    event.leaf
+                );
+                active = Some(event.leaf.clone());
+            }
+            EventStatus::Done => {
+                ensure!(
+                    active.as_deref() == Some(&event.leaf),
+                    "progress: DONE requires active leaf `{}`",
+                    event.leaf
+                );
+                completed.insert(event.leaf.clone());
+                active = None;
+            }
+            EventStatus::Failed => {
+                ensure!(
+                    active.as_deref() == Some(&event.leaf),
+                    "progress: FAILED requires active leaf `{}`",
+                    event.leaf
+                );
+                active = None;
+            }
+            EventStatus::Reopened => {
+                ensure!(
+                    active.is_none() && completed.remove(&event.leaf),
+                    "progress: REOPENED requires completed inactive leaf `{}`",
+                    event.leaf
+                );
+                active = Some(event.leaf.clone());
+            }
+            EventStatus::Blocked => {
+                ensure!(
+                    active.as_deref() == Some(&event.leaf),
+                    "progress: BLOCKED requires active leaf `{}`",
+                    event.leaf
+                );
+                terminal = Some(State::Blocked);
+            }
+            EventStatus::NeedsReplan => {
+                ensure!(
+                    active.as_deref() == Some(&event.leaf),
+                    "progress: NEEDS_REPLAN requires active leaf `{}`",
+                    event.leaf
+                );
+                terminal = Some(State::NeedsReplan);
+            }
+        }
+    }
+    let state = terminal.unwrap_or({
+        if completed.len() == leaves.len() {
+            State::Done
+        } else {
+            State::InProgress
+        }
+    });
+    let current = match state {
+        State::Done => {
+            ensure!(active.is_none(), "progress: DONE has an active leaf");
+            None
+        }
+        _ => active,
+    };
+    ensure!(
+        state != State::InProgress || current.is_some(),
+        "progress: IN_PROGRESS requires an active leaf"
+    );
+    Ok((state, current, completed))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn header_values_are_extracted() {
-        let text = "STATE: IN_PROGRESS\nCURRENT: 1.1\n";
-        assert_eq!(header_value(text, "STATE").as_deref(), Some("IN_PROGRESS"));
-        assert_eq!(header_value(text, "CURRENT").as_deref(), Some("1.1"));
-        assert_eq!(header_value(text, "BASELINE"), None);
+    fn task() -> TaskFile {
+        TaskFile::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/example/README.md"))
+            .unwrap()
     }
-
+    fn text(events: &str, state: &str, current: &str, latest: u64) -> String {
+        format!(
+            "---\nschema: progress/v1\ntask: TASK-042\nstate: {state}\ncurrent: {current}\nlatest_event: {latest}\n---\n\n## Events\n{events}\n\n## Handoff\nCURRENT_FAILURE: none\n"
+        )
+    }
     #[test]
-    fn generated_handoff_has_no_next_line() {
-        let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/example");
-        let generated = generate(&example).unwrap();
-        assert_eq!(generated.first_leaf, "1.1");
+    fn generated_is_strict_initial_state() {
+        let generated =
+            generate(&Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/example")).unwrap();
+        let parsed = ProgressFile::parse(&generated.body, &task()).unwrap();
+        assert_eq!(parsed.current.as_deref(), Some("1.1"));
+    }
+    #[test]
+    fn derives_done_deterministically() {
+        let events = "- 1 | STARTED | 1.1\n- 2 | DONE | 1.1\n- 3 | STARTED | 2.1\n- 4 | DONE | 2.1\n- 5 | STARTED | 2.2\n- 6 | DONE | 2.2\n- 7 | STARTED | 2.3\n- 8 | DONE | 2.3\n- 9 | STARTED | 3.1\n- 10 | DONE | 3.1";
+        let parsed = ProgressFile::parse(&text(events, "DONE", "NONE", 10), &task()).unwrap();
+        assert_eq!(parsed.state, State::Done);
+        assert_eq!(parsed.completed.len(), 5);
+    }
+    #[test]
+    fn rejects_header_transition_and_unknown_leaf() {
         assert!(
-            generated
-                .body
-                .ends_with("## Handoff\nCURRENT_FAILURE: none\nDECISIONS: none\n"),
-            "{}",
-            generated.body
+            ProgressFile::parse(
+                &text("- 1 | STARTED | 9.9", "IN_PROGRESS", "9.9", 1),
+                &task()
+            )
+            .is_err()
         );
-        assert!(!generated.body.contains("NEXT:"));
-    }
-
-    #[test]
-    fn parses_generated_file() {
-        let body = "---\nTASK: TASK-042\nSTATE: DONE\nCURRENT: NONE\nBASELINE: cargo test -> 1 failed\n---\n\n<!-- checklist:start -->\n- [x] **1** x\n<!-- checklist:end -->\n\n## Log\n- 1 | DONE | cargo test -> ok\n\n## Handoff\n";
-        let parsed = ProgressFile::parse(body).unwrap();
-        assert_eq!(parsed.task, "TASK-042");
-        assert_eq!(parsed.state, "DONE");
-        assert_eq!(parsed.current, "NONE");
-        assert_eq!(parsed.baseline, "cargo test -> 1 failed");
-        assert_eq!(parsed.checklist, vec!["- [x] **1** x".to_string()]);
-        assert_eq!(
-            parsed.log_lines,
-            vec!["1 | DONE | cargo test -> ok".to_string()]
+        assert!(
+            ProgressFile::parse(&text("- 1 | DONE | 1.1", "DONE", "NONE", 1), &task()).is_err()
+        );
+        assert!(
+            ProgressFile::parse(&text("- 1 | STARTED | 1.1", "DONE", "NONE", 1), &task()).is_err()
         );
     }
 }

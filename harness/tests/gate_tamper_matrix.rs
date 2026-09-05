@@ -74,22 +74,12 @@ fn gate_at(work: &Path, task: &Path, logs: &Path, progress: &Path) -> gate::Gate
 }
 
 fn to_done(progress: &str) -> String {
-    let done = progress.replace("- [ ]", "- [x]");
-    done.lines()
-        .map(|line| {
-            if line.starts_with("STATE: ") {
-                "STATE: DONE".to_string()
-            } else if line.starts_with("CURRENT: ") {
-                "CURRENT: NONE".to_string()
-            } else if line.starts_with("BASELINE: ") {
-                "BASELINE: cargo test -p auth expired_refresh_token -> 1 failed".to_string()
-            } else {
-                line.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n"
+    let events = "- 1 | STARTED | 1.1\n- 2 | DONE | 1.1\n- 3 | STARTED | 2.1\n- 4 | DONE | 2.1\n- 5 | STARTED | 2.2\n- 6 | DONE | 2.2\n- 7 | STARTED | 2.3\n- 8 | DONE | 2.3\n- 9 | STARTED | 3.1\n- 10 | DONE | 3.1";
+    progress
+        .replacen("state: IN_PROGRESS", "state: DONE", 1)
+        .replacen("current: 1.1", "current: NONE", 1)
+        .replacen("latest_event: 1", "latest_event: 10", 1)
+        .replacen("- 1 | STARTED | 1.1", events, 1)
 }
 
 /// A gate pass is exactly: exit 0 and the last stdout line is `DONE`.
@@ -104,18 +94,8 @@ fn pass_means_exit_zero_and_done() {
         taskfmt::cmds::progress_init::generate_and_write(&example(), Some(&progress)).unwrap();
     assert_eq!(generated, 0);
     let fresh = std::fs::read_to_string(&progress).unwrap();
-    assert_eq!(
-        taskfmt::progress::header_value(&fresh, "STATE").as_deref(),
-        Some("IN_PROGRESS")
-    );
-    assert_eq!(
-        taskfmt::progress::header_value(&fresh, "CURRENT").as_deref(),
-        Some("1.1")
-    );
-    assert_eq!(
-        taskfmt::progress::header_value(&fresh, "BASELINE").as_deref(),
-        Some("<not run>")
-    );
+    assert!(fresh.contains("schema: progress/v1\n"));
+    assert!(fresh.contains("state: IN_PROGRESS\ncurrent: 1.1\n"));
 
     let output = gate_at(&work, &task, &logs, &progress);
     assert!(
@@ -146,13 +126,6 @@ fn every_tamper_fails_the_gate() {
     taskfmt::cmds::progress_init::generate_and_write(&example(), Some(&fresh)).unwrap();
     let done = to_done(&std::fs::read_to_string(&fresh).unwrap());
 
-    let done_line = |marker: &str| -> String {
-        done.lines()
-            .find(|line| line.contains(marker))
-            .unwrap_or_else(|| panic!("no line containing {marker}"))
-            .to_string()
-    };
-
     let tamper = |name: &str, text: String| {
         let path = tmp.path().join(format!("{name}.md"));
         std::fs::write(&path, text).unwrap();
@@ -167,56 +140,30 @@ fn every_tamper_fails_the_gate() {
 
     tamper(
         "state",
-        done.replacen("STATE: DONE", "STATE: IN_PROGRESS", 1),
+        done.replacen("state: DONE", "state: IN_PROGRESS", 1),
     );
-    tamper("current", done.replacen("CURRENT: NONE", "CURRENT: 4.2", 1));
+    tamper("current", done.replacen("current: NONE", "current: 3.1", 1));
     tamper(
-        "baseline",
-        done.lines()
-            .map(|line| {
-                if line.starts_with("BASELINE: ") {
-                    "BASELINE: <not run>".to_string()
-                } else {
-                    line.to_string()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
+        "latest",
+        done.replacen("latest_event: 10", "latest_event: 9", 1),
     );
     tamper(
         "task-id",
-        done.replacen("TASK: TASK-042", "TASK: TASK-099", 1),
+        done.replacen("task: TASK-042", "task: TASK-099", 1),
     );
 
-    // a checked parent with an unchecked child
-    let line = done_line("**3**");
+    tamper("unknown-leaf", done.replace("3.1", "9.9"));
     tamper(
-        "parent-checked",
-        done.replace(&line, &line.replace("- [x]", "- [ ]")),
+        "duplicate-event",
+        done.replace("- 10 | DONE | 3.1", "- 9 | DONE | 3.1"),
     );
-    // an unchecked parent whose children are all done
-    let line = done_line("**2** Implement.");
     tamper(
-        "parent-unchecked",
-        done.replace(&line, &line.replace("- [x]", "- [ ]")),
+        "malformed-event",
+        done.replace("- 10 | DONE | 3.1", "- nope"),
     );
-    // reworded checklist text
-    tamper("reworded", done.replace("**3.1**", "**3.1** (reworded)"));
-    // deleted checklist line
     tamper(
-        "deleted",
-        done.lines()
-            .filter(|line| !line.contains("**2.2**"))
-            .collect::<Vec<_>>()
-            .join("\n"),
-    );
-    // added checklist line
-    tamper(
-        "added",
-        done.replace(
-            "<!-- checklist:end -->",
-            "    - [x] **4.3** extra — evidence: none.\n<!-- checklist:end -->",
-        ),
+        "misplaced-row",
+        done.replace("## Handoff", "- 11 | DONE | 3.1\n## Handoff"),
     );
 
     // missing progress file

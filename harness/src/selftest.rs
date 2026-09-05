@@ -239,25 +239,21 @@ pub fn run() -> Report {
         ],
     );
     let header_shape = [
-        "TASK: TASK-042",
-        "STATE: IN_PROGRESS",
-        "CURRENT: 1.1",
-        "BASELINE: <not run>",
+        "schema: progress/v1",
+        "task: TASK-042",
+        "state: IN_PROGRESS",
+        "current: 1.1",
+        "latest_event: 1",
     ]
     .iter()
     .all(|want| progress_text.lines().any(|line| line.starts_with(want)));
     report.push("progress-init: header shape", header_shape, vec![]);
-    let source = taskfile_checklist(&readme);
-    let generated = taskfile_checklist(&progress_text);
-    report.push(
-        "progress-init: checklist verbatim",
-        source == generated,
-        vec![format!(
-            "source {} lines vs generated {} lines",
-            source.len(),
-            generated.len()
-        )],
-    );
+    let generated = crate::progress::ProgressFile::parse(
+        &progress_text,
+        &crate::taskfile::TaskFile::load(&example.join("README.md")).unwrap(),
+    )
+    .is_ok();
+    report.push("progress-init: strict event stream", generated, vec![]);
 
     // ---- gate matrix ----
     let logs = tmp.path().join("logs");
@@ -484,99 +480,34 @@ fn tamper_matrix(done: &str) -> Vec<(&'static str, String)> {
     vec![
         (
             "STATE not DONE",
-            done.replacen("STATE: DONE", "STATE: IN_PROGRESS", 1),
+            done.replacen("state: DONE", "state: IN_PROGRESS", 1),
         ),
         (
             "CURRENT not NONE",
-            done.replacen("CURRENT: NONE", "CURRENT: 3.2", 1),
+            done.replacen("current: NONE", "current: 3.1", 1),
         ),
         (
-            "BASELINE not recorded",
-            replace_line_starting(done, "BASELINE: ", "BASELINE: <not run>"),
+            "latest event mismatch",
+            done.replacen("latest_event: 10", "latest_event: 9", 1),
         ),
         (
             "TASK id mismatch",
-            done.replacen("TASK: TASK-042", "TASK: TASK-041", 1),
+            done.replacen("task: TASK-042", "task: TASK-041", 1),
+        ),
+        ("unknown event leaf", done.replace("3.1", "9.9")),
+        (
+            "duplicate event",
+            done.replace("- 10 | DONE | 3.1", "- 9 | DONE | 3.1"),
         ),
         (
-            "parent checked, child not",
-            replace_checkbox(done, "    - [x] **3.1**", "    - [ ] **3.1**"),
+            "malformed event",
+            done.replace("- 10 | DONE | 3.1", "- nope"),
         ),
         (
-            "parent unchecked, kids done",
-            replace_checkbox(done, "- [x] **3**", "- [ ] **3**"),
+            "event in handoff",
+            done.replace("## Handoff", "- 11 | DONE | 3.1\n## Handoff"),
         ),
-        ("reworded checklist text", reword(done, "**3.1**")),
-        (
-            "deleted checklist line",
-            drop_line_containing(done, "**2.3**"),
-        ),
-        ("added checklist line", append_after_checklist(done)),
     ]
-}
-
-fn replace_line_starting(text: &str, prefix: &str, replacement: &str) -> String {
-    text.lines()
-        .map(|line| {
-            if line.starts_with(prefix) {
-                replacement.to_string()
-            } else {
-                line.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n"
-}
-
-fn replace_checkbox(text: &str, from: &str, _to: &str) -> String {
-    text.lines()
-        .map(|line| {
-            if line.trim_start().starts_with(from.trim()) {
-                line.replacen("- [x]", "- [ ]", 1)
-            } else {
-                line.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n"
-}
-
-fn reword(text: &str, marker: &str) -> String {
-    text.lines()
-        .map(|line| {
-            if line.contains(marker) {
-                line.replacen(marker, &format!("{marker} (reworded)"), 1)
-            } else {
-                line.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n"
-}
-
-fn drop_line_containing(text: &str, marker: &str) -> String {
-    format!(
-        "{}\n",
-        text.lines()
-            .filter(|line| !line.contains(marker))
-            .collect::<Vec<_>>()
-            .join("\n")
-    )
-}
-
-fn append_after_checklist(text: &str) -> String {
-    // inside the markers: an added row outside them would not be part of the compared block
-    let mut out = Vec::new();
-    for line in text.lines() {
-        if line.trim() == crate::taskfile::CHECKLIST_END.trim() {
-            out.push("    - [x] **3.3** extra — evidence: none.".to_string());
-        }
-        out.push(line.to_string());
-    }
-    out.join("\n") + "\n"
 }
 
 /// `git init`, one empty commit, tag `baseline` — the gate's scope check needs it.
@@ -591,22 +522,14 @@ fn init_baseline(workspace: &Path) -> anyhow::Result<()> {
     git::tag(workspace, "baseline")
 }
 
-fn taskfile_checklist(text: &str) -> Vec<String> {
-    crate::taskfile::checklist_block(text)
-}
-
 /// The done-state transform from selftest.sh: every box checked, header complete.
 fn to_done(progress: &str) -> String {
-    let done = progress.replace("- [ ]", "- [x]");
-    replace_line_starting(
-        &replace_line_starting(
-            &replace_line_starting(&done, "STATE: ", "STATE: DONE"),
-            "CURRENT: ",
-            "CURRENT: NONE",
-        ),
-        "BASELINE: ",
-        "BASELINE: cargo test -p auth expired_refresh_token -> 1 failed",
-    )
+    let events = "- 1 | STARTED | 1.1\n- 2 | DONE | 1.1\n- 3 | STARTED | 2.1\n- 4 | DONE | 2.1\n- 5 | STARTED | 2.2\n- 6 | DONE | 2.2\n- 7 | STARTED | 2.3\n- 8 | DONE | 2.3\n- 9 | STARTED | 3.1\n- 10 | DONE | 3.1";
+    progress
+        .replacen("state: IN_PROGRESS", "state: DONE", 1)
+        .replacen("current: 1.1", "current: NONE", 1)
+        .replacen("latest_event: 1", "latest_event: 10", 1)
+        .replacen("- 1 | STARTED | 1.1", events, 1)
 }
 
 /// Every AGENTS.md in `root` (minus `SKIP_DIRS`) must have a sibling `CLAUDE.md` symlink.
