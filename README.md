@@ -72,6 +72,44 @@ Use `--agent claude` for a Claude profile or `--agent all` to build both agent i
 need to run `docker build` directly. Re-run `build-images` after changing harness Rust code so the
 binary on the host and the binary inside the image match.
 
+### Use Claude with GLM-5.3-Flash
+
+The repository defines the `zai-flash` profile for Claude through Z.ai's Anthropic-compatible API.
+Create the token file expected by `experiment.toml`:
+
+```sh
+mkdir -p ~/.config/taskfmt
+chmod 700 ~/.config/taskfmt
+$EDITOR ~/.config/taskfmt/zai-flash.token
+chmod 600 ~/.config/taskfmt/zai-flash.token
+```
+
+Put only the Z.ai API token in that file. Build the Claude image, then select the `zai-flash`
+profile when running tasks:
+
+```sh
+taskfmt build-images --agent claude --auto
+taskfmt run \
+  --task TASK-001 \
+  --repo <repository-url> \
+  --agent zai-flash \
+  --wait
+```
+
+For a series:
+
+```sh
+taskfmt experiment \
+  --tasks 1-3 \
+  --repo <repository-url> \
+  --agent zai-flash \
+  --auto
+```
+
+`--agent claude` selects the image family during image building; `--agent zai-flash` selects the
+configured Claude/GLM-5.3-Flash profile during execution. Because `zai-flash` is the default
+profile, the execution commands may omit `--agent zai-flash`.
+
 ### Run one task
 
 Lint the task, then dispatch it to a fresh container:
@@ -81,14 +119,16 @@ taskfmt lint TASK-001
 taskfmt run --task TASK-001 --repo <repository-url> --agent codex-default --wait
 ```
 
-Without `--repo`, `taskfmt run` creates a disposable private repository after confirmation. Omit
-`--wait` to return immediately; follow the run with `taskfmt status <run-id> --wait`, then inspect
-and gate it:
+Without `--repo`, `taskfmt run` creates a disposable private repository after confirmation. The
+`--wait` flag waits for the agent and runs the host gate. After a passing result, promote the
+recorded tree:
 
 ```sh
-taskfmt gate <run-id>
 taskfmt promote <run-id>  # only after a passing gate
 ```
+
+To return immediately instead, omit `--wait`; follow the run with `taskfmt status <run-id> --wait`,
+then run `taskfmt gate <run-id>` before promotion.
 
 `taskfmt selfcheck TASK-001 <workspace>` is an optional pre-dispatch check that proves the task
 gate distinguishes the untouched base from a reference solution.
