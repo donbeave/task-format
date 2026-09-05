@@ -170,7 +170,7 @@ Omit `--repo` to create a disposable experiment repository. Use `--tasks all` or
 as `1-3,5` and `TASK-002..TASK-004`. Resume an interrupted series with its experiment ID:
 
 ```sh
-taskfmt experiment --resume <experiment-id> --agent codex-default --auto
+taskfmt experiment --resume <experiment-id> --tasks all --agent codex-default --auto
 ```
 
 ### Run every task in one command

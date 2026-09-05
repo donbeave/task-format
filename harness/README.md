@@ -137,7 +137,7 @@ Omit `--repo` to create a disposable private repository. Valid selections includ
 `TASK-002..TASK-004`, and `TASK-101`. Resume an interrupted experiment with its recorded ID:
 
 ```sh
-taskfmt experiment --resume <experiment-id> --agent zai-flash --auto
+taskfmt experiment --resume <experiment-id> --tasks all --agent zai-flash --auto
 ```
 
 Use `--selfcheck` to run the D13 gate selfcheck before each dispatch. It refuses to dispatch when
