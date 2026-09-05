@@ -9,6 +9,7 @@ The executable harness lives in [`../harness/`](../harness/README.md). This dire
 | Path | Purpose | Lifecycle |
 | --- | --- | --- |
 | [`tasks/`](tasks/) | The `TASK-001`–`TASK-007` packages for the `pgtui` example application. | Authored experiment input. |
+| [`GLM-5.3-FLASH-ACCURACY-PLAN.md`](GLM-5.3-FLASH-ACCURACY-PLAN.md) | Paste-ready `/goal` campaign prompt for controlled GLM-5.3-Flash format evaluation. | Execution plan. |
 | [`fixtures/seed/`](fixtures/seed/) | Default PostgreSQL seed SQL copied into every run. | Shared static input. |
 | `runs/` | Workspaces, task snapshots, progress files, logs, and manifests created by dispatch. | Generated and gitignored. |
 
