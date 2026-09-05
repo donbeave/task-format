@@ -321,7 +321,7 @@ fn run_inner(opts: GateOpts) -> anyhow::Result<GateOutput> {
     }
 
     // ---------- scope ----------
-    let base = resolve_base(&opts.base, &cfg);
+    let base = resolve_base(&opts.base, &cfg)?;
     let scope_root = root.clone();
     let scope_base = base.clone();
     let scope_globs = cfg.writable_paths.clone();
@@ -359,7 +359,10 @@ fn run_inner(opts: GateOpts) -> anyhow::Result<GateOutput> {
 }
 
 /// `--base` > `TASKFMT_BASE` > exact verifier base tree.
-pub fn resolve_base(explicit: &Option<String>, cfg: &verifycfg::VerifyConfig) -> String {
+pub fn resolve_base(
+    explicit: &Option<String>,
+    cfg: &verifycfg::VerifyConfig,
+) -> anyhow::Result<String> {
     let env = std::env::var("TASKFMT_BASE").ok();
     resolve_base_from(explicit, env.as_deref(), cfg)
 }
@@ -369,14 +372,18 @@ pub fn resolve_base_from(
     explicit: &Option<String>,
     env: Option<&str>,
     cfg: &verifycfg::VerifyConfig,
-) -> String {
+) -> anyhow::Result<String> {
     if let Some(base) = explicit {
-        return base.clone();
+        return Ok(base.clone());
     }
     if let Some(env_base) = env.filter(|b| !b.is_empty()) {
-        return env_base.to_string();
+        return Ok(env_base.to_string());
     }
-    cfg.base_tree.clone()
+    cfg.base_tree.clone().ok_or_else(|| {
+        anyhow::anyhow!(
+            "no immutable base: pass --base or TASKFMT_BASE; lifecycle supplies its recorded base"
+        )
+    })
 }
 
 fn fail(lines: Vec<String>) -> CheckBody {
@@ -884,14 +891,20 @@ mod tests {
             "schema = \"verify/v2\"\ntask_id = \"TASK-001\"\nbase_tree = \"0123456789012345678901234567890123456789\"\nwritable_paths = [\"src\"]\n[[checks]]\nid = \"CHK-001\"\nphase = \"gate\"\nargv = [\"true\"]\n",
         )
         .unwrap();
-        assert_eq!(resolve_base_from(&Some("flag".into()), None, &cfg), "flag");
         assert_eq!(
-            resolve_base_from(&None, None, &cfg),
+            resolve_base_from(&Some("flag".into()), None, &cfg).unwrap(),
+            "flag"
+        );
+        assert_eq!(
+            resolve_base_from(&None, None, &cfg).unwrap(),
             "0123456789012345678901234567890123456789"
         );
-        assert_eq!(resolve_base_from(&None, Some("fromenv"), &cfg), "fromenv");
         assert_eq!(
-            resolve_base_from(&None, Some(""), &cfg),
+            resolve_base_from(&None, Some("fromenv"), &cfg).unwrap(),
+            "fromenv"
+        );
+        assert_eq!(
+            resolve_base_from(&None, Some(""), &cfg).unwrap(),
             "0123456789012345678901234567890123456789"
         );
     }

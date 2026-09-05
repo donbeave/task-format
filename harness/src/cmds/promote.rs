@@ -142,6 +142,7 @@ mod tests {
             repo_url: "https://github.com/donbeave/x.git".into(),
             base_sha: "abc1230000000000000000000000000000000000".into(),
             clone_sha: "parent00000000000000000000000000000000000".into(),
+            lifecycle_predecessor_sha: None,
             session_id: "00000000-0000-4000-8000-000000000000".into(),
             pane: "pane-1".into(),
             agent_name: "task".into(),

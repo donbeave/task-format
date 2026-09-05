@@ -248,17 +248,20 @@ fn scope_whitelist_and_base_resolution() {
         "schema = \"verify/v2\"\ntask_id = \"TASK-001\"\nbase_tree = \"0123456789012345678901234567890123456789\"\nwritable_paths = [\"src\"]\n[[checks]]\nid = \"CHK-001\"\nphase = \"gate\"\nargv = [\"true\"]\n",
     )
     .unwrap();
-    assert_eq!(gate::resolve_base(&Some("flag".into()), &cfg), "flag");
     assert_eq!(
-        gate::resolve_base_from(&None, Some("fromenv"), &cfg),
+        gate::resolve_base(&Some("flag".into()), &cfg).unwrap(),
+        "flag"
+    );
+    assert_eq!(
+        gate::resolve_base_from(&None, Some("fromenv"), &cfg).unwrap(),
         "fromenv"
     );
     assert_eq!(
-        gate::resolve_base_from(&None, None, &cfg),
+        gate::resolve_base_from(&None, None, &cfg).unwrap(),
         "0123456789012345678901234567890123456789"
     );
     assert_eq!(
-        gate::resolve_base_from(&None, Some(""), &cfg),
+        gate::resolve_base_from(&None, Some(""), &cfg).unwrap(),
         "0123456789012345678901234567890123456789"
     );
 }

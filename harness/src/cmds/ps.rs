@@ -251,6 +251,7 @@ mod tests {
             repo_url: "u".into(),
             base_sha: "abc".into(),
             clone_sha: String::new(),
+            lifecycle_predecessor_sha: None,
             session_id: "sid".into(),
             pane: String::new(),
             agent_name: "task".into(),

@@ -72,6 +72,7 @@ pub fn run(
         effort,
         task,
         &repo_url,
+        None,
         exp,
         selfcheck,
         image_fingerprint,
@@ -124,6 +125,7 @@ pub fn dispatch_one(
     effort_override: Option<&str>,
     task_id: &str,
     repo_url: &str,
+    expected_predecessor: Option<&str>,
     exp: Option<&str>,
     selfcheck: bool,
     image_fingerprint: &dyn docker::ImageFingerprint,
@@ -164,6 +166,12 @@ pub fn dispatch_one(
     git::clone_main(repo_url, &workspace)
         .with_context(|| format!("cloning {repo_url} into {}", workspace.display()))?;
     let clone_sha = git::head(&workspace)?;
+    if let Some(expected) = expected_predecessor {
+        anyhow::ensure!(
+            clone_sha == expected,
+            "lifecycle predecessor moved: origin/main is {clone_sha}, but recorded promoted predecessor is {expected}; resume refuses to change base"
+        );
+    }
 
     // ---------- 2. trusted overlay + the trusted base commit (pushed with the task's chain) ----------
     let trusted = task_dir.join("trusted");
@@ -245,6 +253,7 @@ pub fn dispatch_one(
         repo_url: repo_url.to_string(),
         base_sha,
         clone_sha: clone_sha.clone(),
+        lifecycle_predecessor_sha: expected_predecessor.map(str::to_string),
         session_id,
         pane: String::new(),
         agent_name: "task".to_string(),
@@ -1054,6 +1063,7 @@ mod tests {
             repo_url: "u".into(),
             base_sha: "abc".into(),
             clone_sha: String::new(),
+            lifecycle_predecessor_sha: None,
             session_id: "sid".into(),
             pane: String::new(),
             agent_name: "task".into(),

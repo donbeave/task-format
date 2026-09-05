@@ -46,7 +46,7 @@ fn resolve_base(task: &Path, explicit: Option<String>) -> anyhow::Result<String>
     let path = task.join(FILE_NAME);
     anyhow::ensure!(path.is_file(), "missing {}", path.display());
     let cfg = VerifyConfig::load(&path)?;
-    Ok(gate::resolve_base(&None, &cfg))
+    gate::resolve_base(&None, &cfg)
 }
 
 fn report_error(err: &anyhow::Error) -> i32 {

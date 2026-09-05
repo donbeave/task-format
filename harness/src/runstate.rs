@@ -44,6 +44,10 @@ pub struct Manifest {
     /// field existed; it is the trusted commit's parent unless the overlay was a no-op).
     #[serde(default)]
     pub clone_sha: String,
+    /// For a lifecycle run, the exact promoted predecessor that origin/main had to name before
+    /// dispatch.  Empty for standalone runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle_predecessor_sha: Option<String>,
     pub session_id: String,
     /// herdr pane id of the workspace root pane.
     pub pane: String,
@@ -213,6 +217,12 @@ pub struct ExperimentTask {
     pub base_sha: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result_sha: Option<String>,
+    /// Tree of `result_sha`, recorded after promotion rather than inferred from a mutable ref.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_tree: Option<String>,
+    /// Remote `main` observed after promotion. It must name `result_sha` for a completed task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_main_sha: Option<String>,
     pub gate: String,
     pub pushed: bool,
     pub run_dir: String,
@@ -351,6 +361,7 @@ mod tests {
             repo_url: "https://github.com/donbeave/x.git".into(),
             base_sha: "abc123".into(),
             clone_sha: "parent0".into(),
+            lifecycle_predecessor_sha: None,
             session_id: "00000000-0000-4000-8000-000000000000".into(),
             pane: "pane-1".into(),
             agent_name: default_agent_name(),
@@ -400,6 +411,8 @@ mod tests {
                 repo_url: state.repo_url.clone(),
                 base_sha: "a".into(),
                 result_sha: None,
+                result_tree: None,
+                remote_main_sha: None,
                 gate: gate.into(),
                 pushed,
                 run_dir: "run".into(),
@@ -441,6 +454,7 @@ mod tests {
             repo_url: "https://github.com/donbeave/x.git".into(),
             base_sha: "abc123".into(),
             clone_sha: "parent0".into(),
+            lifecycle_predecessor_sha: None,
             session_id: "00000000-0000-4000-8000-000000000000".into(),
             pane: "pane-1".into(),
             agent_name: default_agent_name(),
@@ -477,6 +491,8 @@ mod tests {
                 repo_url: state.repo_url.clone(),
                 base_sha: "a".into(),
                 result_sha: None,
+                result_tree: None,
+                remote_main_sha: None,
                 gate: gate.into(),
                 pushed,
                 run_dir: "run".into(),

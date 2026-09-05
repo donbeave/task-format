@@ -1,6 +1,5 @@
 schema = "verify/v2"
 task_id = "TASK-002"
-base_tree = "1d8c229a203b423f707d4044eb735b01de136683"
 writable_paths = ["Cargo.toml", "Cargo.lock", "crates"]
 forbidden_paths = ["crates/pgtui/src/render.rs", "crates/pgtui/src/fonts", "crates/pgtui/tests"]
 
@@ -59,4 +58,3 @@ acceptance = ["AC-007"]
 
 [predecessor]
 task_id = "TASK-001"
-tree = "1d8c229a203b423f707d4044eb735b01de136683"

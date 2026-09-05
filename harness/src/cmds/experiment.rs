@@ -7,6 +7,52 @@ use crate::cmds::Ctx;
 use crate::redact;
 use crate::runstate::ExperimentState;
 
+/// A lifecycle task can name a predecessor package, but its immutable commit comes only from the
+/// recorded promotion.  `verify.toml` is task authority; `experiment.json` is lifecycle history.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordedPredecessor {
+    pub task_id: String,
+    pub commit: String,
+    pub tree: String,
+}
+
+pub fn require_recorded_predecessor(
+    tasks_dir: &std::path::Path,
+    state: &ExperimentState,
+    task_id: &str,
+) -> anyhow::Result<Option<RecordedPredecessor>> {
+    let task_dir = crate::cmds::resolve_task_arg(tasks_dir, task_id)?;
+    let verifier =
+        crate::verifycfg::VerifyConfig::load(&task_dir.join(crate::verifycfg::FILE_NAME))?;
+    let Some(declared) = verifier.predecessor else {
+        return Ok(None);
+    };
+    let entry = state
+        .tasks
+        .iter()
+        .find(|entry| entry.task == declared.task_id)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "{task_id} requires promoted predecessor {}; no lifecycle record exists",
+                declared.task_id
+            )
+        })?;
+    let commit = entry.result_sha.clone().filter(|_| entry.pushed && entry.gate == "pass").ok_or_else(|| {
+        anyhow::anyhow!("{task_id} requires promoted predecessor {}; its lifecycle record is not a passing promotion", declared.task_id)
+    })?;
+    let tree = entry.result_tree.clone().ok_or_else(|| {
+        anyhow::anyhow!(
+            "{task_id} requires promoted predecessor {}; its lifecycle record lacks result_tree",
+            declared.task_id
+        )
+    })?;
+    Ok(Some(RecordedPredecessor {
+        task_id: declared.task_id,
+        commit,
+        tree,
+    }))
+}
+
 pub fn run(
     ctx: &Ctx,
     tasks: &[String],
@@ -94,6 +140,7 @@ pub fn run(
             index + 1 + done.len(),
             selection.len()
         ));
+        let predecessor = require_recorded_predecessor(&resolved.tasks_dir(), &state, task_id)?;
         let mut outcome = match crate::cmds::run::dispatch_one(
             &resolved,
             &profile_name,
@@ -101,6 +148,7 @@ pub fn run(
             None,
             task_id,
             &repo_url,
+            predecessor.as_ref().map(|p| p.commit.as_str()),
             Some(&experiment_id),
             selfcheck,
             // the one image reader in the crate; a dispatch compares whatever it returns
@@ -131,6 +179,8 @@ pub fn run(
                     repo_url: repo_url.clone(),
                     base_sha: manifest.base_sha.clone(),
                     result_sha: None,
+                    result_tree: None,
+                    remote_main_sha: None,
                     gate: manifest
                         .gate
                         .as_ref()
@@ -150,6 +200,8 @@ pub fn run(
             repo_url: repo_url.clone(),
             base_sha: outcome.manifest.base_sha.clone(),
             result_sha: None,
+            result_tree: None,
+            remote_main_sha: None,
             gate: gated
                 .map(|gate| gate.verdict.clone())
                 .unwrap_or_else(|| "none".to_string()),
@@ -183,6 +235,20 @@ pub fn run(
                 let refreshed = crate::runstate::Manifest::load(&outcome.run_dir)?;
                 entry.result_sha = refreshed.result_sha.clone();
                 entry.pushed = refreshed.result_sha.is_some();
+                let commit = entry
+                    .result_sha
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("promotion returned without result commit"))?;
+                entry.result_tree = Some(crate::ops::git::rev_parse(
+                    &outcome.run_dir.join("workspace"),
+                    &format!("{commit}^{{tree}}"),
+                )?);
+                entry.remote_main_sha =
+                    crate::ops::git::remote_main(&outcome.run_dir.join("workspace"), "origin")?;
+                anyhow::ensure!(
+                    entry.remote_main_sha.as_deref() == Some(commit),
+                    "promotion remote main does not name recorded result {commit}"
+                );
             }
             Err(err) => {
                 redact::eemit(&format!("promote refused for {task_id}: {err:#}"));

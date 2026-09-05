@@ -1,8 +1,6 @@
 schema = "verify/v2"
 task_id = "TASK-004"
-base_tree = "792edca45d6c5c8570357d3864ad58d1f080d196"
-
-predecessor = { task_id = "TASK-003", tree = "792edca45d6c5c8570357d3864ad58d1f080d196" }
+predecessor = { task_id = "TASK-003" }
 
 writable_paths = ["Cargo.toml", "Cargo.lock", "crates/pgtui/Cargo.toml", "crates/pgtui/src/lib.rs", "crates/pgtui/src/app.rs", "crates/pgtui/src/keys.rs", "crates/pgtui/src/runtime.rs", "crates/pgtui/src/db/mod.rs", "crates/pgtui/src/db/postgres.rs", "crates/pgtui/src/ui/mod.rs", "crates/pgtui/src/ui/browser.rs"]
 forbidden_paths = ["crates/pgtui/src/render.rs", "crates/pgtui/src/fonts"]

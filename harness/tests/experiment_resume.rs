@@ -2,7 +2,7 @@
 //! `repo_url` and must never create a repo, while a fresh experiment still mints one.
 
 use taskfmt::cmds::Ctx;
-use taskfmt::cmds::experiment::{resolve_repo_url, resume_repo_url};
+use taskfmt::cmds::experiment::{require_recorded_predecessor, resolve_repo_url, resume_repo_url};
 use taskfmt::config::{ExperimentConfig, Resolved};
 use taskfmt::interactive::Interaction;
 use taskfmt::ops::docker::ImageFingerprint;
@@ -60,6 +60,8 @@ fn state(repo_url: &str, tasks: &[(&str, &str, bool)]) -> ExperimentState {
             repo_url: repo_url.to_string(),
             base_sha: "base".into(),
             result_sha: None,
+            result_tree: None,
+            remote_main_sha: None,
             gate: (*gate).to_string(),
             pushed: *pushed,
             run_dir: format!("/tmp/{task}"),
@@ -175,6 +177,51 @@ fn no_state_with_a_repo_arg_hands_it_to_the_create_fallback() {
     let got = resolve_repo_url(None, Some(REPO), spy.fallback()).unwrap();
     assert_eq!(got, REPO);
     assert_eq!(spy.called_with(), Some(REPO.to_string()));
+}
+
+#[test]
+fn lifecycle_predecessor_is_derived_from_promotion_record() {
+    let fx = fixture(&[]);
+    let task = fx.resolved.tasks_dir().join("TASK-002");
+    std::fs::write(
+        task.join("verify.toml"),
+        "schema = \"verify/v2\"\ntask_id = \"TASK-002\"\nwritable_paths = [\"src\"]\nchecks = [{ id = \"CHK-001\", phase = \"gate\", argv = [\"true\"] }]\n[predecessor]\ntask_id = \"TASK-001\"\n",
+    )
+    .unwrap();
+    let mut recorded = ExperimentState::new("exp", REPO);
+    recorded.tasks.push(ExperimentTask {
+        task: "TASK-001".into(),
+        repo_url: REPO.into(),
+        base_sha: "base".into(),
+        result_sha: Some("0123456789012345678901234567890123456789".into()),
+        result_tree: Some("abcdefabcdefabcdefabcdefabcdefabcdefabcd".into()),
+        remote_main_sha: Some("0123456789012345678901234567890123456789".into()),
+        gate: "pass".into(),
+        pushed: true,
+        run_dir: "/tmp/TASK-001".into(),
+    });
+    let got = require_recorded_predecessor(&fx.resolved.tasks_dir(), &recorded, "TASK-002")
+        .unwrap()
+        .unwrap();
+    assert_eq!(got.task_id, "TASK-001");
+    assert_eq!(got.commit, "0123456789012345678901234567890123456789");
+    assert_eq!(got.tree, "abcdefabcdefabcdefabcdefabcdefabcdefabcd");
+}
+
+#[test]
+fn lifecycle_refuses_missing_or_mismatched_predecessor_record() {
+    let fx = fixture(&[]);
+    let task = fx.resolved.tasks_dir().join("TASK-002");
+    std::fs::write(
+        task.join("verify.toml"),
+        "schema = \"verify/v2\"\ntask_id = \"TASK-002\"\nwritable_paths = [\"src\"]\nchecks = [{ id = \"CHK-001\", phase = \"gate\", argv = [\"true\"] }]\npredecessor = { task_id = \"TASK-001\" }\n",
+    )
+    .unwrap();
+    let empty = ExperimentState::new("exp", REPO);
+    let err = require_recorded_predecessor(&fx.resolved.tasks_dir(), &empty, "TASK-002")
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("no lifecycle record exists"), "{err}");
 }
 
 /// The production bug: `experiment --auto --resume <id>` without `--repo` minted a fresh repo

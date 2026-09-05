@@ -43,6 +43,7 @@ fn manifest(run: &str, container: &str) -> Manifest {
         repo_url: "https://github.com/donbeave/x.git".into(),
         base_sha: "abc".into(),
         clone_sha: "def".into(),
+        lifecycle_predecessor_sha: None,
         session_id: "00000000-0000-4000-8000-000000000000".into(),
         pane: "pane-1".into(),
         agent_name: "task".into(),

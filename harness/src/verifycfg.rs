@@ -12,7 +12,10 @@ pub const FILE_NAME: &str = "verify.toml";
 pub struct VerifyConfig {
     pub schema: String,
     pub task_id: String,
-    pub base_tree: String,
+    /// Standalone verification may pin an immutable base. Lifecycle gates always pass the base
+    /// recorded for their run, so task packages never claim a future predecessor tree.
+    #[serde(default)]
+    pub base_tree: Option<String>,
     #[serde(default)]
     pub predecessor: Option<Predecessor>,
     pub writable_paths: Vec<String>,
@@ -26,7 +29,6 @@ pub struct VerifyConfig {
 #[serde(deny_unknown_fields)]
 pub struct Predecessor {
     pub task_id: String,
-    pub tree: String,
 }
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -107,10 +109,12 @@ impl VerifyConfig {
             self.schema
         );
         anyhow::ensure!(valid_task(&self.task_id), "task_id invalid");
-        anyhow::ensure!(oid(&self.base_tree), "base_tree invalid");
+        if let Some(base_tree) = &self.base_tree {
+            anyhow::ensure!(oid(base_tree), "base_tree invalid");
+        }
         if let Some(p) = &self.predecessor {
             anyhow::ensure!(
-                valid_task(&p.task_id) && p.task_id != self.task_id && oid(&p.tree),
+                valid_task(&p.task_id) && p.task_id != self.task_id,
                 "predecessor invalid"
             );
         }

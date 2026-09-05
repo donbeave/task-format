@@ -1,7 +1,6 @@
 # `verify.toml` is the machine contract. Commands use argv by default; `shell` is explicit.
 schema = "verify/v2"
 task_id = "TASK-000"
-base_tree = "792edca45d6c5c8570357d3864ad58d1f080d196"
 writable_paths = ["src", "tests"]
 
 [[checks]]
