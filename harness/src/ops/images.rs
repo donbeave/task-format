@@ -76,17 +76,17 @@ pub fn build_images(
             "claude",
             &cfg.images.claude,
             "CLAUDE_CODE_VERSION",
-            "2.1.250",
+            "2.1.261",
         )],
-        AgentFilter::Codex => vec![("codex", &cfg.images.codex, "CODEX_VERSION", "0.150.1")],
+        AgentFilter::Codex => vec![("codex", &cfg.images.codex, "CODEX_VERSION", "0.153.4")],
         AgentFilter::All => vec![
             (
                 "claude",
                 &cfg.images.claude,
                 "CLAUDE_CODE_VERSION",
-                "2.1.250",
+                "2.1.261",
             ),
-            ("codex", &cfg.images.codex, "CODEX_VERSION", "0.150.1"),
+            ("codex", &cfg.images.codex, "CODEX_VERSION", "0.153.4"),
         ],
     };
     for (kind, tag, arg, default) in agents {
@@ -106,13 +106,13 @@ pub fn build_images(
     }
 
     crate::redact::emit(&format!(
-        "== built: {} {} {}",
-        cfg.images.taskfmt, cfg.images.base, cfg.images.claude
+        "== built: {} {} {} {}",
+        cfg.images.taskfmt, cfg.images.base, cfg.images.claude, cfg.images.codex
     ));
     Ok(())
 }
 
-pub const PRELOAD_REF: &str = "postgres:16-alpine";
+pub const PRELOAD_REF: &str = "postgres:18-alpine";
 pub const PRELOAD_CONTAINER: &str = "prereq-postgres";
 
 /// Pull the postgres image, pin its digest (write-once), and `docker save` the tarball.

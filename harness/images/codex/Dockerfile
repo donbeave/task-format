@@ -1,10 +1,10 @@
 # images/codex/Dockerfile — harness-codex: harness-base + Codex CLI.
 #
-#   docker build -f images/codex/Dockerfile --build-arg CODEX_VERSION=0.150.1 \
+#   docker build -f images/codex/Dockerfile --build-arg CODEX_VERSION=0.153.4 \
 #         -t harness-codex:latest .           (build context = harness/)
 FROM harness-base:latest
 
-ARG CODEX_VERSION=0.150.1
+ARG CODEX_VERSION=0.153.4
 RUN npm install -g @openai/codex@${CODEX_VERSION} \
  && codex --version
 

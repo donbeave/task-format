@@ -3,19 +3,19 @@
 #   docker build -f images/base/Dockerfile --build-arg TARGETARCH=arm64 -t harness-base:latest .
 #   (build context = harness/; `taskfmt build-images` wires the order and the TARGETARCH arg)
 #
-# debian slim + tools + docker.io (inner daemon, DinD) + postgresql-client-16 (pgdg, matches the
-# postgres:16-alpine prereq server) + node 22 (nodesource) + rustup (user `agent`, pinned
+# debian slim + tools + docker.io (inner daemon, DinD) + postgresql-client-18 (pgdg, matches the
+# postgres:18-alpine prereq server) + node 24 LTS (nodesource) + rustup (user `agent`, pinned
 # toolchain + rustfmt/clippy) + herdr (static release binary) + the `taskfmt` binary.
 #
 # The container-side tooling is `taskfmt` only: container-entrypoint (PID 1: inner dockerd →
 # prereqs → agent), prereqs (postgres + seeds) and agent-launch (herdr supervisor). No shell
 # scripts ship in the image.
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
 ARG TARGETARCH
 ARG HERDR_VERSION=0.8.2
 ARG RUST_TOOLCHAIN=1.98.0
-ARG NODE_MAJOR=22
+ARG NODE_MAJOR=24
 
 # --- apt: base tools, firewall stack, inner docker. build-essential: rustc cannot link without
 #     a system linker (cc + libc dev objects); gnupg: repo key handling below ---
@@ -26,18 +26,18 @@ RUN apt-get update \
       docker.io \
  && rm -rf /var/lib/apt/lists/*
 
-# --- postgresql-client-16 from apt.postgresql.org (bookworm-pgdg): matches the prereq server's
-#     major version; bookworm main only has client-15 ---
+# --- postgresql-client-18 from apt.postgresql.org (trixie-pgdg): matches the prereq server's
+#     major version ---
 RUN install -d -m 0755 /usr/share/postgresql-common/pgdg \
  && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
       -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
- && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
+ && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt trixie-pgdg main" \
       >/etc/apt/sources.list.d/pgdg.list \
  && apt-get update \
- && apt-get install -y --no-install-recommends postgresql-client-16 \
+ && apt-get install -y --no-install-recommends postgresql-client-18 \
  && rm -rf /var/lib/apt/lists/*
 
-# --- node 22 (nodesource keyring repo) ---
+# --- node 24 LTS (nodesource keyring repo) ---
 RUN curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
       | gpg --dearmor -o /usr/share/keyrings/nodesource.gpg \
  && echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" \

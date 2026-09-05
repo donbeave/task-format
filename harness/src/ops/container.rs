@@ -299,7 +299,7 @@ pub fn claude_settings_json() -> &'static str {
 pub fn claude_project_json() -> &'static str {
     r#"{
   "hasCompletedOnboarding": true,
-  "lastOnboardingVersion": "2.1.250",
+  "lastOnboardingVersion": "2.1.261",
   "numStartups": 1,
   "projects": {"/work": {"hasTrustDialogAccepted": true, "hasCompletedProjectOnboarding": true, "allowedTools": []}}
 }

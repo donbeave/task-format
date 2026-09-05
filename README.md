@@ -77,6 +77,21 @@ the image match.
 Image building and runtime selection are separate. Build both images once, then choose the agent
 profile for each run with `--agent`.
 
+The current image toolchain is:
+
+| Component | Version |
+| --- | --- |
+| Claude Code | `2.1.261` |
+| Codex CLI | `0.153.4` |
+| Rust | `1.98.0` |
+| Node.js LTS | `24.20.0` |
+| Herdr | `0.8.2` |
+| PostgreSQL | `18.6` |
+| Debian | `13.6` (Trixie) |
+
+Rebuild the images when upgrading these pins. The build prints all four generated image tags and
+each agent Dockerfile runs its CLI version check during the build.
+
 ### Use Claude with GLM-5.3-Flash
 
 The repository defines the `zai-flash` profile for Claude through Z.ai's Anthropic-compatible API.

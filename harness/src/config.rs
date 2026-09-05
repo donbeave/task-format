@@ -209,7 +209,7 @@ pub struct Prereq {
 }
 
 fn default_pg_image() -> String {
-    "postgres:16-alpine".to_string()
+    "postgres:18-alpine".to_string()
 }
 fn default_pg_user() -> String {
     "pgtui".to_string()
@@ -487,7 +487,7 @@ pids_limit = 2048
 prereq_timeout_s = 180
 kill_after_min = 90
 [prereq]
-image = "postgres:16-alpine"
+image = "postgres:18-alpine"
 user = "pgtui"
 password = "pgtui"
 db = "pgtui"

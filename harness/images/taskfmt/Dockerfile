@@ -2,11 +2,10 @@
 #
 #   docker build -f images/taskfmt/Dockerfile -t harness-taskfmt:latest .   (context = harness/)
 #
-# Stage 1 compiles the crate; stage 2 ships only the static-ish binary on bare bookworm-slim.
+# Stage 1 compiles the crate; stage 2 ships only the static-ish binary on bare trixie-slim.
 # The runtime image needs no git/docker/herdr: those live in harness-base. What it does need is
-# the same glibc the base image uses, hence the bookworm-pinned rust image (rust:*-slim tracks
-# current Debian stable = trixie, whose glibc is newer than bookworm's) and bookworm-slim export.
-FROM rust:1.98-bookworm AS build
+# the same glibc the base image uses, hence the trixie-pinned rust image and trixie-slim export.
+FROM rust:1.98-trixie AS build
 
 WORKDIR /build
 # manifests and the build script first, so the dependency layer caches independently of the
@@ -25,7 +24,7 @@ ARG BUILDKIT_INLINE_CACHE=1
 RUN touch src/lib.rs src/main.rs && cargo build --release --bin taskfmt --locked \
  && /build/target/release/taskfmt --version
 
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
 COPY --from=build /build/target/release/taskfmt /usr/local/bin/taskfmt
 # smoke test at build time: a broken image must fail the build, not the run

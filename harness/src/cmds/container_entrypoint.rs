@@ -15,7 +15,7 @@ use crate::ops::signals;
 use crate::redact;
 
 const PG_CONTAINER: &str = "prereq-postgres";
-const PG_IMAGE: &str = "postgres:16-alpine";
+const PG_IMAGE: &str = "postgres:18-alpine";
 const PG_USER: &str = "pgtui";
 const PG_PASSWORD: &str = "pgtui";
 const PG_DB: &str = "pgtui";
