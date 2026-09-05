@@ -153,6 +153,30 @@ as `1-3,5` and `TASK-002..TASK-004`. Resume an interrupted series with its exper
 taskfmt experiment --resume <experiment-id> --agent codex-default --auto
 ```
 
+### Run every task in one command
+
+After first-time setup, run the complete configured task corpus sequentially with Claude and
+GLM-5.3-Flash:
+
+```sh
+taskfmt experiment \
+  --tasks all \
+  --repo <repository-url> \
+  --agent zai-flash \
+  --auto
+```
+
+Omit `--repo` to let `taskfmt` create a disposable private repository. This is one command, not
+parallel execution: tasks run in order, and the experiment stops at the first failed or blocked
+task. Resume the same experiment after fixing the cause:
+
+```sh
+taskfmt experiment \
+  --resume <experiment-id> \
+  --agent zai-flash \
+  --auto
+```
+
 Use `taskfmt ps`, `taskfmt status <run-id>`, or `taskfmt attach <run-id>` to inspect a live or
 completed run. Run records and evidence are stored under `experiments/runs/`.
 
