@@ -177,14 +177,14 @@ pub enum Command {
         selfcheck: bool,
     },
 
-    /// Host gate for one run. Disabled until isolated immutable verification is implemented.
+    /// Host gate for one run: re-run verification in the caller-provided sandbox.
     Gate {
         /// Run id, its container name (`harness-<run id>`), its run directory, or the path of that
         /// directory's manifest.json. `taskfmt ps` lists them.
         run: String,
     },
 
-    /// Push a gated run. Disabled until secure run/v1 promotion records are implemented.
+    /// Push the exact tree recorded by a passing gate.
     Promote {
         /// Run id, its container name (`harness-<run id>`), its run directory, or the path of that
         /// directory's manifest.json. `taskfmt ps` lists them.
