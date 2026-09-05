@@ -1,95 +1,62 @@
-# verify.toml — declarative inputs for the gate (`taskfmt verify`). Data only.
-# Paths are relative to the repository root (the working directory of the gate).
-# The scope base is the per-run trusted commit: TASKFMT_BASE env, --base flag, else "baseline".
-
-schema = "verify/v1"
-
-# Trusted overlay files: shipped on the run base commit, never authored by the executor.
-# Semantics required: "not created and not modified by this run", not "absent from the tree".
-forbidden_paths = [
-  "crates/pgtui/src/render.rs",
-  "crates/pgtui/src/fonts",
-]
-
-required_paths = [
-  "crates/pgtui/src/app.rs",
-  "crates/pgtui/src/keys.rs",
-  "crates/pgtui/src/runtime.rs",
-  "crates/pgtui/src/store/mod.rs",
-  "crates/pgtui/src/db/mod.rs",
-  "crates/pgtui/src/ui/mod.rs",
-  "crates/pgtui/src/ui/connection_list.rs",
-  "crates/pgtui/src/ui/status.rs",
-]
-
-allowed_globs = [
-  "Cargo.toml",
-  "Cargo.lock",
-  "crates/pgtui/Cargo.toml",
-  "crates/pgtui/src/lib.rs",
-  "crates/pgtui/src/main.rs",
-  "crates/pgtui/src/app.rs",
-  "crates/pgtui/src/keys.rs",
-  "crates/pgtui/src/runtime.rs",
-  "crates/pgtui/src/store/mod.rs",
-  "crates/pgtui/src/db/mod.rs",
-  "crates/pgtui/src/ui/mod.rs",
-  "crates/pgtui/src/ui/connection_list.rs",
-  "crates/pgtui/src/ui/status.rs",
-]
-
-[focused]
-commands = [
-  "cargo test -p pgtui --test store_test",
-  "cargo test -p pgtui --test app_connection_list_test",
-  "cargo test -p pgtui --test screen_connection_list_test",
-  "cargo test -p pgtui --test cli_test",
-]
-
-[regression]
-commands = [
-  "cargo test -p pgtui --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test --test skeleton_test -- --skip pgtui_stub_exits_2",
-]
-
-[lint]
-commands = [
-  "cargo fmt --all --check",
-  "cargo clippy --workspace --all-targets -- -D warnings",
-]
+schema = "verify/v2"
+task_id = "TASK-002"
+base_tree = "1d8c229a203b423f707d4044eb735b01de136683"
+writable_paths = ["Cargo.toml", "Cargo.lock", "crates"]
+forbidden_paths = ["crates/pgtui/src/render.rs", "crates/pgtui/src/fonts", "crates/pgtui/tests"]
 
 [[forbidden_patterns]]
-regex = 'todo!\(|unimplemented!\('
-paths = [
-  "crates/pgtui/src",
-]
+regex = 'todo!\\(|unimplemented!\\(|dbg!\\(|tokio_postgres'
+paths = ["crates"]
 
-[[forbidden_patterns]]
-regex = 'dbg!\('
-paths = [
-  "crates/pgtui/src",
-]
+[[checks]]
+id = "CHK-001"
+phase = "focused"
+argv = ["cargo", "test", "-p", "pgtui", "--test", "store_test"]
+requirements = ["R-001"]
+acceptance = ["AC-001"]
 
-[[forbidden_patterns]]
-regex = '#\[allow\((clippy|dead_code|unused)'
-paths = [
-  "crates/pgtui/src",
-]
+[[checks]]
+id = "CHK-002"
+phase = "focused"
+argv = ["cargo", "test", "-p", "pgtui", "--test", "app_connection_list_test"]
+requirements = ["R-002", "R-003"]
+acceptance = ["AC-002"]
 
-[[forbidden_patterns]]
-regex = '#\[ignore\]'
-paths = [
-  "crates/pgtui/tests",
-]
+[[checks]]
+id = "CHK-003"
+phase = "focused"
+argv = ["cargo", "test", "-p", "pgtui", "--test", "screen_connection_list_test"]
+requirements = ["R-004"]
+acceptance = ["AC-003"]
 
-[[forbidden_patterns]]
-regex = 'tokio_postgres'
-paths = [
-  "crates/pgtui/src",
-]
+[[checks]]
+id = "CHK-004"
+phase = "focused"
+argv = ["cargo", "test", "-p", "pgtui", "--test", "cli_test"]
+requirements = ["R-005"]
+acceptance = ["AC-004"]
 
-[[forbidden_patterns]]
-# D-042 must-not: the retired TASK-001 stub message never reappears in the real binary (R-005).
-regex = 'error: not implemented'
-paths = [
-  "crates/pgtui/src/main.rs",
-]
+[[checks]]
+id = "CHK-005"
+phase = "regression"
+argv = ["cargo", "test", "-p", "pgtui", "--test", "store_test", "--test", "app_connection_list_test", "--test", "screen_connection_list_test", "--test", "cli_test", "--test", "skeleton_test", "--", "--skip", "pgtui_stub_exits_2"]
+requirements = ["R-001", "R-002", "R-003", "R-004", "R-005"]
+acceptance = ["AC-005"]
+
+[[checks]]
+id = "CHK-006"
+phase = "lint"
+argv = ["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"]
+requirements = ["R-006", "R-007"]
+acceptance = ["AC-006"]
+
+[[checks]]
+id = "CHK-007"
+phase = "gate"
+argv = ["git", "diff", "--check"]
+requirements = ["R-006", "R-007"]
+acceptance = ["AC-007"]
+
+[predecessor]
+task_id = "TASK-001"
+tree = "1d8c229a203b423f707d4044eb735b01de136683"

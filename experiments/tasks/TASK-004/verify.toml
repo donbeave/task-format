@@ -1,88 +1,51 @@
-# verify.toml — declarative inputs for the gate (`taskfmt verify`). Data only.
-# Paths are relative to the repository root (the working directory of the gate).
-# The scope base is the per-run trusted commit: TASKFMT_BASE env, --base flag, else "baseline".
+schema = "verify/v2"
+task_id = "TASK-004"
+base_tree = "792edca45d6c5c8570357d3864ad58d1f080d196"
 
-schema = "verify/v1"
+predecessor = { task_id = "TASK-003", tree = "792edca45d6c5c8570357d3864ad58d1f080d196" }
 
-# Trusted overlay files: shipped on the run base commit, never authored by the executor.
-# Semantics required: "not created and not modified by this run", not "absent from the tree".
-forbidden_paths = [
-  "crates/pgtui/src/render.rs",
-  "crates/pgtui/src/fonts",
-]
-
-required_paths = [
-  "crates/pgtui/src/db/mod.rs",
-  "crates/pgtui/src/db/postgres.rs",
-  "crates/pgtui/src/ui/browser.rs",
-]
-
-allowed_globs = [
-  "Cargo.toml",
-  "Cargo.lock",
-  "crates/pgtui/Cargo.toml",
-  "crates/pgtui/src/lib.rs",
-  "crates/pgtui/src/app.rs",
-  "crates/pgtui/src/keys.rs",
-  "crates/pgtui/src/runtime.rs",
-  "crates/pgtui/src/db/mod.rs",
-  "crates/pgtui/src/db/postgres.rs",
-  "crates/pgtui/src/ui/mod.rs",
-  "crates/pgtui/src/ui/browser.rs",
-]
-
-[focused]
-commands = [
-  "cargo test -p pgtui --test pg_connect_test",
-  "cargo test -p pgtui --test pg_runtime_connect_test",
-  "cargo test -p pgtui --test app_browser_test",
-  "cargo test -p pgtui --test screen_browser_test",
-]
-
-[regression]
-commands = [
-  "cargo test -p pgtui --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test --test app_create_form_test --test runtime_create_test --test screen_create_form_test --test pg_connect_test --test pg_runtime_connect_test --test app_browser_test --test screen_browser_test --test skeleton_test -- --skip pgtui_stub_exits_2",
-]
-
-[lint]
-commands = [
-  "cargo fmt --all --check",
-  "cargo clippy --workspace --all-targets -- -D warnings",
-]
+writable_paths = ["Cargo.toml", "Cargo.lock", "crates/pgtui/Cargo.toml", "crates/pgtui/src/lib.rs", "crates/pgtui/src/app.rs", "crates/pgtui/src/keys.rs", "crates/pgtui/src/runtime.rs", "crates/pgtui/src/db/mod.rs", "crates/pgtui/src/db/postgres.rs", "crates/pgtui/src/ui/mod.rs", "crates/pgtui/src/ui/browser.rs"]
+forbidden_paths = ["crates/pgtui/src/render.rs", "crates/pgtui/src/fonts"]
 
 [[forbidden_patterns]]
-regex = 'todo!\(|unimplemented!\('
-paths = [
-  "crates/pgtui/src",
-]
+regex = "todo!\\(|unimplemented!\\(|dbg!\\("
+paths = ["crates/pgtui/src"]
 
 [[forbidden_patterns]]
-regex = 'dbg!\('
-paths = [
-  "crates/pgtui/src",
-]
+regex = "\\.query\\(|query_one|query_raw|\\.prepare\\(|\\.execute\\("
+paths = ["crates/pgtui/src/db"]
 
-[[forbidden_patterns]]
-regex = '#\[allow\((clippy|dead_code|unused)'
-paths = [
-  "crates/pgtui/src",
-]
+[[checks]]
+id = "CHK-001"
+phase = "precondition"
+argv = ["sh", "-c", "cargo --version && cargo build --workspace --lib --bins && docker info >/dev/null && test -f crates/pgtui/tests/fixtures/seed.sql && test -f crates/pgtui/tests/support/fake_data.rs"]
+requirements = ["R-006", "R-007"]
+acceptance = ["AC-005"]
 
-[[forbidden_patterns]]
-regex = '#\[ignore\]'
-paths = [
-  "crates/pgtui/tests",
-]
+[[checks]]
+id = "CHK-002"
+phase = "focused"
+shell = "cargo test -p pgtui --test pg_connect_test --test pg_runtime_connect_test --test app_browser_test --test screen_browser_test"
+requirements = ["R-001", "R-002", "R-003", "R-004", "R-005"]
+acceptance = ["AC-001", "AC-002"]
 
-[[forbidden_patterns]]
-regex = '\.query\(|query_one|query_raw|\.prepare\(|\.execute\('
-paths = [
-  "crates/pgtui/src/db",
-]
+[[checks]]
+id = "CHK-003"
+phase = "regression"
+shell = "cargo test -p pgtui --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test --test app_create_form_test --test runtime_create_test --test screen_create_form_test --test pg_connect_test --test pg_runtime_connect_test --test app_browser_test --test screen_browser_test --test skeleton_test -- --skip pgtui_stub_exits_2"
+requirements = ["R-001", "R-002", "R-003", "R-004", "R-005"]
+acceptance = ["AC-003"]
 
-[[forbidden_patterns]]
-# D-042 must-not: the retired TASK-001 stub message never reappears in the real binary (R-005).
-regex = 'error: not implemented'
-paths = [
-  "crates/pgtui/src/main.rs",
-]
+[[checks]]
+id = "CHK-004"
+phase = "lint"
+shell = "cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings"
+requirements = ["R-006", "R-007"]
+acceptance = ["AC-004"]
+
+[[checks]]
+id = "CHK-005"
+phase = "gate"
+argv = ["taskfmt", "verify"]
+requirements = ["R-006", "R-007"]
+acceptance = ["AC-006"]

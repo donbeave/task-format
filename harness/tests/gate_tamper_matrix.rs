@@ -12,18 +12,15 @@ fn example() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/example")
 }
 
-const VERIFY_TOML: &str = r#"schema = "verify/v1"
-base_ref = "baseline"
-allowed_globs = ["*"]
+const VERIFY_TOML: &str = r#"schema = "verify/v2"
+task_id = "TASK-042"
+base_tree = "792edca45d6c5c8570357d3864ad58d1f080d196"
+writable_paths = ["*"]
 
-[focused]
-commands = []
-
-[regression]
-commands = []
-
-[lint]
-commands = []
+[[checks]]
+id = "CHK-001"
+phase = "gate"
+argv = ["true"]
 "#;
 
 fn git(dir: &Path, args: &[&str]) {
@@ -198,7 +195,7 @@ fn every_tamper_fails_the_gate() {
         done.replace(&line, &line.replace("- [x]", "- [ ]")),
     );
     // an unchecked parent whose children are all done
-    let line = done_line("**2** Required behavior");
+    let line = done_line("**2** Implement.");
     tamper(
         "parent-unchecked",
         done.replace(&line, &line.replace("- [x]", "- [ ]")),
@@ -209,7 +206,7 @@ fn every_tamper_fails_the_gate() {
     tamper(
         "deleted",
         done.lines()
-            .filter(|line| !line.contains("**3.2**"))
+            .filter(|line| !line.contains("**2.2**"))
             .collect::<Vec<_>>()
             .join("\n"),
     );
@@ -243,9 +240,9 @@ fn scope_whitelist_and_base_resolution() {
     )
     .unwrap();
 
-    let config = |globs: &str| {
+    let config = |paths: &str| {
         format!(
-            "schema = \"verify/v1\"\nbase_ref = \"baseline\"\nallowed_globs = {globs}\n\n[focused]\ncommands = []\n\n[regression]\ncommands = []\n\n[lint]\ncommands = []\n"
+            "schema = \"verify/v2\"\ntask_id = \"TASK-042\"\nbase_tree = \"792edca45d6c5c8570357d3864ad58d1f080d196\"\nwritable_paths = {paths}\n\n[[checks]]\nid = \"CHK-001\"\nphase = \"gate\"\nargv = [\"true\"]\n"
         )
     };
     let gate_with = |config: &str| {
@@ -270,25 +267,24 @@ fn scope_whitelist_and_base_resolution() {
         output.text
     );
 
-    // an empty whitelist fails closed
+    // an empty writable-path list fails closed at config validation.
     let output = gate_with(&config("[]"));
-    assert!(
-        output.failed_checks.contains(&"scope".to_string()),
-        "{}",
-        output.text
-    );
+    assert_eq!(output.exit, taskfmt::gate::EXIT_INTERNAL, "{}", output.text);
 
     // an unresolvable base fails scope
     std::fs::write(
         task.join("verify.toml"),
-        config("[\"*\"]").replace("base_ref = \"baseline\"", "base_ref = \"no-such-ref\""),
+        config("[\"*\"]").replace(
+            "base_tree = \"792edca45d6c5c8570357d3864ad58d1f080d196\"",
+            "base_tree = \"ffffffffffffffffffffffffffffffffffffffff\"",
+        ),
     )
     .unwrap();
     let output = gate::run(GateOpts {
         root: work.to_path_buf(),
         task_dir: task.to_path_buf(),
         progress: Some(progress.display().to_string()),
-        // no --base here: base_ref = "no-such-ref" must be the one that resolves
+        // no --base here: base_tree must be the one that resolves
         base: None,
         log_dir: Some(logs.to_path_buf()),
         fail_fast: false,
@@ -300,18 +296,24 @@ fn scope_whitelist_and_base_resolution() {
         output.text
     );
 
-    // base precedence: --base beats TASKFMT_BASE beats base_ref beats "baseline"
-    let cfg =
-        taskfmt::verifycfg::VerifyConfig::parse("schema = \"verify/v1\"\nbase_ref = \"fromcfg\"\n")
-            .unwrap();
+    // base precedence: --base beats TASKFMT_BASE beats exact base_tree.
+    let cfg = taskfmt::verifycfg::VerifyConfig::parse(
+        "schema = \"verify/v2\"\ntask_id = \"TASK-001\"\nbase_tree = \"0123456789012345678901234567890123456789\"\nwritable_paths = [\"src\"]\n[[checks]]\nid = \"CHK-001\"\nphase = \"gate\"\nargv = [\"true\"]\n",
+    )
+    .unwrap();
     assert_eq!(gate::resolve_base(&Some("flag".into()), &cfg), "flag");
     assert_eq!(
         gate::resolve_base_from(&None, Some("fromenv"), &cfg),
         "fromenv"
     );
-    assert_eq!(gate::resolve_base_from(&None, None, &cfg), "fromcfg");
-    let none = taskfmt::verifycfg::VerifyConfig::parse("schema = \"verify/v1\"\n").unwrap();
-    assert_eq!(gate::resolve_base_from(&None, Some(""), &none), "baseline");
+    assert_eq!(
+        gate::resolve_base_from(&None, None, &cfg),
+        "0123456789012345678901234567890123456789"
+    );
+    assert_eq!(
+        gate::resolve_base_from(&None, Some(""), &cfg),
+        "0123456789012345678901234567890123456789"
+    );
 }
 
 /// forbidden_paths means "not created or modified by this run": a trusted file that exists on the
@@ -349,7 +351,7 @@ fn forbidden_paths_reject_changes_not_existence() {
         to_done(&std::fs::read_to_string(&progress).unwrap()),
     )
     .unwrap();
-    let config = "schema = \"verify/v1\"\nbase_ref = \"baseline\"\nforbidden_paths = [\"crates/pgtui/src/render.rs\"]\nallowed_globs = [\"*\"]\n\n[focused]\ncommands = []\n\n[regression]\ncommands = []\n\n[lint]\ncommands = []\n";
+    let config = "schema = \"verify/v2\"\ntask_id = \"TASK-042\"\nbase_tree = \"792edca45d6c5c8570357d3864ad58d1f080d196\"\nwritable_paths = [\"*\"]\nforbidden_paths = [\"crates/pgtui/src/render.rs\"]\n\n[[checks]]\nid = \"CHK-001\"\nphase = \"gate\"\nargv = [\"true\"]\n";
     std::fs::write(task.join("verify.toml"), config).unwrap();
 
     let output = gate_at(&work, &task, &logs, &progress);
@@ -414,18 +416,15 @@ fn checklist_normalization_is_the_only_allowed_drift() {
 // while ordinary ignored files pass. Fresh workspace per case: no cross-case index state.
 // ---------------------------------------------------------------------------------------------
 
-const SCOPE_VERIFY_TOML: &str = r#"schema = "verify/v1"
-base_ref = "baseline"
-allowed_globs = ["src/allowed/*"]
+const SCOPE_VERIFY_TOML: &str = r#"schema = "verify/v2"
+task_id = "TASK-042"
+base_tree = "792edca45d6c5c8570357d3864ad58d1f080d196"
+writable_paths = ["src/allowed/*"]
 
-[focused]
-commands = []
-
-[regression]
-commands = []
-
-[lint]
-commands = []
+[[checks]]
+id = "CHK-001"
+phase = "gate"
+argv = ["true"]
 "#;
 
 fn git_out(dir: &Path, args: &[&str]) -> String {
@@ -647,15 +646,19 @@ fn scope_bypasses_fail_base_sha_pins_past_moved_tag() {
 
 fn command_gate(dir: &Path, focused: &[&str]) -> gate::GateOutput {
     let (work, task, _) = scope_fixture(dir);
-    let list = focused
+    let checks = focused
         .iter()
-        .map(|c| format!("{c:?}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let toml = SCOPE_VERIFY_TOML.replacen(
-        "[focused]\ncommands = []",
-        &format!("[focused]\ncommands = [{list}]"),
-        1,
+        .enumerate()
+        .map(|(index, command)| {
+            format!(
+                "[[checks]]\nid = \"CHK-{:03}\"\nphase = \"focused\"\nshell = {command:?}\n",
+                index + 1
+            )
+        })
+        .collect::<String>();
+    let toml = SCOPE_VERIFY_TOML.replace(
+        "[[checks]]\nid = \"CHK-001\"\nphase = \"gate\"\nargv = [\"true\"]",
+        &format!("{checks}[[checks]]\nid = \"CHK-999\"\nphase = \"gate\"\nargv = [\"true\"]"),
     );
     std::fs::write(task.join("verify.toml"), toml).unwrap();
     scope_gate(&work, &task, "baseline")
@@ -666,7 +669,7 @@ fn commands_run_with_errexit_early_failure_fails_check() {
     let tmp = tempfile::tempdir().unwrap();
     let out = command_gate(tmp.path(), &["false; true"]);
     assert!(!out.is_pass(), "{}", out.text);
-    assert_eq!(out.failed_checks, vec!["focused.1"], "{}", out.text);
+    assert_eq!(out.failed_checks, vec!["CHK-001"], "{}", out.text);
 }
 
 #[test]
@@ -681,7 +684,7 @@ fn commands_run_with_pipefail_failing_stage_fails_check() {
     let tmp = tempfile::tempdir().unwrap();
     let out = command_gate(tmp.path(), &["false | true"]);
     assert!(!out.is_pass(), "{}", out.text);
-    assert_eq!(out.failed_checks, vec!["focused.1"], "{}", out.text);
+    assert_eq!(out.failed_checks, vec!["CHK-001"], "{}", out.text);
 }
 
 #[test]
@@ -689,8 +692,8 @@ fn forbidden_pattern_errors_fail_closed() {
     let tmp = tempfile::tempdir().unwrap();
     let (work, task) = fixture(tmp.path());
     let config = VERIFY_TOML.replacen(
-        "allowed_globs = [\"*\"]",
-        "allowed_globs = [\"*\"]\nforbidden_patterns = [{ regex = \"[\" }]",
+        "writable_paths = [\"*\"]",
+        "writable_paths = [\"*\"]\nforbidden_patterns = [{ regex = \"[\" }]",
         1,
     );
     std::fs::write(task.join("verify.toml"), config).unwrap();
@@ -712,13 +715,13 @@ fn fail_fast_stops_all_later_groups() {
     let tmp = tempfile::tempdir().unwrap();
     let (work, task) = fixture(tmp.path());
     let canary = tmp.path().join("later-ran");
-    let config = VERIFY_TOML
-        .replacen("commands = []", "commands = [\"false\"]", 1)
-        .replacen(
-            "[regression]\ncommands = []",
-            &format!("[regression]\ncommands = [\"touch {}\"]", canary.display()),
-            1,
-        );
+    let config = VERIFY_TOML.replace(
+        "[[checks]]\nid = \"CHK-001\"\nphase = \"gate\"\nargv = [\"true\"]",
+        &format!(
+            "[[checks]]\nid = \"CHK-001\"\nphase = \"focused\"\nshell = \"false\"\n\n[[checks]]\nid = \"CHK-002\"\nphase = \"regression\"\nshell = \"touch {}\"\n\n[[checks]]\nid = \"CHK-003\"\nphase = \"gate\"\nargv = [\"true\"]",
+            canary.display()
+        ),
+    );
     std::fs::write(task.join("verify.toml"), config).unwrap();
     let output = gate::run(GateOpts {
         root: work,
@@ -729,20 +732,20 @@ fn fail_fast_stops_all_later_groups() {
         fail_fast: true,
         enforce_task_contract: false,
     });
-    assert_eq!(output.failed_checks, ["focused.1"]);
+    assert_eq!(output.failed_checks, ["CHK-001"]);
     assert!(!canary.exists(), "later regression command ran");
-    assert!(output.check("regression.1").is_none());
+    assert!(output.check("CHK-002").is_none());
 }
 
 #[cfg(unix)]
 #[test]
-fn required_path_symlink_escape_fails() {
+fn forbidden_pattern_path_symlink_escape_fails() {
     let tmp = tempfile::tempdir().unwrap();
     let (work, task) = fixture(tmp.path());
     std::os::unix::fs::symlink(tmp.path(), work.join("escape")).unwrap();
     let config = VERIFY_TOML.replacen(
-        "allowed_globs = [\"*\"]",
-        "allowed_globs = [\"*\"]\nrequired_paths = [\"escape\"]",
+        "writable_paths = [\"*\"]",
+        "writable_paths = [\"*\"]\nforbidden_patterns = [{ regex = \"never-matches\", paths = [\"escape\"] }]",
         1,
     );
     std::fs::write(task.join("verify.toml"), config).unwrap();
@@ -755,6 +758,6 @@ fn required_path_symlink_escape_fails() {
         fail_fast: false,
         enforce_task_contract: false,
     });
-    assert_eq!(output.failed_checks, ["required_paths"]);
+    assert_eq!(output.failed_checks, ["forbidden_patterns"]);
     assert!(output.text.contains("resolves outside repository"));
 }

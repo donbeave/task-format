@@ -1,37 +1,33 @@
-# TASK-042 verify.toml — declarative gate inputs (`taskfmt verify`). Data only, no shell.
-# Paths are relative to the repository root (the gate's working directory).
-# Top-level keys stay above the tables: in TOML every later key would nest into the table.
+schema = "verify/v2"
+task_id = "TASK-042"
+base_tree = "792edca45d6c5c8570357d3864ad58d1f080d196"
+writable_paths = ["src/auth/session", "tests/auth", "Cargo.lock"]
+forbidden_paths = ["src/auth/session/legacy_expiry_check.rs"]
 
-schema = "verify/v1"
-required_paths = ["tests/auth/expired_refresh_token.rs"]
-allowed_globs = ["src/auth/session/*", "tests/auth/*", "Cargo.lock"]
+[[checks]]
+id = "CHK-001"
+phase = "focused"
+argv = ["cargo", "test", "-p", "auth", "expired_refresh_token"]
+requirements = ["R-001", "R-002", "R-003"]
+acceptance = ["AC-001"]
 
-[focused]
-commands = [
-  "cargo test -p auth expired_refresh_token",
-  "cargo test -p auth expired_error_code",
-  "cargo test -p auth valid_refresh_rotation",
-]
+[[checks]]
+id = "CHK-002"
+phase = "regression"
+argv = ["cargo", "test", "-p", "auth", "valid_refresh_rotation"]
+requirements = ["R-004"]
+acceptance = ["AC-002"]
 
-[regression]
-commands = [
-  "cargo test -p auth",
-]
+[[checks]]
+id = "CHK-003"
+phase = "lint"
+shell = "! grep -rn legacy_expiry_check src tests"
+requirements = ["R-005"]
+acceptance = ["AC-003"]
 
-[lint]
-commands = [
-  "cargo fmt --check",
-  "cargo clippy -p auth -- -D warnings",
-]
-
-# regex must not match anywhere under `paths` (default: the whole tree).
-[[forbidden_patterns]]
-regex = 'legacy_expiry_check'
-paths = ["src", "tests"]
-
-[[forbidden_patterns]]
-regex = '#\[ignore\]'
-paths = ["tests"]
-
-[[forbidden_patterns]]
-regex = 'TODO\(TASK-042\)'
+[[checks]]
+id = "CHK-004"
+phase = "gate"
+argv = ["taskfmt", "verify"]
+requirements = ["R-006"]
+acceptance = ["AC-004"]

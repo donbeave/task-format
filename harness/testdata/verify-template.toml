@@ -1,45 +1,40 @@
-# verify.toml — declarative inputs for the gate (`taskfmt verify`). Data only.
-# Paths are relative to the repository root (the working directory of the gate).
-# The scope base is the per-run trusted commit: TASKFMT_BASE env, --base flag, else "baseline".
-#
-# ORDER MATTERS: in TOML every key after a `[table]` header belongs to that table, so all
-# top-level keys come first and the tables close the file. (reference/task-template/verify.toml
-# still has them last — the parser rejects that shape instead of silently dropping the scope.)
+# `verify.toml` is the machine contract. Commands use argv by default; `shell` is explicit.
+schema = "verify/v2"
+task_id = "TASK-000"
+base_tree = "792edca45d6c5c8570357d3864ad58d1f080d196"
+writable_paths = ["src", "tests"]
 
-schema = "verify/v1"
-forbidden_paths = ["src/legacy/file.rs"]     # must not be created or modified vs the base commit
-required_paths = ["tests/new_test.rs"]       # must exist after the task
+[[checks]]
+id = "CHK-001"
+phase = "precondition"
+argv = ["<precondition-command>"]
+requirements = ["R-001"]
+acceptance = ["AC-001"]
 
-# Scope whitelist: every changed file (vs the base commit, plus staged and untracked)
-# must match one glob; anything else fails the gate. Bash-style globs; '*' and '**' cross '/'.
-allowed_globs = [
-  "src/<area>/*",
-  "tests/<area>/*",
-]
+[[checks]]
+id = "CHK-002"
+phase = "focused"
+argv = ["<focused-test-command>"]
+requirements = ["R-002"]
+acceptance = ["AC-002"]
 
-# Commands run from the repo root. Each must exit 0.
-[focused]
-commands = [
-  "<focused test command for AC-001>",
-  "<focused test command for AC-002>",
-]
+[[checks]]
+id = "CHK-003"
+phase = "regression"
+argv = ["<regression-command>"]
+requirements = ["R-003"]
+acceptance = ["AC-003"]
 
-[regression]
-commands = [
-  "<relevant regression suite>",
-]
+[[checks]]
+id = "CHK-004"
+phase = "lint"
+argv = ["<lint-command>"]
+requirements = ["R-004"]
+acceptance = ["AC-004"]
 
-[lint]
-commands = [
-  "<fmt --check>",
-  "<lint>",
-]
-
-# regex must NOT match anywhere under `paths` (default: the whole tree).
-[[forbidden_patterns]]
-regex = '<legacy_symbol>'
-paths = ["src", "tests"]
-
-[[forbidden_patterns]]
-regex = '#[ignore]'
-paths = ["tests"]
+[[checks]]
+id = "CHK-005"
+phase = "gate"
+argv = ["taskfmt", "verify"]
+requirements = ["R-005"]
+acceptance = ["AC-005"]

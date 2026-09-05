@@ -1,10 +1,11 @@
-//! `README.md` task-file parser: YAML-ish frontmatter, H2 sections, the checklist block,
-//! precondition lines and acceptance-table rows. Hand-parsed on purpose — the frontmatter is a
-//! small fixed schema and the checklist grammar is bespoke.
+//! `README.md` task-file parser: strict `task/v5` frontmatter, H2 sections, and the checklist
+//! block. Hand-parsed on purpose — the frontmatter is a small fixed schema and the checklist
+//! grammar is bespoke.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, bail};
+use anyhow::{Context, bail, ensure};
 use regex::Regex;
 
 use crate::acceptance::{self, AcceptanceDocument};
@@ -13,22 +14,12 @@ pub const CHECKLIST_START: &str = "<!-- checklist:start -->";
 pub const CHECKLIST_END: &str = "<!-- checklist:end -->";
 
 /// Frontmatter keys the task contract uses.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Frontmatter {
     pub schema: String,
     pub id: String,
     pub title: String,
     pub kind: String,
-    pub verify: String,
-    pub expected_paths: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct AcRow {
-    pub id: String,
-    pub gwt: String,
-    pub evidence: String,
-    pub expected: String,
 }
 
 #[derive(Debug, Clone)]
@@ -40,9 +31,7 @@ pub struct TaskFile {
     pub sections: Vec<(String, Vec<String>)>,
     /// Raw lines between the checklist markers.
     pub checklist: Vec<String>,
-    /// Acceptance rows in document order.
-    pub ac_rows: Vec<AcRow>,
-    /// Typed AC blocks, when the acceptance section uses the experimental block form.
+    /// Typed AC blocks in `## Acceptance criteria` only.
     pub typed_acceptance: AcceptanceDocument,
     /// Body lines of the `Preconditions` section.
     pub preconditions: Vec<String>,
@@ -61,14 +50,7 @@ impl TaskFile {
         let raw_fm = frontmatter_block(&text).ok_or_else(|| {
             anyhow::anyhow!("no YAML frontmatter block at top of {}", path.display())
         })?;
-        let frontmatter = Frontmatter {
-            schema: fm_val(&raw_fm, "schema").unwrap_or_default(),
-            id: fm_val(&raw_fm, "id").unwrap_or_default(),
-            title: fm_val(&raw_fm, "title").unwrap_or_default(),
-            kind: fm_val(&raw_fm, "kind").unwrap_or_default(),
-            verify: fm_val(&raw_fm, "verify").unwrap_or_default(),
-            expected_paths: fm_list(&raw_fm, "expected_paths"),
-        };
+        let frontmatter = parse_frontmatter(&raw_fm)?;
         let sections = parse_sections(&text);
         let checklist = checklist_block(&text);
         let preconditions = section_body(&sections, "Preconditions")
@@ -79,12 +61,12 @@ impl TaskFile {
                     .collect::<Vec<String>>()
             })
             .unwrap_or_default();
-        let ac_rows = acceptance_rows(
-            section_body(&sections, "Acceptance criteria")
-                .cloned()
-                .unwrap_or_default(),
-        );
-        let typed_acceptance = acceptance::parse(&text);
+        // Acceptance is deliberately section-bounded. A stray `### AC-*` elsewhere in the
+        // README is prose, not an alternate source of acceptance authority.
+        let acceptance_text = section_body(&sections, "Acceptance criteria")
+            .map(|body| body.join("\n"))
+            .unwrap_or_default();
+        let typed_acceptance = acceptance::parse(&acceptance_text);
         let h1 = text.lines().find_map(|line| {
             let trimmed = line.trim_end();
             trimmed.strip_prefix("# ").map(str::to_string)
@@ -95,7 +77,6 @@ impl TaskFile {
             frontmatter,
             sections,
             checklist,
-            ac_rows,
             typed_acceptance,
             preconditions,
             h1,
@@ -129,57 +110,80 @@ pub fn frontmatter_block(text: &str) -> Option<String> {
     None
 }
 
-/// Scalar frontmatter value. Mirrors the original `sed -nE "s/^$1: *\"?([^\"#]*[^\" #])\"? *(#.*)?$/\1/p"`:
-/// a `#` starts a comment only when preceded by whitespace, quotes are optional and stripped.
-pub fn fm_val(fm: &str, key: &str) -> Option<String> {
-    let re = Regex::new(&format!(r"^{}\s*:\s*(.*)$", regex::escape(key))).ok()?;
-    for line in fm.lines() {
-        let Some(caps) = re.captures(line.trim_end()) else {
-            continue;
-        };
-        let rest = caps.get(1)?.as_str().trim();
-        // strip a trailing comment: " # ..." (a '#' inside an unquoted value is not supported,
-        // matching the original pattern which stops the value at '#')
-        let value = match rest.find(" #") {
-            Some(idx) => rest[..idx].trim(),
-            None => rest,
-        };
-        let value = value.trim_matches('"').trim();
-        return if value.is_empty() {
-            None
-        } else {
-            Some(value.to_string())
-        };
-    }
-    None
-}
+/// Parse the entire current frontmatter schema. There are no optional keys, comments, lists, or
+/// compatibility aliases: `verify.toml` owns machine configuration.
+pub fn parse_frontmatter(fm: &str) -> anyhow::Result<Frontmatter> {
+    const KEYS: [&str; 4] = ["schema", "id", "title", "kind"];
+    let mut values = BTreeMap::new();
 
-/// Block list values: lines after `key:` shaped `  - "item"` until the next non-indented line.
-pub fn fm_list(fm: &str, key: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut in_list = false;
-    let key_prefix = format!("{key}:");
-    for line in fm.lines() {
-        if line.starts_with(key_prefix.as_str()) {
-            in_list = true;
-            continue;
-        }
-        if !in_list {
-            continue;
-        }
-        if !line.starts_with(' ') && !line.starts_with('-') {
-            break;
-        }
-        let trimmed = line.trim_start();
-        if let Some(item) = trimmed.strip_prefix("- ") {
-            let item = item.split(" #").next().unwrap_or(item);
-            out.push(item.trim().trim_matches('"').to_string());
-        } else if !trimmed.is_empty() {
-            break;
-        }
+    for (line_number, line) in fm.lines().enumerate() {
+        let line_number = line_number + 2; // account for the opening fence
+        ensure!(
+            !line.trim().is_empty(),
+            "frontmatter line {line_number}: blank lines are not allowed"
+        );
+        ensure!(
+            line == line.trim(),
+            "frontmatter line {line_number}: indentation or trailing whitespace is not allowed"
+        );
+        let (key, raw_value) = line.split_once(':').ok_or_else(|| {
+            anyhow::anyhow!("frontmatter line {line_number}: expected `key: value`")
+        })?;
+        ensure!(
+            KEYS.contains(&key),
+            "frontmatter line {line_number}: unknown or malformed key `{key}`"
+        );
+        ensure!(
+            raw_value.starts_with(' ') && !raw_value.starts_with("  "),
+            "frontmatter line {line_number}: expected one space after `:`"
+        );
+        let value = raw_value
+            .strip_prefix(' ')
+            .expect("validated one leading space");
+        ensure!(
+            !value.is_empty(),
+            "frontmatter line {line_number}: `{key}` must not be empty"
+        );
+        let value = if value.starts_with('"') || value.ends_with('"') {
+            value
+                .strip_prefix('"')
+                .and_then(|value| value.strip_suffix('"'))
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "frontmatter line {line_number}: malformed quoted value for `{key}`"
+                    )
+                })?
+                .to_string()
+        } else {
+            ensure!(
+                !value.contains('"') && !value.contains('#'),
+                "frontmatter line {line_number}: malformed scalar value for `{key}`"
+            );
+            value.to_string()
+        };
+        ensure!(
+            values.insert(key, value).is_none(),
+            "frontmatter line {line_number}: duplicate key `{key}`"
+        );
     }
-    out.retain(|item| !item.is_empty());
-    out
+
+    let mut required = |key| {
+        values
+            .remove(key)
+            .ok_or_else(|| anyhow::anyhow!("frontmatter: missing required key `{key}`"))
+    };
+    let schema = required("schema")?;
+    ensure!(
+        schema == "task/v5",
+        "frontmatter: expected schema `task/v5`, got `{schema}`"
+    );
+    Ok(Frontmatter {
+        schema,
+        id: required("id")?,
+        title: required("title")?,
+        kind: required("kind")?,
+    })
 }
 
 /// Every H2 section in document order: `(title, body lines)`.
@@ -330,28 +334,6 @@ pub fn first_leaf(items: &[CheckItem]) -> Option<String> {
         .map(|(item, _)| item.id.clone())
 }
 
-/// Acceptance table rows: `| AC-001 | GWT | `command` | expected |`.
-pub fn acceptance_rows(lines: Vec<String>) -> Vec<AcRow> {
-    let re = Regex::new(r"^\|\s*(AC-[0-9]+)\s*\|").expect("static regex");
-    lines
-        .into_iter()
-        .filter_map(|line| {
-            let id = re.captures(&line)?.get(1)?.as_str().to_string();
-            let cells: Vec<&str> = line.split('|').collect();
-            // ['', '', gwt, cmd, expected, ...]
-            let gwt = cells.get(2).copied().unwrap_or("").trim().to_string();
-            let evidence = cells.get(3).copied().unwrap_or("").trim().to_string();
-            let expected = cells.get(4).copied().unwrap_or("").trim().to_string();
-            Some(AcRow {
-                id,
-                gwt,
-                evidence,
-                expected,
-            })
-        })
-        .collect()
-}
-
 /// `P-001` style precondition line.
 pub fn precondition_id(line: &str) -> Option<String> {
     let re = Regex::new(r"^- \*\*(P-[0-9]+):\*\*").expect("static regex");
@@ -380,14 +362,10 @@ mod tests {
 
     const SAMPLE: &str = "\
 ---
-schema: task/v4
+schema: task/v5
 id: TASK-042
-title: \"Some title\"   # inline comment
+title: \"Some title\"
 kind: bugfix
-verify: \"taskfmt verify\"
-expected_paths:
-  - \"src/auth/session/*\"
-  - tests/auth/*
 ---
 
 # TASK-042 — Some title
@@ -426,14 +404,9 @@ Do the thing.
     #[test]
     fn parses_frontmatter() {
         let tf = TaskFile::parse(SAMPLE.to_string(), Path::new("README.md")).unwrap();
-        assert_eq!(tf.frontmatter.schema, "task/v4");
+        assert_eq!(tf.frontmatter.schema, "task/v5");
         assert_eq!(tf.frontmatter.id, "TASK-042");
         assert_eq!(tf.frontmatter.title, "Some title");
-        assert_eq!(tf.frontmatter.verify, "taskfmt verify");
-        assert_eq!(
-            tf.frontmatter.expected_paths,
-            vec!["src/auth/session/*", "tests/auth/*"]
-        );
     }
 
     #[test]
@@ -461,12 +434,12 @@ Do the thing.
     }
 
     #[test]
-    fn parses_acceptance_rows() {
+    fn acceptance_parse_is_bounded_to_acceptance_section() {
         let tf = TaskFile::parse(SAMPLE.to_string(), Path::new("README.md")).unwrap();
-        assert_eq!(tf.ac_rows.len(), 2);
-        assert_eq!(tf.ac_rows[0].id, "AC-001");
-        assert_eq!(tf.ac_rows[0].evidence, "`cargo test`");
-        assert_eq!(tf.ac_rows[1].expected, "exit 0");
+        assert!(!tf.typed_acceptance.detected);
+        let text = format!("{SAMPLE}\n## Notes\n\n### AC-999 — prose only\n");
+        let tf = TaskFile::parse(text, Path::new("README.md")).unwrap();
+        assert!(!tf.typed_acceptance.detected);
     }
 
     #[test]
@@ -499,5 +472,22 @@ Do the thing.
     #[test]
     fn no_frontmatter_is_reported() {
         assert!(TaskFile::parse("no fences here\n".to_string(), Path::new("README.md")).is_err());
+    }
+
+    #[test]
+    fn strict_frontmatter_rejects_unknown_duplicate_and_malformed_keys() {
+        for frontmatter in [
+            "schema: task/v5\nid: TASK-042\ntitle: Some title\nkind: bugfix\nverify: no",
+            "schema: task/v5\nid: TASK-042\nid: TASK-043\ntitle: Some title\nkind: bugfix",
+            "schema: task/v5\nid TASK-042\ntitle: Some title\nkind: bugfix",
+            "schema: task/v5\nid: TASK-042\ntitle: Some title",
+            "schema: task/v4\nid: TASK-042\ntitle: Some title\nkind: bugfix",
+        ] {
+            let text = format!("---\n{frontmatter}\n---\n");
+            assert!(
+                TaskFile::parse(text, Path::new("README.md")).is_err(),
+                "{frontmatter}"
+            );
+        }
     }
 }

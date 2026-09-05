@@ -181,8 +181,8 @@ pub fn run() -> Report {
     );
     let template_report = crate::lint::lint_path(&template);
     report.push(
-        "lint: template has placeholders",
-        !template_report.passed(),
+        "lint: template structural contract passes",
+        template_report.passed(),
         template_report
             .render()
             .lines()
@@ -210,7 +210,8 @@ pub fn run() -> Report {
     std::fs::create_dir_all(&workspace).expect("workspace");
     std::fs::create_dir_all(&task_dir).expect("task dir");
     std::fs::write(task_dir.join("README.md"), &readme).expect("fixture README");
-    std::fs::write(task_dir.join("verify.toml"), GATE_VERIFY_TOML).expect("fixture verify.toml");
+    std::fs::write(task_dir.join("verify.toml"), gate_verify_toml(None))
+        .expect("fixture verify.toml");
     if let Err(err) = init_baseline(&workspace) {
         report.push("workspace: baseline commit", false, vec![err.to_string()]);
         return report;
@@ -337,17 +338,13 @@ pub fn run() -> Report {
         )],
     );
 
-    // ---- command lists run under `bash -eo pipefail`: an early failing statement and a failing
-    // pipe stage both fail the check; a clean pipe passes ----
+    // ---- explicit shell checks run under `bash -eo pipefail`: an early failing statement and a
+    // failing pipe stage both fail the check; a clean pipe passes ----
     let task2 = tmp.path().join("task2");
     std::fs::create_dir_all(&task2).expect("task2 dir");
     std::fs::write(task2.join("README.md"), &readme).expect("task2 README");
     for (name, command, want_pass) in COMMAND_CASES {
-        let toml = GATE_VERIFY_TOML.replacen(
-            "[focused]\ncommands = []",
-            &format!("[focused]\ncommands = [{command:?}]"),
-            1,
-        );
+        let toml = gate_verify_toml(Some(command));
         std::fs::write(task2.join("verify.toml"), toml).expect("task2 verify.toml");
         let output = gate::run(GateOpts {
             root: workspace.clone(),
@@ -361,7 +358,7 @@ pub fn run() -> Report {
         let ok = if *want_pass {
             output.is_pass()
         } else {
-            !output.is_pass() && output.failed_checks == ["focused.1"]
+            !output.is_pass() && output.failed_checks == ["CHK-001"]
         };
         report.push(
             &format!("cmds: {name}"),
@@ -512,7 +509,7 @@ fn tamper_matrix(done: &str) -> Vec<(&'static str, String)> {
         ("reworded checklist text", reword(done, "**3.1**")),
         (
             "deleted checklist line",
-            drop_line_containing(done, "**3.2**"),
+            drop_line_containing(done, "**2.3**"),
         ),
         ("added checklist line", append_after_checklist(done)),
     ]
@@ -796,20 +793,47 @@ fn plant_corpus(dir: &Path, files: &[(&str, &str, &str)]) {
     }
 }
 
-/// Minimal verify.toml for the gate matrix: no commands, everything allowed.
-const GATE_VERIFY_TOML: &str = r#"schema = "verify/v1"
-base_ref = "baseline"
-allowed_globs = ["*"]
+/// Minimal strict verifier for the gate matrix: one shell command and one gate check. The
+/// explicit `baseline` CLI option controls the temporary repository's actual base; `base_tree`
+/// remains a well-formed immutable fallback for parser coverage.
+fn gate_verify_toml(focused_shell: Option<&str>) -> String {
+    let focused = focused_shell.unwrap_or("true");
+    format!(
+        r#"schema = "verify/v2"
+task_id = "TASK-042"
+base_tree = "0000000000000000000000000000000000000000"
+writable_paths = ["*"]
 
-[focused]
-commands = []
+[[checks]]
+id = "CHK-001"
+phase = "focused"
+shell = {focused:?}
+requirements = ["R-001", "R-002", "R-003"]
+acceptance = ["AC-001"]
 
-[regression]
-commands = []
+[[checks]]
+id = "CHK-002"
+phase = "regression"
+argv = ["true"]
+requirements = ["R-004"]
+acceptance = ["AC-002"]
 
-[lint]
-commands = []
-"#;
+[[checks]]
+id = "CHK-003"
+phase = "lint"
+argv = ["true"]
+requirements = ["R-005"]
+acceptance = ["AC-003"]
+
+[[checks]]
+id = "CHK-004"
+phase = "gate"
+argv = ["true"]
+requirements = ["R-006"]
+acceptance = ["AC-004"]
+"#
+    )
+}
 
 /// Console entry point (`taskfmt selftest`): run everything, print, exit 1 on failure.
 pub fn console() -> anyhow::Result<i32> {

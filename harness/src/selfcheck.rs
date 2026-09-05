@@ -5,7 +5,7 @@
 //! - **nop**: the gate on the untouched workspace (a git repo at the trusted base commit) must exit
 //!   1 with `RESULT FAIL` from real checks — exit 2 (no config) and 70 (internal error) are not a
 //!   gate verdict.
-//! - **polarity**: from the very same nop run (no second execution): every `focused.N` must FAIL
+//! - **polarity**: from the very same nop run (no second execution): every focused check must FAIL
 //!   on the baseline (delta). An empty `focused` list proves nothing RED and is BAD. A focused
 //!   command that is not runnable (rc 126/127, or the shell could not be spawned) is **NOVERDICT**:
 //!   its failure says nothing about the package (toolchain missing?), the phase FAILs and the
@@ -28,7 +28,7 @@ use anyhow::Context;
 
 use crate::gate::{self, GateOpts, GateOutput};
 use crate::ops;
-use crate::verifycfg::{FILE_NAME, VerifyConfig};
+use crate::verifycfg::{Check, FILE_NAME, Phase as CheckPhase, VerifyConfig};
 
 /// Exit code of a fully passing selfcheck.
 pub const EXIT_PASS: i32 = 0;
@@ -288,26 +288,35 @@ fn got_text(got: Option<&gate::CheckResult>) -> &'static str {
     }
 }
 
-/// Emit one `POLARITY` line per command of `prefix`; `false` when any verdict is BAD.
+/// Render the command exactly as the gate executes it. `argv` stays argv; `shell` is explicit.
+fn check_command(check: &Check) -> String {
+    match (&check.argv, &check.shell) {
+        (Some(argv), None) => format!("argv={argv:?}"),
+        (None, Some(shell)) => format!("shell={shell:?}"),
+        _ => unreachable!("VerifyConfig validation requires exactly one command form"),
+    }
+}
+
+/// Emit one `POLARITY` line per check; `false` when any verdict is BAD.
 fn polarity_lines(
     lines: &mut Vec<String>,
     gate: &GateOutput,
-    prefix: &str,
-    commands: &[String],
+    checks: &[&Check],
     want_pass: bool,
     label: &str,
 ) -> bool {
     let want = verdict(want_pass);
     let mut ok = true;
-    for (i, cmd) in commands.iter().enumerate() {
-        let name = format!("{prefix}.{}", i + 1);
-        let got = gate.check_result(&name);
-        let good = got.is_some_and(|check| check.pass == want_pass);
+    for spec in checks {
+        let got = gate.check_result(&spec.id);
+        let good = got.is_some_and(|result| result.pass == want_pass);
         ok &= good;
         lines.push(format!(
-            "POLARITY {name} {want}-ON-{label} {} got={} cmd={cmd}",
+            "POLARITY {} {want}-ON-{label} {} got={} cmd={}",
+            spec.id,
             if good { "OK" } else { "BAD" },
-            got_text(got)
+            got_text(got),
+            check_command(spec),
         ));
     }
     ok
@@ -319,35 +328,38 @@ struct PolarityOutcome {
     noverdict: bool,
 }
 
-/// Every `focused.N` must FAIL on the baseline for a real reason: a not-runnable command (rc
+/// Every focused check must FAIL on the baseline for a real reason: a not-runnable command (rc
 /// 126/127) is NOVERDICT — BAD for the phase, but flagged apart so the caller can tell "toolchain
 /// missing" from "the package is wrong".
 fn focused_polarity_lines(
     lines: &mut Vec<String>,
     gate: &GateOutput,
-    commands: &[String],
+    checks: &[&Check],
 ) -> (bool, bool) {
     let mut ok = true;
     let mut noverdict = false;
-    for (i, cmd) in commands.iter().enumerate() {
-        let name = format!("focused.{}", i + 1);
-        let got = gate.check_result(&name);
+    for spec in checks {
+        let got = gate.check_result(&spec.id);
         match got {
-            Some(check) if !check.pass && not_runnable(check.rc) => {
+            Some(result) if !result.pass && not_runnable(result.rc) => {
                 ok = false;
                 noverdict = true;
                 lines.push(format!(
-                    "POLARITY {name} FAIL-ON-BASELINE NOVERDICT rc={} cmd={cmd} (command not runnable: toolchain missing?)",
-                    check.rc
+                    "POLARITY {} FAIL-ON-BASELINE NOVERDICT rc={} cmd={} (command not runnable: toolchain missing?)",
+                    spec.id,
+                    result.rc,
+                    check_command(spec),
                 ));
             }
             _ => {
-                let good = got.is_some_and(|check| !check.pass);
+                let good = got.is_some_and(|result| !result.pass);
                 ok &= good;
                 lines.push(format!(
-                    "POLARITY {name} FAIL-ON-BASELINE {} got={} cmd={cmd}",
+                    "POLARITY {} FAIL-ON-BASELINE {} got={} cmd={}",
+                    spec.id,
                     if good { "OK" } else { "BAD" },
-                    got_text(got)
+                    got_text(got),
+                    check_command(spec),
                 ));
             }
         }
@@ -355,14 +367,15 @@ fn focused_polarity_lines(
     (ok, noverdict)
 }
 
-/// `regression.N` on the baseline is information only (D28: the list may hold the task's own new
+/// Regression checks on the baseline are information only (D28: the list may hold the task's own new
 /// tests): one `INFO` line each, never a verdict.
-fn regression_info_lines(lines: &mut Vec<String>, gate: &GateOutput, commands: &[String]) {
-    for (i, cmd) in commands.iter().enumerate() {
-        let name = format!("regression.{}", i + 1);
+fn regression_info_lines(lines: &mut Vec<String>, gate: &GateOutput, checks: &[&Check]) {
+    for spec in checks {
         lines.push(format!(
-            "POLARITY {name} PASS-ON-BASELINE INFO got={} cmd={cmd}",
-            got_text(gate.check_result(&name))
+            "POLARITY {} PASS-ON-BASELINE INFO got={} cmd={}",
+            spec.id,
+            got_text(gate.check_result(&spec.id)),
+            check_command(spec),
         ));
     }
 }
@@ -370,16 +383,26 @@ fn regression_info_lines(lines: &mut Vec<String>, gate: &GateOutput, commands: &
 fn polarity_phase(cfg: &VerifyConfig, nop: &GateOutput) -> PolarityOutcome {
     let mut lines = vec!["SELFCHECK phase polarity".to_string()];
     let mut pass = true;
-    if cfg.focused.commands.is_empty() {
+    let focused: Vec<&Check> = cfg
+        .checks
+        .iter()
+        .filter(|check| check.phase == CheckPhase::Focused)
+        .collect();
+    let regression: Vec<&Check> = cfg
+        .checks
+        .iter()
+        .filter(|check| check.phase == CheckPhase::Regression)
+        .collect();
+    if focused.is_empty() {
         pass = false;
         lines.push(
-            "POLARITY focused none BAD ([focused] commands empty: nothing proves RED on baseline)"
+            "POLARITY focused none BAD (no focused check: nothing proves RED on baseline)"
                 .to_string(),
         );
     }
-    let (focused_ok, noverdict) = focused_polarity_lines(&mut lines, nop, &cfg.focused.commands);
+    let (focused_ok, noverdict) = focused_polarity_lines(&mut lines, nop, &focused);
     pass &= focused_ok;
-    regression_info_lines(&mut lines, nop, &cfg.regression.commands);
+    regression_info_lines(&mut lines, nop, &regression);
     PolarityOutcome {
         phase: Phase::new(pass, lines),
         noverdict,
@@ -421,22 +444,18 @@ fn oracle_phase(
             gate.failed_checks.join(",")
         ));
     }
-    pass &= polarity_lines(
-        &mut lines,
-        &gate,
-        "focused",
-        &cfg.focused.commands,
-        true,
-        "REFERENCE",
-    );
-    pass &= polarity_lines(
-        &mut lines,
-        &gate,
-        "regression",
-        &cfg.regression.commands,
-        true,
-        "REFERENCE",
-    );
+    let focused: Vec<&Check> = cfg
+        .checks
+        .iter()
+        .filter(|check| check.phase == CheckPhase::Focused)
+        .collect();
+    let regression: Vec<&Check> = cfg
+        .checks
+        .iter()
+        .filter(|check| check.phase == CheckPhase::Regression)
+        .collect();
+    pass &= polarity_lines(&mut lines, &gate, &focused, true, "REFERENCE");
+    pass &= polarity_lines(&mut lines, &gate, &regression, true, "REFERENCE");
     Phase::new(pass, lines)
 }
 
@@ -565,8 +584,10 @@ mod tests {
 
     #[test]
     fn verifycfg_focused_is_the_polarity_source() {
-        let cfg =
-            VerifyConfig::parse("schema = \"verify/v1\"\n[focused]\ncommands = []\n").unwrap();
+        let cfg = VerifyConfig::parse(
+            "schema = \"verify/v2\"\ntask_id = \"TASK-001\"\nbase_tree = \"0123456789012345678901234567890123456789\"\nwritable_paths = [\"src\"]\n[[checks]]\nid = \"CHK-001\"\nphase = \"gate\"\nargv = [\"true\"]\n",
+        )
+        .unwrap();
         let empty = GateOutput {
             exit: gate::EXIT_FAIL,
             text: String::new(),
@@ -616,35 +637,35 @@ mod tests {
     #[test]
     fn focused_rc_126_or_127_is_noverdict_and_regression_is_info_only() {
         let cfg = VerifyConfig::parse(
-            "schema = \"verify/v1\"\n[focused]\ncommands = [\"a\", \"b\", \"c\"]\n[regression]\ncommands = [\"r\"]\n",
+            "schema = \"verify/v2\"\ntask_id = \"TASK-001\"\nbase_tree = \"0123456789012345678901234567890123456789\"\nwritable_paths = [\"src\"]\n[[checks]]\nid = \"CHK-001\"\nphase = \"focused\"\nargv = [\"a\"]\n[[checks]]\nid = \"CHK-002\"\nphase = \"focused\"\nargv = [\"b\"]\n[[checks]]\nid = \"CHK-003\"\nphase = \"focused\"\nargv = [\"c\"]\n[[checks]]\nid = \"CHK-004\"\nphase = \"regression\"\nargv = [\"r\"]\n[[checks]]\nid = \"CHK-005\"\nphase = \"gate\"\nargv = [\"true\"]\n",
         )
         .unwrap();
         let outcome = polarity_phase(
             &cfg,
             &gate_with(vec![
-                check("focused.1", 1),
-                check("focused.2", 127),
-                check("focused.3", 126),
-                check("regression.1", 1),
+                check("CHK-001", 1),
+                check("CHK-002", 127),
+                check("CHK-003", 126),
+                check("CHK-004", 1),
             ]),
         );
         assert!(!outcome.phase.pass);
         assert!(outcome.noverdict);
         let lines = outcome.phase.lines.join("\n");
         assert!(
-            lines.contains("POLARITY focused.1 FAIL-ON-BASELINE OK got=FAIL cmd=a"),
+            lines.contains("POLARITY CHK-001 FAIL-ON-BASELINE OK got=FAIL cmd=argv=[\"a\"]"),
             "{lines}"
         );
         assert!(
-            lines.contains("POLARITY focused.2 FAIL-ON-BASELINE NOVERDICT rc=127 cmd=b (command not runnable: toolchain missing?)"),
+            lines.contains("POLARITY CHK-002 FAIL-ON-BASELINE NOVERDICT rc=127 cmd=argv=[\"b\"] (command not runnable: toolchain missing?)"),
             "{lines}"
         );
         assert!(
-            lines.contains("POLARITY focused.3 FAIL-ON-BASELINE NOVERDICT rc=126 cmd=c"),
+            lines.contains("POLARITY CHK-003 FAIL-ON-BASELINE NOVERDICT rc=126 cmd=argv=[\"c\"]"),
             "{lines}"
         );
         assert!(
-            lines.contains("POLARITY regression.1 PASS-ON-BASELINE INFO got=FAIL cmd=r"),
+            lines.contains("POLARITY CHK-004 PASS-ON-BASELINE INFO got=FAIL cmd=argv=[\"r\"]"),
             "{lines}"
         );
 
@@ -652,10 +673,10 @@ mod tests {
         let outcome = polarity_phase(
             &cfg,
             &gate_with(vec![
-                check("focused.1", 1),
-                check("focused.2", 1),
-                check("focused.3", 2),
-                check("regression.1", 1),
+                check("CHK-001", 1),
+                check("CHK-002", 1),
+                check("CHK-003", 2),
+                check("CHK-004", 1),
             ]),
         );
         assert!(outcome.phase.pass, "{}", outcome.phase.lines.join("\n"));

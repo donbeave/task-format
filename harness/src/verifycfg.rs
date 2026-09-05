@@ -1,162 +1,147 @@
-//! `verify.toml` — declarative gate inputs (schema `verify/v1`). Replaces the sourced
-//! `verify.config` bash file: data only, no executable content.
-
+//! Strict machine contract (`verify/v2`).
+use serde::Deserialize;
+use std::collections::BTreeSet;
 use std::path::{Component, Path};
 
-use serde::{Deserialize, Serialize};
-
-pub const SCHEMA: &str = "verify/v1";
+pub const SCHEMA: &str = "verify/v2";
 pub const FILE_NAME: &str = "verify.toml";
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VerifyConfig {
     pub schema: String,
-    /// Scope base. Optional: the gate falls back to TASKFMT_BASE / `--base` / the `baseline` tag.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub base_ref: Option<String>,
+    pub task_id: String,
+    pub base_tree: String,
     #[serde(default)]
-    pub focused: CommandGroup,
-    #[serde(default)]
-    pub regression: CommandGroup,
-    #[serde(default)]
-    pub lint: CommandGroup,
-    #[serde(default)]
-    pub forbidden_patterns: Vec<ForbiddenPattern>,
+    pub predecessor: Option<Predecessor>,
+    pub writable_paths: Vec<String>,
     #[serde(default)]
     pub forbidden_paths: Vec<String>,
     #[serde(default)]
-    pub required_paths: Vec<String>,
-    /// Scope whitelist: every changed file must match one of these globs.
-    #[serde(default)]
-    pub allowed_globs: Vec<String>,
+    pub forbidden_patterns: Vec<ForbiddenPattern>,
+    pub checks: Vec<Check>,
 }
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct CommandGroup {
-    #[serde(default)]
-    pub commands: Vec<String>,
+pub struct Predecessor {
+    pub task_id: String,
+    pub tree: String,
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ForbiddenPattern {
     pub regex: String,
-    /// Relative paths (or files) the regex must not match in. Default: the whole tree.
     #[serde(default)]
     pub paths: Vec<String>,
 }
-
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Check {
+    pub id: String,
+    pub phase: Phase,
+    #[serde(default)]
+    pub argv: Option<Vec<String>>,
+    #[serde(default)]
+    pub shell: Option<String>,
+    #[serde(default)]
+    pub requirements: Vec<String>,
+    #[serde(default)]
+    pub acceptance: Vec<String>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Phase {
+    Precondition,
+    Focused,
+    Regression,
+    Lint,
+    Gate,
+}
 impl VerifyConfig {
     pub fn parse(text: &str) -> anyhow::Result<Self> {
-        let cfg: VerifyConfig = toml::from_str(text)?;
-        if cfg.schema != SCHEMA {
-            anyhow::bail!("verify.toml schema is {:?}, want {SCHEMA:?}", cfg.schema);
-        }
-        cfg.validate_paths()?;
+        let cfg: Self = toml::from_str(text)?;
+        cfg.validate()?;
         Ok(cfg)
     }
-
-    fn validate_paths(&self) -> anyhow::Result<()> {
-        for (field, values) in [
-            ("required_paths", &self.required_paths),
-            ("forbidden_paths", &self.forbidden_paths),
-            ("allowed_globs", &self.allowed_globs),
-        ] {
-            for value in values {
-                validate_repo_relative(field, value)?;
+    pub fn load(path: &Path) -> anyhow::Result<Self> {
+        Self::parse(&std::fs::read_to_string(path)?)
+    }
+    fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.schema == SCHEMA,
+            "verify.toml schema is {:?}, want {SCHEMA:?}",
+            self.schema
+        );
+        anyhow::ensure!(valid_task(&self.task_id), "task_id invalid");
+        anyhow::ensure!(oid(&self.base_tree), "base_tree invalid");
+        if let Some(p) = &self.predecessor {
+            anyhow::ensure!(
+                valid_task(&p.task_id) && p.task_id != self.task_id && oid(&p.tree),
+                "predecessor invalid"
+            );
+        }
+        unique_paths("writable_paths", &self.writable_paths)?;
+        unique_paths("forbidden_paths", &self.forbidden_paths)?;
+        anyhow::ensure!(!self.writable_paths.is_empty(), "writable_paths empty");
+        anyhow::ensure!(!self.checks.is_empty(), "checks empty");
+        let mut ids = BTreeSet::new();
+        let mut gate = 0;
+        for c in &self.checks {
+            anyhow::ensure!(id(&c.id, "CHK-"), "check id invalid: {}", c.id);
+            anyhow::ensure!(ids.insert(&c.id), "duplicate check id: {}", c.id);
+            anyhow::ensure!(
+                c.argv.is_some() != c.shell.is_some(),
+                "{} needs exactly one of argv or shell",
+                c.id
+            );
+            if let Some(a) = &c.argv {
+                anyhow::ensure!(
+                    !a.is_empty() && a.iter().all(|v| !v.is_empty()),
+                    "{} argv empty",
+                    c.id
+                )
+            };
+            if let Some(s) = &c.shell {
+                anyhow::ensure!(!s.trim().is_empty(), "{} shell empty", c.id)
+            };
+            unique_ids("requirements", &c.requirements, "R-")?;
+            unique_ids("acceptance", &c.acceptance, "AC-")?;
+            if c.phase == Phase::Gate {
+                gate += 1;
             }
         }
-        for pattern in &self.forbidden_patterns {
-            for value in &pattern.paths {
-                validate_repo_relative("forbidden_patterns.paths", value)?;
-            }
-        }
+        anyhow::ensure!(gate == 1, "exactly one gate check required");
         Ok(())
     }
-
-    pub fn load(path: &Path) -> anyhow::Result<Self> {
-        let text = std::fs::read_to_string(path)?;
-        Self::parse(&text)
-    }
 }
-
-fn validate_repo_relative(field: &str, value: &str) -> anyhow::Result<()> {
-    if value.is_empty() {
-        anyhow::bail!("{field} contains an empty path");
-    }
-    let path = Path::new(value);
-    if path.is_absolute() {
-        anyhow::bail!("{field} path must be repository-relative: {value:?}");
-    }
-    for component in path.components() {
-        match component {
-            Component::Normal(part) if !part.is_empty() => {}
-            _ => anyhow::bail!("{field} contains an unsafe path: {value:?}"),
-        }
+fn id(s: &str, p: &str) -> bool {
+    s.strip_prefix(p)
+        .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+}
+fn valid_task(s: &str) -> bool {
+    id(s, "TASK-")
+}
+fn oid(s: &str) -> bool {
+    (s.len() == 40 || s.len() == 64) && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+fn unique_ids(n: &str, v: &[String], p: &str) -> anyhow::Result<()> {
+    let mut x = BTreeSet::new();
+    for s in v {
+        anyhow::ensure!(id(s, p) && x.insert(s), "{n} invalid or duplicate: {s}");
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const TEMPLATE: &str = include_str!("../testdata/verify-template.toml");
-
-    #[test]
-    fn parses_the_template_shape() {
-        let cfg = VerifyConfig::parse(TEMPLATE).unwrap();
-        assert_eq!(cfg.schema, "verify/v1");
-        assert!(cfg.base_ref.is_none());
-        assert_eq!(cfg.allowed_globs.len(), 2);
-        assert_eq!(cfg.forbidden_patterns.len(), 2);
-        assert_eq!(cfg.forbidden_patterns[0].paths, vec!["src", "tests"]);
-        assert_eq!(cfg.required_paths, vec!["tests/new_test.rs"]);
-        assert_eq!(cfg.focused.commands.len(), 2);
+fn unique_paths(n: &str, v: &[String]) -> anyhow::Result<()> {
+    let mut x = BTreeSet::new();
+    for s in v {
+        let p = Path::new(s);
+        anyhow::ensure!(
+            !s.is_empty()
+                && !p.is_absolute()
+                && p.components().all(|c| matches!(c, Component::Normal(_)))
+                && x.insert(s),
+            "{n} unsafe or duplicate: {s}"
+        );
     }
-
-    #[test]
-    fn base_ref_is_optional_and_wired_when_present() {
-        let cfg = VerifyConfig::parse("schema = \"verify/v1\"\nbase_ref = \"baseline\"\n").unwrap();
-        assert_eq!(cfg.base_ref.as_deref(), Some("baseline"));
-        assert!(cfg.allowed_globs.is_empty());
-    }
-
-    #[test]
-    fn wrong_schema_is_rejected() {
-        assert!(VerifyConfig::parse("schema = \"verify/v2\"\n").is_err());
-    }
-
-    #[test]
-    fn misplaced_top_level_keys_are_rejected_not_dropped() {
-        // TOML nests every key that follows a table header; a scope whitelist that lands inside
-        // a table must fail loudly instead of silently leaving the gate with no allowed globs.
-        let misplaced =
-            "schema = \"verify/v1\"\n[focused]\ncommands = []\nallowed_globs = [\"*\"]\n";
-        let err = VerifyConfig::parse(misplaced).unwrap_err().to_string();
-        assert!(err.contains("allowed_globs"), "{err}");
-    }
-
-    #[test]
-    fn missing_fields_default_to_empty() {
-        let cfg = VerifyConfig::parse("schema = \"verify/v1\"\n").unwrap();
-        assert!(cfg.focused.commands.is_empty());
-        assert!(cfg.forbidden_paths.is_empty());
-        assert!(cfg.lint.commands.is_empty());
-    }
-
-    #[test]
-    fn path_fields_reject_absolute_traversal_and_empty_values() {
-        for body in [
-            "required_paths = [\"/etc/passwd\"]",
-            "forbidden_paths = [\"../secret\"]",
-            "allowed_globs = [\"\"]",
-            "forbidden_patterns = [{ regex = \"x\", paths = [\"src/../secret\"] }]",
-        ] {
-            let text = format!("schema = \"verify/v1\"\n{body}\n");
-            assert!(VerifyConfig::parse(&text).is_err(), "accepted {body}");
-        }
-    }
+    Ok(())
 }

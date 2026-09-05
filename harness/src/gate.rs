@@ -173,16 +173,16 @@ impl Session {
         }
     }
 
-    /// Run a command list under `bash -eo pipefail`, naming checks `<prefix>.<n>`. Under
-    /// errexit + pipefail a failing command or pipe stage aborts the check, except where bash
-    /// swallows the status: a non-final member of a `&&`/`||` list, the condition of an
-    /// `if`/`while`, or a `!`-inverted command. `false && echo A; echo B` prints B and exits 0.
-    fn run_cmd_list(&mut self, prefix: &str, commands: &[String]) {
-        for (i, cmd) in commands.iter().enumerate() {
-            let name = format!("{prefix}.{}", i + 1);
+    fn run_checks(&mut self, checks: &[verifycfg::Check]) {
+        for check in checks {
+            let name = check.id.clone();
             let root = self.root.clone();
-            let owned = cmd.clone();
-            if !self.check(&name, move || run_shell(&root, &owned)) {
+            let check = check.clone();
+            if !self.check(&name, move || match (&check.argv, &check.shell) {
+                (Some(argv), None) => run_argv(&root, argv),
+                (None, Some(shell)) => run_shell(&root, shell),
+                _ => fail(vec![format!("invalid command definition {}", check.id)]),
+            }) {
                 return;
             }
         }
@@ -290,18 +290,12 @@ fn run_inner(opts: GateOpts) -> anyhow::Result<GateOutput> {
     let base = resolve_base(&opts.base, &cfg);
     let scope_root = root.clone();
     let scope_base = base.clone();
-    let scope_globs = cfg.allowed_globs.clone();
+    let scope_globs = cfg.writable_paths.clone();
     session.check("scope", move || {
         check_scope(&scope_root, &scope_base, &scope_globs)
     });
 
-    // ---------- required / forbidden paths and patterns ----------
-    let req_root = root.clone();
-    let required = cfg.required_paths.clone();
-    session.check("required_paths", move || {
-        check_required_paths(&req_root, &required)
-    });
-
+    // ---------- forbidden paths and patterns ----------
     let forb_root = root.clone();
     let forb_base = base.clone();
     let forbidden = cfg.forbidden_paths.clone();
@@ -315,10 +309,8 @@ fn run_inner(opts: GateOpts) -> anyhow::Result<GateOutput> {
         check_forbidden_patterns(&pat_root, &patterns)
     });
 
-    // ---------- command groups ----------
-    session.run_cmd_list("focused", &cfg.focused.commands);
-    session.run_cmd_list("regression", &cfg.regression.commands);
-    session.run_cmd_list("lint", &cfg.lint.commands);
+    // ---------- ordered stable checks ----------
+    session.run_checks(&cfg.checks);
 
     // ---------- progress ----------
     if let Some(progress_path) = progress_opt {
@@ -332,7 +324,7 @@ fn run_inner(opts: GateOpts) -> anyhow::Result<GateOutput> {
     Ok(session.finish())
 }
 
-/// `--base` > `TASKFMT_BASE` > `base_ref` in verify.toml > `baseline`.
+/// `--base` > `TASKFMT_BASE` > exact verifier base tree.
 pub fn resolve_base(explicit: &Option<String>, cfg: &verifycfg::VerifyConfig) -> String {
     let env = std::env::var("TASKFMT_BASE").ok();
     resolve_base_from(explicit, env.as_deref(), cfg)
@@ -350,10 +342,7 @@ pub fn resolve_base_from(
     if let Some(env_base) = env.filter(|b| !b.is_empty()) {
         return env_base.to_string();
     }
-    if let Some(base) = cfg.base_ref.as_deref().filter(|b| !b.is_empty()) {
-        return base.to_string();
-    }
-    DEFAULT_BASE.to_string()
+    cfg.base_tree.clone()
 }
 
 fn fail(lines: Vec<String>) -> CheckBody {
@@ -423,25 +412,6 @@ fn glob_regex(glob: &str) -> anyhow::Result<Regex> {
     }
     pattern.push('$');
     Ok(Regex::new(&pattern)?)
-}
-
-fn check_required_paths(root: &Path, paths: &[String]) -> CheckBody {
-    let mut lines = Vec::new();
-    let mut rc = 0;
-    for p in paths {
-        if let Err(err) = confined_path(root, p) {
-            lines.push(format!("UNSAFE {p}: {err}"));
-            rc = 1;
-            continue;
-        }
-        if root.join(p).exists() {
-            lines.push(format!("ok {p}"));
-        } else {
-            lines.push(format!("MISSING {p}"));
-            rc = 1;
-        }
-    }
-    if rc == 0 { Ok(lines) } else { Err((lines, rc)) }
 }
 
 /// A forbidden path must not be created or modified by this run: it must be absent from the
@@ -562,6 +532,28 @@ fn run_shell(root: &Path, cmd: &str) -> CheckBody {
             }
         }
         Err(err) => Err((vec![format!("command: {cmd}"), err.to_string()], 127)),
+    }
+}
+
+fn run_argv(root: &Path, argv: &[String]) -> CheckBody {
+    let mut command = Command::new(&argv[0]);
+    command.current_dir(root).args(&argv[1..]);
+    match ops::capture(&mut command) {
+        Ok(out) if out.status == 0 => Ok([out.stdout, out.stderr]
+            .into_iter()
+            .filter_map(|s| {
+                let s = s.trim_end().to_string();
+                (!s.is_empty()).then_some(s)
+            })
+            .collect()),
+        Ok(out) => Err((
+            vec![format!("argv: {}", argv.join(" ")), out.stdout, out.stderr],
+            out.status,
+        )),
+        Err(err) => Err((
+            vec![format!("argv: {}", argv.join(" ")), err.to_string()],
+            127,
+        )),
     }
 }
 
@@ -743,15 +735,20 @@ mod tests {
 
     #[test]
     fn base_resolution_order() {
-        let cfg =
-            verifycfg::VerifyConfig::parse("schema = \"verify/v1\"\nbase_ref = \"fromcfg\"\n")
-                .unwrap();
+        let cfg = verifycfg::VerifyConfig::parse(
+            "schema = \"verify/v2\"\ntask_id = \"TASK-001\"\nbase_tree = \"0123456789012345678901234567890123456789\"\nwritable_paths = [\"src\"]\n[[checks]]\nid = \"CHK-001\"\nphase = \"gate\"\nargv = [\"true\"]\n",
+        )
+        .unwrap();
         assert_eq!(resolve_base_from(&Some("flag".into()), None, &cfg), "flag");
-        assert_eq!(resolve_base_from(&None, None, &cfg), "fromcfg");
+        assert_eq!(
+            resolve_base_from(&None, None, &cfg),
+            "0123456789012345678901234567890123456789"
+        );
         assert_eq!(resolve_base_from(&None, Some("fromenv"), &cfg), "fromenv");
-        let none = verifycfg::VerifyConfig::parse("schema = \"verify/v1\"\n").unwrap();
-        assert_eq!(resolve_base_from(&None, Some(""), &none), "baseline");
-        assert_eq!(resolve_base_from(&None, None, &none), "baseline");
+        assert_eq!(
+            resolve_base_from(&None, Some(""), &cfg),
+            "0123456789012345678901234567890123456789"
+        );
     }
 
     #[test]

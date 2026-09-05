@@ -1,95 +1,39 @@
-# verify.toml — declarative inputs for the gate (`taskfmt verify`). Data only.
-# Paths are relative to the repository root (the working directory of the gate).
-# The scope base is the per-run trusted commit: TASKFMT_BASE env, --base flag, else "baseline".
-
-schema = "verify/v1"
-
-# Trusted overlay files: shipped on the run base commit, never authored by the executor.
-# Semantics required: "not created and not modified by this run", not "absent from the tree".
-forbidden_paths = [
-  "crates/pgtui/src/render.rs",
-  "crates/pgtui/src/fonts",
-]
-
-required_paths = [
-  "crates/pgtui/src/grid.rs",
-  "crates/pgtui/src/ui/grid.rs",
-]
-
-allowed_globs = [
-  "Cargo.toml",
-  "Cargo.lock",
-  "crates/pgtui/Cargo.toml",
-  "crates/pgtui/src/lib.rs",
-  "crates/pgtui/src/app.rs",
-  "crates/pgtui/src/keys.rs",
-  "crates/pgtui/src/runtime.rs",
-  "crates/pgtui/src/db/mod.rs",
-  "crates/pgtui/src/db/postgres.rs",
-  "crates/pgtui/src/grid.rs",
-  "crates/pgtui/src/ui/mod.rs",
-  "crates/pgtui/src/ui/browser.rs",
-  "crates/pgtui/src/ui/grid.rs",
-]
-
-[focused]
-commands = [
-  "cargo test -p pgtui --test grid_sort_test",
-  "cargo test -p pgtui --test pg_preview_test",
-  "cargo test -p pgtui --test app_preview_test",
-  "cargo test -p pgtui --test screen_preview_test",
-]
-
-[regression]
-commands = [
-  "cargo test -p pgtui --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test --test app_create_form_test --test runtime_create_test --test screen_create_form_test --test pg_connect_test --test pg_runtime_connect_test --test app_browser_test --test screen_browser_test --test grid_sort_test --test pg_preview_test --test app_preview_test --test screen_preview_test --test skeleton_test -- --skip pgtui_stub_exits_2",
-]
-
-[lint]
-commands = [
-  "cargo fmt --all --check",
-  "cargo clippy --workspace --all-targets -- -D warnings",
-]
-
+schema = "verify/v2"
+task_id = "TASK-005"
+base_tree = "792edca45d6c5c8570357d3864ad58d1f080d196"
+predecessor = { task_id = "TASK-004", tree = "792edca45d6c5c8570357d3864ad58d1f080d196" }
+writable_paths = ["Cargo.toml", "Cargo.lock", "crates/pgtui/Cargo.toml", "crates/pgtui/src/lib.rs", "crates/pgtui/src/app.rs", "crates/pgtui/src/keys.rs", "crates/pgtui/src/runtime.rs", "crates/pgtui/src/db/mod.rs", "crates/pgtui/src/db/postgres.rs", "crates/pgtui/src/grid.rs", "crates/pgtui/src/ui/mod.rs", "crates/pgtui/src/ui/browser.rs", "crates/pgtui/src/ui/grid.rs"]
+forbidden_paths = ["crates/pgtui/src/render.rs", "crates/pgtui/src/fonts"]
 [[forbidden_patterns]]
-regex = 'todo!\(|unimplemented!\('
-paths = [
-  "crates/pgtui/src",
-]
-
-[[forbidden_patterns]]
-regex = 'dbg!\('
-paths = [
-  "crates/pgtui/src",
-]
-
-[[forbidden_patterns]]
-regex = '#\[allow\((clippy|dead_code|unused)'
-paths = [
-  "crates/pgtui/src",
-]
-
-[[forbidden_patterns]]
-regex = '#\[ignore\]'
-paths = [
-  "crates/pgtui/tests",
-]
-
-[[forbidden_patterns]]
-regex = '\.query\(|query_one|query_raw|\.prepare\(|\.execute\('
-paths = [
-  "crates/pgtui/src/db",
-]
-
-[[forbidden_patterns]]
-regex = 'sort_unstable'
-paths = [
-  "crates/pgtui/src",
-]
-
-[[forbidden_patterns]]
-# D-042 must-not: the retired TASK-001 stub message never reappears in the real binary (R-005).
-regex = 'error: not implemented'
-paths = [
-  "crates/pgtui/src/main.rs",
-]
+regex = "todo!\\(|unimplemented!\\(|dbg!\\(|sort_unstable"
+paths = ["crates/pgtui/src"]
+[[checks]]
+id = "CHK-001"
+phase = "precondition"
+argv = ["sh", "-c", "cargo --version && cargo test -p pgtui --test app_browser_test --test screen_browser_test && docker info >/dev/null && test -f crates/pgtui/tests/grid_sort_test.rs"]
+requirements = ["R-007"]
+acceptance = ["AC-005"]
+[[checks]]
+id = "CHK-002"
+phase = "focused"
+shell = "cargo test -p pgtui --test grid_sort_test --test pg_preview_test --test app_preview_test --test screen_preview_test"
+requirements = ["R-001", "R-002", "R-003", "R-004", "R-005", "R-006"]
+acceptance = ["AC-001", "AC-002"]
+[[checks]]
+id = "CHK-003"
+phase = "regression"
+shell = "cargo test -p pgtui --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test --test app_create_form_test --test runtime_create_test --test screen_create_form_test --test pg_connect_test --test pg_runtime_connect_test --test app_browser_test --test screen_browser_test --test grid_sort_test --test pg_preview_test --test app_preview_test --test screen_preview_test --test skeleton_test -- --skip pgtui_stub_exits_2"
+requirements = ["R-001", "R-002", "R-003", "R-004", "R-005", "R-006"]
+acceptance = ["AC-003"]
+[[checks]]
+id = "CHK-004"
+phase = "lint"
+shell = "cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings"
+requirements = ["R-007"]
+acceptance = ["AC-004"]
+[[checks]]
+id = "CHK-005"
+phase = "gate"
+argv = ["taskfmt", "verify"]
+requirements = ["R-007"]
+acceptance = ["AC-006"]

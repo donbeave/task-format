@@ -1,99 +1,44 @@
-# verify.toml — declarative inputs for the gate (`taskfmt verify`). Data only.
-# Paths are relative to the repository root (the working directory of the gate).
-# The scope base is the per-run trusted commit: TASKFMT_BASE env, --base flag, else "baseline".
-
-schema = "verify/v1"
-
-# Trusted overlay files: shipped on the run base commit, never authored by the executor.
-# Semantics required: "not created and not modified by this run", not "absent from the tree".
-forbidden_paths = [
-  "crates/pgtui/src/render.rs",
-  "crates/pgtui/src/fonts",
-]
-
-required_paths = [
-  "Cargo.toml",
-  "Cargo.lock",
-  "rust-toolchain.toml",
-  "rustfmt.toml",
-  ".gitignore",
-  ".cargo/config.toml",
-  "crates/pgtui/Cargo.toml",
-  "crates/pgtui/src/lib.rs",
-  "crates/pgtui/src/main.rs",
-  "crates/pgtui/src/bin/gallery.rs",
-]
-
-allowed_globs = [
-  "Cargo.toml",
-  "Cargo.lock",
-  "rust-toolchain.toml",
-  "rustfmt.toml",
-  ".gitignore",
-  ".cargo/config.toml",
-  "crates/pgtui/Cargo.toml",
-  "crates/pgtui/src/lib.rs",
-  "crates/pgtui/src/main.rs",
-  "crates/pgtui/src/bin/gallery.rs",
-]
-
-[focused]
-commands = [
-  "cargo build --workspace --all-targets",
-  "cargo test -p pgtui --test skeleton_test -- stub",
-  "cargo test -p pgtui --test skeleton_test -- trims pipeline",
-  # D-001 pins: all 13, anchored and version-exact. Byte-identical to AC-002's evidence command.
-  '''grep -qE '^ratatui = "=0\.30\.2"' Cargo.toml &&
-grep -qE '^crossterm = "=0\.29\.0"' Cargo.toml &&
-grep -qE '^tokio-postgres = "=0\.7\.18"' Cargo.toml &&
-grep -qE '^turso = \{ version = "=0\.7\.2"' Cargo.toml &&
-grep -qE '^tokio = \{ version = "=1\.53\.1"' Cargo.toml &&
-grep -qE '^clap = \{ version = "=4\.6\.6"' Cargo.toml &&
-grep -qE '^thiserror = "=2\.0\.20"' Cargo.toml &&
-grep -qE '^directories = "=6\.0\.0"' Cargo.toml &&
-grep -qE '^resvg = "=0\.48\.1"' Cargo.toml &&
-grep -qE '^tempfile = "=3\.27\.0"' Cargo.toml &&
-grep -qE '^testcontainers = "=0\.27\.3"' Cargo.toml &&
-grep -qE '^testcontainers-modules = \{ version = "=0\.15\.0"' Cargo.toml &&
-grep -qE '^nix = \{ version = "=0\.30\.1"' Cargo.toml''',
-  # D-004 toolchain files. Byte-identical to AC-003's evidence command.
-  '''grep -q '1.98.0' rust-toolchain.toml &&
-grep -q 'edition = "2024"' rustfmt.toml &&
-grep -q 'TESTCONTAINERS_COMMAND' .cargo/config.toml &&
-grep -q 'target/' .gitignore''',
-]
-
-[regression]
-commands = [
-  "cargo test -p pgtui --test skeleton_test",
-]
-
-[lint]
-commands = [
-  "cargo fmt --all --check",
-  "cargo clippy --workspace --all-targets -- -D warnings",
-]
+schema = "verify/v2"
+task_id = "TASK-001"
+base_tree = "1d8c229a203b423f707d4044eb735b01de136683"
+writable_paths = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "rustfmt.toml", ".gitignore", ".cargo", "crates"]
+forbidden_paths = ["crates/pgtui/src/render.rs", "crates/pgtui/src/fonts", "crates/pgtui/tests"]
 
 [[forbidden_patterns]]
-regex = 'todo!\(|unimplemented!\('
-paths = [
-  "crates/pgtui/src",
-]
+regex = 'todo!\\(|unimplemented!\\(|dbg!\\('
+paths = ["crates"]
 
-[[forbidden_patterns]]
-regex = 'dbg!\('
-paths = [
-  "crates/pgtui/src",
-]
+[[checks]]
+id = "CHK-001"
+phase = "focused"
+argv = ["cargo", "build", "--workspace", "--all-targets"]
+requirements = ["R-001"]
+acceptance = ["AC-001"]
 
-[[forbidden_patterns]]
-regex = '#\[allow\((clippy|dead_code|unused)'
-paths = [
-  "crates/pgtui/src",
-]
+[[checks]]
+id = "CHK-002"
+phase = "focused"
+shell = "grep -qE '^ratatui = \\\"=0\\\\.30\\\\.2\\\"' Cargo.toml && grep -q '1.98.0' rust-toolchain.toml && grep -q 'edition = \\\"2024\\\"' rustfmt.toml"
+requirements = ["R-002", "R-003"]
+acceptance = ["AC-002"]
 
-[[forbidden_patterns]]
-regex = '#\[ignore\]'
-paths = [
-  "crates/pgtui/tests",
-]
+[[checks]]
+id = "CHK-003"
+phase = "regression"
+argv = ["cargo", "test", "-p", "pgtui", "--test", "skeleton_test"]
+requirements = ["R-004", "R-005"]
+acceptance = ["AC-003"]
+
+[[checks]]
+id = "CHK-004"
+phase = "lint"
+argv = ["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"]
+requirements = ["R-006", "R-007"]
+acceptance = ["AC-004"]
+
+[[checks]]
+id = "CHK-005"
+phase = "gate"
+argv = ["git", "diff", "--check"]
+requirements = ["R-006", "R-007"]
+acceptance = ["AC-005"]

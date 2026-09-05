@@ -37,18 +37,15 @@ pub fn run(
     }
 }
 
-/// `--base` > `TASKFMT_BASE` > `base_ref` in verify.toml > `baseline` (the verify order). A
-/// missing task dir / verify.toml surfaces as a missing input (66), never as a config error.
+/// `--base` > `TASKFMT_BASE` > immutable verifier base tree. Invalid verifier input is never
+/// defaulted: selfcheck must not manufacture a weaker contract.
 fn resolve_base(task: &Path, explicit: Option<String>) -> anyhow::Result<String> {
     if let Some(base) = explicit {
         return Ok(base);
     }
     let path = task.join(FILE_NAME);
-    let cfg = if path.is_file() {
-        VerifyConfig::load(&path).unwrap_or_default()
-    } else {
-        VerifyConfig::default()
-    };
+    anyhow::ensure!(path.is_file(), "missing {}", path.display());
+    let cfg = VerifyConfig::load(&path)?;
     Ok(gate::resolve_base(&None, &cfg))
 }
 

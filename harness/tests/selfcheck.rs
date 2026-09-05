@@ -7,63 +7,106 @@ use std::process::Command;
 use taskfmt::ops;
 use taskfmt::selfcheck::{self, EXIT_NOINPUT, EXIT_NOVERDICT, Report, SelfcheckOpts};
 
-const VERIFY_TOML: &str = r#"schema = "verify/v1"
-base_ref = "baseline"
-allowed_globs = ["done.txt"]
+const VERIFY_TOML: &str = r#"schema = "verify/v2"
+task_id = "TASK-001"
+base_tree = "0000000000000000000000000000000000000000"
+writable_paths = ["done.txt"]
 
-[focused]
-commands = ["test -f done.txt"]
+[[checks]]
+id = "CHK-001"
+phase = "focused"
+shell = "test -f done.txt"
 
-[regression]
-commands = ["test -f keep.txt"]
+[[checks]]
+id = "CHK-002"
+phase = "regression"
+shell = "test -f keep.txt"
 
-[lint]
-commands = []
+[[checks]]
+id = "CHK-003"
+phase = "gate"
+argv = ["true"]
 "#;
 
 /// The second focused command is green on the baseline: polarity must catch it.
-const VERIFY_TOML_GREEN_FOCUSED: &str = r#"schema = "verify/v1"
-base_ref = "baseline"
-allowed_globs = ["done.txt"]
+const VERIFY_TOML_GREEN_FOCUSED: &str = r#"schema = "verify/v2"
+task_id = "TASK-002"
+base_tree = "0000000000000000000000000000000000000000"
+writable_paths = ["done.txt"]
 
-[focused]
-commands = ["test -f done.txt", "test -f keep.txt"]
+[[checks]]
+id = "CHK-001"
+phase = "focused"
+shell = "test -f done.txt"
 
-[regression]
-commands = ["test -f keep.txt"]
+[[checks]]
+id = "CHK-002"
+phase = "focused"
+shell = "test -f keep.txt"
 
-[lint]
-commands = []
+[[checks]]
+id = "CHK-003"
+phase = "regression"
+shell = "test -f keep.txt"
+
+[[checks]]
+id = "CHK-004"
+phase = "gate"
+argv = ["true"]
 "#;
 
 /// `[regression]` lists the task's own new test (D28): red on the baseline, green on the reference.
-const VERIFY_TOML_OWN_REGRESSION: &str = r#"schema = "verify/v1"
-base_ref = "baseline"
-allowed_globs = ["done.txt"]
+const VERIFY_TOML_OWN_REGRESSION: &str = r#"schema = "verify/v2"
+task_id = "TASK-003"
+base_tree = "0000000000000000000000000000000000000000"
+writable_paths = ["done.txt"]
 
-[focused]
-commands = ["test -f done.txt"]
+[[checks]]
+id = "CHK-001"
+phase = "focused"
+shell = "test -f done.txt"
 
-[regression]
-commands = ["test -f done.txt"]
+[[checks]]
+id = "CHK-002"
+phase = "regression"
+shell = "test -f done.txt"
 
-[lint]
-commands = []
+[[checks]]
+id = "CHK-003"
+phase = "gate"
+argv = ["true"]
 "#;
 
 /// focused.2 is not on PATH (rc 127), focused.3 exists but is not executable (rc 126).
-const VERIFY_TOML_NOT_RUNNABLE: &str = r#"schema = "verify/v1"
-base_ref = "baseline"
-allowed_globs = ["done.txt"]
+const VERIFY_TOML_NOT_RUNNABLE: &str = r#"schema = "verify/v2"
+task_id = "TASK-004"
+base_tree = "0000000000000000000000000000000000000000"
+writable_paths = ["done.txt"]
 
-[focused]
-commands = ["test -f done.txt", "taskfmt-no-such-toolchain-xyz --version", "./keep.txt"]
+[[checks]]
+id = "CHK-001"
+phase = "focused"
+shell = "test -f done.txt"
 
-[regression]
-commands = ["test -f keep.txt"]
+[[checks]]
+id = "CHK-002"
+phase = "focused"
+shell = "taskfmt-no-such-toolchain-xyz --version"
 
-[lint]
-commands = []
+[[checks]]
+id = "CHK-003"
+phase = "focused"
+shell = "./keep.txt"
+
+[[checks]]
+id = "CHK-004"
+phase = "regression"
+shell = "test -f keep.txt"
+
+[[checks]]
+id = "CHK-005"
+phase = "gate"
+argv = ["true"]
 "#;
 
 const REF_PATCH: &str = "diff --git a/done.txt b/done.txt\nnew file mode 100644\n--- /dev/null\n+++ b/done.txt\n@@ -0,0 +1 @@\n+done\n";
@@ -191,20 +234,20 @@ fn correct_package_passes_all_three_phases() {
     assert_line(&report, "SELFCHECK RESULT PASS");
     assert_line(
         &report,
-        "POLARITY focused.1 FAIL-ON-BASELINE OK got=FAIL cmd=test -f done.txt",
+        "POLARITY CHK-001 FAIL-ON-BASELINE OK got=FAIL cmd=shell=\"test -f done.txt\"",
     );
     assert_line(
         &report,
-        "POLARITY regression.1 PASS-ON-BASELINE INFO got=PASS cmd=test -f keep.txt",
+        "POLARITY CHK-002 PASS-ON-BASELINE INFO got=PASS cmd=shell=\"test -f keep.txt\"",
     );
     assert_line(
         &report,
-        "POLARITY regression.1 PASS-ON-REFERENCE OK got=PASS cmd=test -f keep.txt",
+        "POLARITY CHK-002 PASS-ON-REFERENCE OK got=PASS cmd=shell=\"test -f keep.txt\"",
     );
     assert!(!report.noverdict);
     assert_line(
         &report,
-        "POLARITY focused.1 PASS-ON-REFERENCE OK got=PASS cmd=test -f done.txt",
+        "POLARITY CHK-001 PASS-ON-REFERENCE OK got=PASS cmd=shell=\"test -f done.txt\"",
     );
     assert_line(&report, "ORACLE apply PASS changed=1");
     assert!(report.render().ends_with("SELFCHECK RESULT PASS\n"));
@@ -237,7 +280,7 @@ fn focused_command_green_at_baseline_fails_polarity_only() {
     assert_line(&report, "SELFCHECK polarity FAIL");
     assert_line(
         &report,
-        "POLARITY focused.2 FAIL-ON-BASELINE BAD got=PASS cmd=test -f keep.txt",
+        "POLARITY CHK-002 FAIL-ON-BASELINE BAD got=PASS cmd=shell=\"test -f keep.txt\"",
     );
     assert_line(&report, "SELFCHECK RESULT FAIL");
 }
@@ -255,16 +298,16 @@ fn regression_failing_at_baseline_is_info_not_a_polarity_verdict() {
     assert_line(&report, "SELFCHECK polarity PASS");
     assert_line(
         &report,
-        "POLARITY regression.1 PASS-ON-BASELINE INFO got=FAIL cmd=test -f done.txt",
+        "POLARITY CHK-002 PASS-ON-BASELINE INFO got=FAIL cmd=shell=\"test -f done.txt\"",
     );
     assert_line(
         &report,
-        "POLARITY regression.1 PASS-ON-REFERENCE OK got=PASS cmd=test -f done.txt",
+        "POLARITY CHK-002 PASS-ON-REFERENCE OK got=PASS cmd=shell=\"test -f done.txt\"",
     );
     assert_line(&report, "SELFCHECK RESULT PASS");
     assert!(!has_line(
         &report,
-        "POLARITY regression.1 PASS-ON-BASELINE BAD got=FAIL cmd=test -f done.txt"
+        "POLARITY CHK-002 PASS-ON-BASELINE BAD got=FAIL cmd=shell=\"test -f done.txt\""
     ));
 
     // and a regression that stays red on the reference is still an oracle failure
@@ -274,7 +317,7 @@ fn regression_failing_at_baseline_is_info_not_a_polarity_verdict() {
     assert!(!report.oracle.as_ref().unwrap().pass);
     assert_line(
         &report,
-        "POLARITY regression.1 PASS-ON-REFERENCE BAD got=FAIL cmd=test -f done.txt",
+        "POLARITY CHK-002 PASS-ON-REFERENCE BAD got=FAIL cmd=shell=\"test -f done.txt\"",
     );
     assert_eq!(report.exit_code(), 1);
 }
@@ -293,21 +336,21 @@ fn focused_not_runnable_is_noverdict_with_exit_69() {
     assert!(!report.polarity.pass);
     assert_line(
         &report,
-        "POLARITY focused.1 FAIL-ON-BASELINE OK got=FAIL cmd=test -f done.txt",
+        "POLARITY CHK-001 FAIL-ON-BASELINE OK got=FAIL cmd=shell=\"test -f done.txt\"",
     );
     assert_line(
         &report,
-        "POLARITY focused.2 FAIL-ON-BASELINE NOVERDICT rc=127 cmd=taskfmt-no-such-toolchain-xyz --version (command not runnable: toolchain missing?)",
+        "POLARITY CHK-002 FAIL-ON-BASELINE NOVERDICT rc=127 cmd=shell=\"taskfmt-no-such-toolchain-xyz --version\" (command not runnable: toolchain missing?)",
     );
     assert_line(
         &report,
-        "POLARITY focused.3 FAIL-ON-BASELINE NOVERDICT rc=126 cmd=./keep.txt (command not runnable: toolchain missing?)",
+        "POLARITY CHK-003 FAIL-ON-BASELINE NOVERDICT rc=126 cmd=shell=\"./keep.txt\" (command not runnable: toolchain missing?)",
     );
     assert_line(&report, "SELFCHECK polarity FAIL");
     assert_line(&report, "SELFCHECK RESULT FAIL");
     assert!(!has_line(
         &report,
-        "POLARITY focused.2 FAIL-ON-BASELINE OK got=FAIL cmd=taskfmt-no-such-toolchain-xyz --version"
+        "POLARITY CHK-002 FAIL-ON-BASELINE OK got=FAIL cmd=shell=\"taskfmt-no-such-toolchain-xyz --version\""
     ));
     assert_untouched(&f.workspace);
 }
@@ -323,7 +366,7 @@ fn reference_without_solution_fails_oracle() {
     assert_line(&report, "SELFCHECK oracle FAIL");
     assert_line(
         &report,
-        "POLARITY focused.1 PASS-ON-REFERENCE BAD got=FAIL cmd=test -f done.txt",
+        "POLARITY CHK-001 PASS-ON-REFERENCE BAD got=FAIL cmd=shell=\"test -f done.txt\"",
     );
     assert_line(&report, "SELFCHECK RESULT FAIL");
 }
@@ -337,7 +380,7 @@ fn already_solved_workspace_fails_nop() {
     assert_line(&report, "SELFCHECK nop FAIL");
     assert_line(
         &report,
-        "POLARITY focused.1 FAIL-ON-BASELINE BAD got=PASS cmd=test -f done.txt",
+        "POLARITY CHK-001 FAIL-ON-BASELINE BAD got=PASS cmd=shell=\"test -f done.txt\"",
     );
     assert_line(&report, "SELFCHECK RESULT FAIL");
 }
@@ -357,14 +400,14 @@ fn no_reference_skips_oracle_and_passes_on_nop_and_polarity() {
 #[test]
 fn empty_focused_list_is_bad_polarity() {
     let f = fixture();
-    let toml = VERIFY_TOML.replace("commands = [\"test -f done.txt\"]", "commands = []");
+    let toml = VERIFY_TOML.replace("phase = \"focused\"", "phase = \"precondition\"");
     let task = task(f._tmp.path(), "task-empty", &toml);
     let report = selfcheck(&task, &f.workspace, None);
     // nothing fails on the baseline any more: nop is FAIL too, but polarity names the cause
     assert!(!report.polarity.pass);
     assert_line(
         &report,
-        "POLARITY focused none BAD ([focused] commands empty: nothing proves RED on baseline)",
+        "POLARITY focused none BAD (no focused check: nothing proves RED on baseline)",
     );
     assert_line(&report, "SELFCHECK polarity FAIL");
     assert_line(&report, "SELFCHECK RESULT FAIL");
