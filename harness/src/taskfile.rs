@@ -91,6 +91,77 @@ impl TaskFile {
     pub fn id(&self) -> &str {
         &self.frontmatter.id
     }
+
+    /// One-based source line for a frontmatter key.  This is deliberately parsed from the
+    /// frontmatter grammar, rather than searched in prose later by the linter.
+    pub fn frontmatter_key_line(&self, key: &str) -> Option<usize> {
+        self.text
+            .lines()
+            .enumerate()
+            .take_while(|(index, line)| *index == 0 || line.trim_end() != "---")
+            .find_map(|(index, line)| {
+                (index > 0
+                    && line
+                        .strip_prefix(key)
+                        .is_some_and(|rest| rest.starts_with(':')))
+                .then_some(index + 1)
+            })
+    }
+
+    /// One-based source line of the exact H2 heading.
+    pub fn section_line(&self, title: &str) -> Option<usize> {
+        let heading = format!("## {title}");
+        self.text
+            .lines()
+            .position(|line| line.trim_end() == heading)
+            .map(|line| line + 1)
+    }
+
+    pub fn h1_line(&self) -> Option<usize> {
+        self.text
+            .lines()
+            .position(|line| line.trim_end().starts_with("# "))
+            .map(|line| line + 1)
+    }
+
+    /// One-based line for an ID declaration in its owning Markdown section.
+    pub fn definition_line(&self, section: &str, id: &str) -> Option<usize> {
+        let start = self.section_line(section)?;
+        let declaration = match section {
+            "Requirements" => format!("- **{id}"),
+            "Acceptance criteria" => format!("### {id}"),
+            _ => return None,
+        };
+        self.text
+            .lines()
+            .enumerate()
+            .skip(start)
+            .take_while(|(_, line)| !line.trim_end().starts_with("## "))
+            .find_map(|(line, text)| {
+                text.trim_start()
+                    .starts_with(&declaration)
+                    .then_some(line + 1)
+            })
+    }
+
+    /// One-based line in the README from a line relative to the acceptance section body.
+    pub fn acceptance_line(&self, relative: usize) -> Option<usize> {
+        self.section_line("Acceptance criteria")
+            .map(|heading| heading + relative)
+    }
+
+    pub fn checklist_line(&self, id_or_raw: &str) -> Option<usize> {
+        let start = self
+            .text
+            .lines()
+            .position(|line| line.trim_end() == CHECKLIST_START)?;
+        self.text
+            .lines()
+            .enumerate()
+            .skip(start)
+            .take_while(|(_, line)| line.trim_end() != CHECKLIST_END)
+            .find_map(|(line, text)| text.contains(id_or_raw).then_some(line + 1))
+    }
 }
 
 /// Lines of the frontmatter block, without the `---` fences. `None` when the file does not start

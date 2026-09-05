@@ -7,6 +7,14 @@ use std::path::{Component, Path};
 pub const SCHEMA: &str = "verify/v2";
 pub const FILE_NAME: &str = "verify.toml";
 
+/// A verifier parse/validation failure with a byte-span-derived TOML coordinate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigDiagnostic {
+    pub message: String,
+    pub line: usize,
+    pub column: usize,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VerifyConfig {
@@ -95,8 +103,29 @@ pub enum Phase {
 }
 impl VerifyConfig {
     pub fn parse(text: &str) -> anyhow::Result<Self> {
-        let cfg: Self = toml::from_str(text)?;
-        cfg.validate()?;
+        Self::parse_located(text).map_err(|error| anyhow::anyhow!(error.message))
+    }
+    pub fn parse_located(text: &str) -> Result<Self, ConfigDiagnostic> {
+        let cfg: Self = toml::from_str(text).map_err(|error| {
+            let (line, column) = error
+                .span()
+                .map(|span| line_column(text, span.start))
+                .unwrap_or((1, 1));
+            ConfigDiagnostic {
+                message: error.to_string(),
+                line,
+                column,
+            }
+        })?;
+        cfg.validate().map_err(|error| {
+            let message = format!("{error:#}");
+            let (line, column) = semantic_location(text, &message);
+            ConfigDiagnostic {
+                message,
+                line,
+                column,
+            }
+        })?;
         Ok(cfg)
     }
     pub fn load(path: &Path) -> anyhow::Result<Self> {
@@ -152,6 +181,85 @@ impl VerifyConfig {
         anyhow::ensure!(gate == 1, "exactly one gate check required");
         Ok(())
     }
+}
+
+fn line_column(text: &str, offset: usize) -> (usize, usize) {
+    let prefix = &text[..offset.min(text.len())];
+    let line = prefix.bytes().filter(|byte| *byte == b'\n').count() + 1;
+    let column = prefix
+        .rsplit_once('\n')
+        .map_or(prefix.chars().count() + 1, |(_, tail)| {
+            tail.chars().count() + 1
+        });
+    (line, column)
+}
+
+/// Locate semantic errors from TOML's own key/table grammar. This never scans arbitrary values:
+/// repeated words in commands or expected output cannot redirect a config diagnostic.
+fn semantic_location(text: &str, message: &str) -> (usize, usize) {
+    let key = [
+        "schema",
+        "task_id",
+        "base_tree",
+        "predecessor",
+        "writable_paths",
+        "forbidden_paths",
+        "forbidden_patterns",
+        "requirements",
+        "acceptance",
+        "argv",
+        "shell",
+        "phase",
+        "id",
+        "stdout_regex",
+        "stderr_regex",
+        "stdout_occurrences",
+        "stderr_occurrences",
+        "required_artifacts",
+        "forbidden_artifacts",
+    ]
+    .into_iter()
+    .find(|key| message.contains(key));
+    let check = Regex::new(r"\bCHK-[0-9]+\b")
+        .unwrap()
+        .find(message)
+        .map(|m| m.as_str());
+    toml_key_line(text, key, check).unwrap_or((1, 1))
+}
+
+fn toml_key_line(text: &str, key: Option<&str>, check: Option<&str>) -> Option<(usize, usize)> {
+    let lines: Vec<_> = text.lines().collect();
+    let mut selected = None;
+    if let Some(check) = check {
+        for (index, line) in lines.iter().enumerate() {
+            if line.trim() == "[[checks]]" {
+                let end = lines[index + 1..]
+                    .iter()
+                    .position(|next| next.trim().starts_with("[[") || next.trim().starts_with('['))
+                    .map(|relative| index + 1 + relative)
+                    .unwrap_or(lines.len());
+                if lines[index + 1..end].iter().any(|candidate| {
+                    candidate.trim_start().starts_with("id") && candidate.contains(check)
+                }) {
+                    selected = Some((index, end));
+                    break;
+                }
+            }
+        }
+    }
+    let (start, end) = selected.unwrap_or((0, lines.len()));
+    if let Some(key) = key {
+        for (index, line) in lines[start..end].iter().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed
+                .strip_prefix(key)
+                .is_some_and(|tail| tail.starts_with(char::is_whitespace) || tail.starts_with('='))
+            {
+                return Some((start + index + 1, line.len() - trimmed.len() + 1));
+            }
+        }
+    }
+    selected.map(|(start, _)| (start + 1, 1))
 }
 fn validate_expected(id: &str, expected: &Expected) -> anyhow::Result<()> {
     for (name, patterns) in [

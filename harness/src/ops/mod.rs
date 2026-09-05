@@ -16,6 +16,7 @@ pub mod transcript;
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 /// Captured result of one external command.
 #[derive(Debug, Clone, Default)]
@@ -48,6 +49,55 @@ pub fn capture(cmd: &mut Command) -> std::io::Result<Captured> {
         status: out.status.code().unwrap_or(-1),
         stdout: String::from_utf8_lossy(&out.stdout).to_string(),
         stderr: String::from_utf8_lossy(&out.stderr).to_string(),
+    })
+}
+
+/// Run a command with captured output, killing it when the deadline expires.
+///
+/// Command::output has no deadline. Readers run concurrently so a child that fills either
+/// pipe cannot deadlock before its exit is observed.
+pub fn capture_with_timeout(cmd: &mut Command, timeout: Duration) -> std::io::Result<Captured> {
+    use std::io::Read;
+
+    let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+    let stdout = child.stdout.take().expect("stdout was piped");
+    let stderr = child.stderr.take().expect("stderr was piped");
+    let stdout_reader = std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        let mut stdout = stdout;
+        stdout.read_to_end(&mut bytes)?;
+        Ok(bytes)
+    });
+    let stderr_reader = std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        let mut stderr = stderr;
+        stderr.read_to_end(&mut bytes)?;
+        Ok(bytes)
+    });
+
+    let started = Instant::now();
+    let (status, timed_out) = loop {
+        if let Some(status) = child.try_wait()? {
+            break (status, false);
+        }
+        if started.elapsed() >= timeout {
+            child.kill()?;
+            break (child.wait()?, true);
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let stdout = stdout_reader.join().expect("stdout reader panicked")?;
+    let stderr = stderr_reader.join().expect("stderr reader panicked")?;
+    if timed_out {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            format!("command timed out after {} ms", timeout.as_millis()),
+        ));
+    }
+    Ok(Captured {
+        status: status.code().unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&stdout).to_string(),
+        stderr: String::from_utf8_lossy(&stderr).to_string(),
     })
 }
 
@@ -190,6 +240,20 @@ pub fn sorted_files_by_name(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capture_with_timeout_kills_a_stuck_child() {
+        let started = Instant::now();
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "sleep 30"]);
+        let err = capture_with_timeout(&mut command, Duration::from_millis(100)).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "timeout did not bound the child: {:?}",
+            started.elapsed()
+        );
+    }
 
     #[test]
     fn copy_tree_keeps_the_symlink_shape() {

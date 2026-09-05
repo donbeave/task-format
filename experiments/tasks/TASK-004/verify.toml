@@ -44,6 +44,6 @@ acceptance = ["AC-004"]
 [[checks]]
 id = "CHK-005"
 phase = "gate"
-argv = ["taskfmt", "verify"]
+argv = ["git", "diff", "--check"]
 requirements = ["R-006", "R-007"]
 acceptance = ["AC-006"]

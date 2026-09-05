@@ -1,6 +1,7 @@
 //! Strict v5/v2 corpus lint contract.
 
 use std::path::PathBuf;
+use std::process::Command;
 
 use taskfmt::lint::{self, Finding, Severity};
 use taskfmt::taskfile::TaskFile;
@@ -111,6 +112,27 @@ fn diagnostics_attach_invalid_verifier_to_toml() {
 }
 
 #[test]
+fn semantic_diagnostics_name_the_owning_markdown_and_toml_fields() {
+    let (text, readme) = example_text();
+    // `scenario` also occurs in the document's prose. The diagnostic must use the Type field,
+    // not the first matching word or the AC heading.
+    let broken = text.replacen("- **Type:** scenario", "- **Type:** banana", 1);
+    let finding = lint::lint_text(&broken, &readme)
+        .into_iter()
+        .find(|finding| finding.message.contains("Type must be"))
+        .unwrap();
+    assert_eq!((finding.line, finding.column), (55, 1));
+
+    let verify = example_verify().replace("task_id = \"TASK-042\"", "task_id = \"bad\"");
+    let finding = lint_with_verify(&text, &verify)
+        .into_iter()
+        .find(|finding| finding.rule == "config")
+        .unwrap();
+    assert_eq!(finding.path.file_name().unwrap(), "verify.toml");
+    assert_eq!((finding.line, finding.column), (2, 1));
+}
+
+#[test]
 fn frontmatter_unknown_and_duplicate_keys_are_fatal() {
     let (text, readme) = example_text();
     let unknown = mutate(
@@ -216,4 +238,50 @@ fn parsing_and_rendering_are_deterministic() {
         format!("{:?}", lint::lint_text(&text, &readme)),
         format!("{:?}", lint::lint_text(&text, &readme))
     );
+}
+
+#[test]
+fn lint_cli_keeps_batch_and_ndjson_reports_attributable() {
+    let temp = tempfile::tempdir().unwrap();
+    let tasks = temp.path().join("tasks");
+    std::fs::create_dir_all(&tasks).unwrap();
+    for id in ["TASK-101", "TASK-102"] {
+        let package = tasks.join(id);
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::copy(example().join("README.md"), package.join("README.md")).unwrap();
+        std::fs::copy(example().join("verify.toml"), package.join("verify.toml")).unwrap();
+    }
+    let bad = tasks.join("TASK-102/README.md");
+    let readme = std::fs::read_to_string(&bad).unwrap();
+    std::fs::write(&bad, readme.replacen("kind: bugfix", "kind: nope", 1)).unwrap();
+    let manifest = temp.path().join("experiment.toml");
+    std::fs::write(
+        &manifest,
+        "schema = \"experiment/v1\"\n[paths]\ntasks_dir = \"tasks\"\n[agents.default]\nprofile = \"p\"\n[agents.profiles.p]\nkind = \"codex\"\nimage = \"image\"\n",
+    )
+    .unwrap();
+
+    let run = |json: bool| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_taskfmt"));
+        command.arg("--config").arg(&manifest).arg("lint");
+        if json {
+            command.arg("--json");
+        }
+        command.output().unwrap()
+    };
+    let text = run(false);
+    assert_eq!(text.status.code(), Some(1));
+    let stdout = String::from_utf8(text.stdout).unwrap();
+    assert!(stdout.contains("PACKAGE "));
+    assert_eq!(stdout.matches("PACKAGE ").count(), 2);
+    let json = run(true);
+    assert_eq!(json.status.code(), Some(0), "JSON mode is streamable");
+    let records: Vec<serde_json::Value> = String::from_utf8(json.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(records.len(), 2);
+    assert!(records.iter().all(|record| record["target"].is_string()));
+    assert!(records.iter().all(|record| record["findings"].is_array()));
 }

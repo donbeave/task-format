@@ -3,15 +3,51 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 use anyhow::Context;
 
-use super::{Captured, capture, check};
+use super::{Captured, capture, capture_with_timeout};
+
+/// Docker control-plane requests must fail rather than pinning a lifecycle poll forever.
+const CONTROL_TIMEOUT: Duration = Duration::from_millis(500);
+/// Image builds can legitimately take a long time, but must still have a finite upper bound.
+const BUILD_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+
+fn capture_docker(cmd: &mut Command) -> std::io::Result<Captured> {
+    capture_with_timeout(cmd, CONTROL_TIMEOUT)
+}
+
+fn check_docker(cmd: &mut Command, what: &str) -> anyhow::Result<Captured> {
+    check_docker_with_timeout(cmd, what, CONTROL_TIMEOUT)
+}
+
+fn check_docker_with_timeout(
+    cmd: &mut Command,
+    what: &str,
+    timeout: Duration,
+) -> anyhow::Result<Captured> {
+    let captured = capture_with_timeout(cmd, timeout)
+        .map_err(|err| anyhow::anyhow!("{what}: docker command failed or timed out: {err}"))?;
+    if !captured.ok() {
+        anyhow::bail!(
+            "{what} failed (rc={}):\n{}",
+            captured.status,
+            crate::redact::scrub(if captured.stderr.trim().is_empty() {
+                &captured.stdout
+            } else {
+                &captured.stderr
+            })
+            .trim_end()
+        );
+    }
+    Ok(captured)
+}
 
 /// Server architecture (`docker version --format '{{.Server.Arch}}'`), falling back to `uname -m`.
 pub fn server_arch() -> anyhow::Result<String> {
     if let Ok(out) =
-        capture(Command::new("docker").args(["version", "--format", "{{.Server.Arch}}"]))
+        capture_docker(Command::new("docker").args(["version", "--format", "{{.Server.Arch}}"]))
         && out.ok()
     {
         let arch = out.stdout.trim().to_string();
@@ -59,7 +95,11 @@ pub fn build(opts: &BuildOpts) -> anyhow::Result<()> {
         cmd.arg("--no-cache");
     }
     cmd.arg(&opts.context);
-    check(&mut cmd, &format!("docker build {}", opts.tag))?;
+    check_docker_with_timeout(
+        &mut cmd,
+        &format!("docker build {}", opts.tag),
+        BUILD_TIMEOUT,
+    )?;
     Ok(())
 }
 
@@ -139,7 +179,7 @@ pub fn run_detached(spec: &RunSpec) -> anyhow::Result<String> {
     ])
     .arg(spec.pids_limit.to_string())
     .arg(&spec.image);
-    let captured = check(&mut cmd, &format!("docker run {}", spec.name))?;
+    let captured = check_docker(&mut cmd, &format!("docker run {}", spec.name))?;
     Ok(captured.stdout.trim().to_string())
 }
 
@@ -167,7 +207,7 @@ pub fn exec(
         cmd.arg("-e").arg(format!("{key}={value}"));
     }
     cmd.arg(container).args(args);
-    capture(&mut cmd).context("cannot spawn docker exec")
+    capture_docker(&mut cmd).context("cannot spawn docker exec")
 }
 
 /// Same as [`exec`] but errors on a non-zero exit.
@@ -260,7 +300,7 @@ pub fn inspect_containers(names: &[String]) -> Vec<ContainerInfo> {
     if names.is_empty() {
         return Vec::new();
     }
-    let Ok(out) = capture(
+    let Ok(out) = capture_docker(
         Command::new("docker")
             .args(["inspect", "-f", &inspect_template()])
             .args(names),
@@ -282,7 +322,7 @@ pub fn inspect_container(name: &str) -> Option<ContainerInfo> {
 /// "no daemon" ask [`available`] first.
 pub fn list_containers(prefix: &str) -> Vec<String> {
     let filter = format!("name=^{prefix}");
-    capture(Command::new("docker").args([
+    capture_docker(Command::new("docker").args([
         "ps",
         "-a",
         "--filter",
@@ -305,25 +345,25 @@ pub fn list_containers(prefix: &str) -> Vec<String> {
 
 /// Whether the docker daemon answers at all.
 pub fn available() -> bool {
-    capture(Command::new("docker").args(["version", "--format", "{{.Server.Version}}"]))
+    capture_docker(Command::new("docker").args(["version", "--format", "{{.Server.Version}}"]))
         .map(|out| out.ok())
         .unwrap_or(false)
 }
 
 pub fn is_running(container: &str) -> bool {
-    capture(Command::new("docker").args(["inspect", "-f", "{{.State.Running}}", container]))
+    capture_docker(Command::new("docker").args(["inspect", "-f", "{{.State.Running}}", container]))
         .map(|out| out.ok() && out.stdout.trim() == "true")
         .unwrap_or(false)
 }
 
 pub fn exists(container: &str) -> bool {
-    capture(Command::new("docker").args(["inspect", "-f", "{{.Id}}", container]))
+    capture_docker(Command::new("docker").args(["inspect", "-f", "{{.Id}}", container]))
         .map(|out| out.ok())
         .unwrap_or(false)
 }
 
 pub fn start(container: &str) -> anyhow::Result<()> {
-    let _ = capture(Command::new("docker").arg("start").arg(container));
+    let _ = capture_docker(Command::new("docker").arg("start").arg(container));
     Ok(())
 }
 
@@ -334,10 +374,14 @@ pub fn start(container: &str) -> anyhow::Result<()> {
 /// process left to write into the `/work` bind mount. `true` when the container is no longer
 /// running afterwards — including when it was already stopped.
 pub fn stop(container: &str, grace_s: u64) -> bool {
-    let stopped =
-        capture(Command::new("docker").args(["stop", "--time", &grace_s.to_string(), container]))
-            .map(|out| out.ok())
-            .unwrap_or(false);
+    let stopped = capture_docker(Command::new("docker").args([
+        "stop",
+        "--time",
+        &grace_s.to_string(),
+        container,
+    ]))
+    .map(|out| out.ok())
+    .unwrap_or(false);
     stopped || !is_running(container)
 }
 
@@ -373,7 +417,7 @@ impl ImageFingerprint for DockerImageFingerprint {
 /// existed and an image answering with anything but 64 lowercase hex digits are all errors naming
 /// `image`, never a value.
 pub fn image_fingerprint(image: &str) -> anyhow::Result<String> {
-    let out = capture(Command::new("docker").args([
+    let out = capture_docker(Command::new("docker").args([
         "run",
         "--rm",
         "--entrypoint",
@@ -408,7 +452,7 @@ fn is_fingerprint(value: &str) -> bool {
 }
 
 pub fn image_exists(image: &str) -> bool {
-    capture(Command::new("docker").args(["image", "inspect", image]))
+    capture_docker(Command::new("docker").args(["image", "inspect", image]))
         .map(|out| out.ok())
         .unwrap_or(false)
 }

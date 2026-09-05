@@ -160,16 +160,27 @@ fn lint(text: &str, readme: &Path, dir: Option<&Path>) -> Vec<Finding> {
     let ac = acceptance(&mut out, &tf);
     let leaves = checklist(&mut out, &tf);
     if let Some(dir) = dir {
-        match VerifyConfig::load(&dir.join(verifycfg::FILE_NAME)) {
+        let config_path = dir.join(verifycfg::FILE_NAME);
+        match std::fs::read_to_string(&config_path)
+            .map_err(|error| error.to_string())
+            .and_then(|text| {
+                VerifyConfig::parse_located(&text)
+                    .map_err(|error| format!("{}:{}: {}", error.line, error.column, error.message))
+            }) {
             Ok(cfg) => graph(&mut out, &tf, &req, &ac, &leaves, &cfg),
             Err(e) => {
-                let message = format!("{} invalid: {e:#}", verifycfg::FILE_NAME);
+                let message = format!("{} invalid: {e}", verifycfg::FILE_NAME);
                 fail_at(
                     &mut out,
                     "config",
-                    dir.join(verifycfg::FILE_NAME),
-                    error_line(&message).unwrap_or(1),
-                    1,
+                    config_path,
+                    config_coordinate(&message)
+                        .map_or_else(|| error_line(&message).unwrap_or(1), |(line, _)| line),
+                    Regex::new(r"\b[0-9]+:([0-9]+):")
+                        .unwrap()
+                        .captures(&message)
+                        .and_then(|captures| captures[1].parse().ok())
+                        .unwrap_or(1),
                     message,
                 )
             }
@@ -179,6 +190,13 @@ fn lint(text: &str, readme: &Path, dir: Option<&Path>) -> Vec<Finding> {
     out
 }
 
+fn config_coordinate(message: &str) -> Option<(usize, usize)> {
+    Regex::new(r"\b([0-9]+):([0-9]+):")
+        .unwrap()
+        .captures(message)
+        .and_then(|captures| Some((captures[1].parse().ok()?, captures[2].parse().ok()?)))
+}
+
 fn error_line(message: &str) -> Option<usize> {
     Regex::new(r"\bline ([0-9]+)\b")
         .unwrap()
@@ -186,59 +204,55 @@ fn error_line(message: &str) -> Option<usize> {
         .and_then(|captures| captures[1].parse().ok())
 }
 
-/// Attach a precise Markdown location whenever the violated token exists.  Missing constructs
-/// point to their containing section (or document start): that is the only actionable location
-/// for an absence.  TOML parse failures are attached to verify.toml by `lint_path` callers.
+/// Attach locations from the Markdown grammar.  Do not search arbitrary README prose: an ID in
+/// Context must never steal a diagnostic that belongs to Requirements, AC, or the checklist.
 fn annotate_locations(findings: &mut [Finding], tf: &TaskFile) {
-    let lines: Vec<&str> = tf.text.lines().collect();
     for finding in findings {
         if !finding.path.as_os_str().is_empty() {
             continue;
         }
         finding.path = tf.path.clone();
-        let needle = location_token(&finding.message, finding.rule);
-        let index = needle
-            .as_deref()
-            .and_then(|needle| lines.iter().position(|line| line.contains(needle)))
-            .or_else(|| section_line(&lines, finding.rule))
-            .unwrap_or(0);
-        finding.line = index + 1;
-        finding.column = needle
-            .as_deref()
-            .and_then(|needle| lines[index].find(needle))
-            .map_or(1, |column| column + 1);
+        let (line, column) = markdown_location(tf, finding.rule, &finding.message);
+        finding.line = line;
+        finding.column = column;
     }
 }
 
-fn location_token(message: &str, rule: &str) -> Option<String> {
-    if let Some(line) = Regex::new(r"\bline ([0-9]+)\b").unwrap().captures(message) {
-        // A line number is handled by `section_line` only for the uncommon parser diagnostics;
-        // do not look for the decimal text itself, which could select unrelated prose.
-        let _ = line;
-    }
-    Regex::new(r"\b(?:TASK|R|AC|CHK)-[0-9]+\b|\b[0-9]+(?:\.[0-9]+)+\b")
+fn markdown_location(tf: &TaskFile, rule: &str, message: &str) -> (usize, usize) {
+    let id = Regex::new(r"\b(?:TASK|R|AC|CHK)-[0-9]+\b|\b[0-9]+(?:\.[0-9]+)+\b")
         .unwrap()
         .find(message)
-        .map(|m| m.as_str().to_string())
-        .or_else(|| match rule {
-            "frontmatter" => ["schema", "id", "title", "kind"]
-                .into_iter()
-                .find(|key| message.contains(key))
-                .map(str::to_string),
-            "heading" => Some("# ".to_string()),
-            _ => None,
-        })
-}
-
-fn section_line(lines: &[&str], rule: &str) -> Option<usize> {
-    let section = match rule {
-        "requirements" => "## Requirements",
-        "acceptance" => "## Acceptance criteria",
-        "checklist" => "<!-- checklist:start -->",
-        "sections" | "heading" | "frontmatter" | "config" | "graph" => return Some(0),
-        _ => return Some(0),
+        .map(|m| m.as_str());
+    let line = match rule {
+        "frontmatter" => ["schema", "id", "title", "kind"]
+            .into_iter()
+            .find(|key| message.contains(key))
+            .and_then(|key| tf.frontmatter_key_line(key))
+            .unwrap_or(1),
+        "heading" => tf.h1_line().unwrap_or(1),
+        "sections" => 1,
+        "requirements" => id
+            .and_then(|id| tf.definition_line("Requirements", id))
+            .or_else(|| tf.section_line("Requirements"))
+            .unwrap_or(1),
+        "acceptance" => {
+            let relative = Regex::new(r"\bline ([0-9]+)\b")
+                .unwrap()
+                .captures(message)
+                .and_then(|m| m[1].parse().ok());
+            relative
+                .and_then(|line| tf.acceptance_line(line))
+                .or_else(|| id.and_then(|id| tf.definition_line("Acceptance criteria", id)))
+                .or_else(|| tf.section_line("Acceptance criteria"))
+                .unwrap_or(1)
+        }
+        "checklist" | "graph" => id
+            .and_then(|id| tf.checklist_line(id))
+            .or_else(|| tf.section_line("Checklist"))
+            .unwrap_or(1),
+        _ => 1,
     };
-    lines.iter().position(|line| line.trim_end() == section)
+    (line, 1)
 }
 fn frontmatter(out: &mut Vec<Finding>, tf: &TaskFile) {
     if tf.frontmatter.schema != SCHEMA {

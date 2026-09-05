@@ -24,6 +24,12 @@ pub struct AcceptanceCriterion {
     pub steps: Vec<Step>,
     pub examples: Vec<Vec<String>>,
     pub example_headers: Vec<String>,
+    /// Lines relative to the acceptance-section body. Kept with parsed fields so semantic
+    /// diagnostics name the field that caused them, not just the enclosing AC heading.
+    pub title_line: usize,
+    pub type_line: usize,
+    pub covers_line: usize,
+    pub check_line: usize,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseError {
@@ -72,6 +78,7 @@ pub fn parse(text: &str) -> AcceptanceDocument {
             .find(|&n| lines[n].starts_with("### ") || lines[n].starts_with("## "))
             .unwrap_or(lines.len());
         let (mut typ, mut covers, mut check) = (None, None, None);
+        let (mut type_line, mut covers_line, mut check_line) = (start, start, start);
         let (mut verification, mut gherkin) = (false, false);
         let (mut steps, mut headers, mut examples) = (Vec::new(), Vec::new(), Vec::new());
         while i < end {
@@ -145,9 +152,18 @@ pub fn parse(text: &str) -> AcceptanceDocument {
                     )
                 };
                 match key.trim().to_ascii_lowercase().as_str() {
-                    "type" if typ.is_none() => typ = Some(val(raw)),
-                    "covers" if covers.is_none() => covers = Some(refs(&val(raw))),
-                    "check" if check.is_none() => check = Some(val(raw)),
+                    "type" if typ.is_none() => {
+                        typ = Some(val(raw));
+                        type_line = i + 1;
+                    }
+                    "covers" if covers.is_none() => {
+                        covers = Some(refs(&val(raw)));
+                        covers_line = i + 1;
+                    }
+                    "check" if check.is_none() => {
+                        check = Some(val(raw));
+                        check_line = i + 1;
+                    }
                     "type" | "covers" | "check" => {
                         bad(&mut d, i + 1, format!("{id} duplicate {key} metadata"))
                     }
@@ -172,7 +188,7 @@ pub fn parse(text: &str) -> AcceptanceDocument {
             _ => {
                 bad(
                     &mut d,
-                    start,
+                    type_line,
                     format!("{id} Type must be scenario, outline, invariant, or gate"),
                 );
                 AcceptanceType::Scenario
@@ -196,7 +212,7 @@ pub fn parse(text: &str) -> AcceptanceDocument {
         if matches!(kind, AcceptanceType::Gate) && !covers.is_empty() {
             bad(
                 &mut d,
-                start,
+                covers_line,
                 format!("{id} gate must not have Covers metadata"),
             )
         }
@@ -219,6 +235,10 @@ pub fn parse(text: &str) -> AcceptanceDocument {
             steps,
             examples,
             example_headers: headers,
+            title_line: start,
+            type_line,
+            covers_line,
+            check_line,
         });
     }
     d
@@ -229,20 +249,20 @@ pub fn validate_shape(d: &AcceptanceDocument) -> Vec<ParseError> {
     for ac in &d.criteria {
         if ac.title.is_empty() {
             out.push(ParseError {
-                line: 0,
+                line: ac.title_line,
                 message: format!("{} title is empty", ac.id),
             })
         }
         if !re.is_match(&ac.evidence) {
             out.push(ParseError {
-                line: 0,
+                line: ac.check_line,
                 message: format!("{} Check must be CHK-<digits>", ac.id),
             })
         }
         let unique: BTreeSet<_> = ac.covers.iter().collect();
         if unique.len() != ac.covers.len() {
             out.push(ParseError {
-                line: 0,
+                line: ac.covers_line,
                 message: format!("{} Covers contains duplicate requirements", ac.id),
             })
         }
@@ -251,7 +271,7 @@ pub fn validate_shape(d: &AcceptanceDocument) -> Vec<ParseError> {
             let t = ac.steps.iter().filter(|s| s.keyword == "Then").count();
             if w != 1 || t == 0 {
                 out.push(ParseError {
-                    line: 0,
+                    line: ac.title_line,
                     message: format!(
                         "{} scenario needs one When and at least one Then step",
                         ac.id
