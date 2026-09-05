@@ -2,6 +2,8 @@
 //! record the verdict in the manifest.
 
 use std::path::Path;
+#[cfg(test)]
+use std::process::Command;
 
 use anyhow::Context;
 
@@ -142,6 +144,45 @@ fn write_matcher_evidence(path: &Path, output: &gate::GateOutput) -> anyhow::Res
 mod tests {
     use super::*;
 
+    fn git(root: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .current_dir(root)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn real_gate(root: &Path) -> gate::GateOutput {
+        std::fs::create_dir(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("verify.toml"),
+            "schema = \"verify/v2\"\ntask_id = \"TASK-001\"\nbase_tree = \"0123456789012345678901234567890123456789\"\nwritable_paths = [\"src\"]\n[[checks]]\nid = \"CHK-001\"\nphase = \"gate\"\nshell = \"printf x >> invoked; printf stable-output\"\nexpected = { stdout_contains = [\"stable-output\"] }\n",
+        )
+        .unwrap();
+        git(root, &["init", "-q"]);
+        git(root, &["config", "user.name", "Matcher Test"]);
+        git(root, &["config", "user.email", "matcher@test.invalid"]);
+        git(root, &["add", "verify.toml"]);
+        git(root, &["commit", "-qm", "base"]);
+        let output = gate::run(gate::GateOpts {
+            root: root.to_path_buf(),
+            task_dir: root.to_path_buf(),
+            progress: None,
+            base: Some("HEAD".into()),
+            log_dir: Some(root.join("logs")),
+            fail_fast: false,
+            enforce_task_contract: false,
+        });
+        assert!(output.is_pass(), "{}", output.text);
+        assert_eq!(std::fs::read_to_string(root.join("invoked")).unwrap(), "x");
+        output
+    }
+
     #[test]
     fn matcher_evidence_is_canonical_and_digestable() {
         let tmp = tempfile::tempdir().unwrap();
@@ -184,5 +225,48 @@ mod tests {
                 .unwrap()
                 .contains("gate-evidence/v1")
         );
+    }
+
+    #[test]
+    fn real_gate_matcher_evidence_has_stable_digest_and_complete_content() {
+        let first_root = tempfile::tempdir().unwrap();
+        let second_root = tempfile::tempdir().unwrap();
+        let first_output = real_gate(first_root.path());
+        let second_output = real_gate(second_root.path());
+        let first_path = first_root.path().join("gate-evidence.json");
+        let second_path = second_root.path().join("gate-evidence.json");
+        let first_digest = write_matcher_evidence(&first_path, &first_output).unwrap();
+        let second_digest = write_matcher_evidence(&second_path, &second_output).unwrap();
+        let first = std::fs::read(&first_path).unwrap();
+        assert_eq!(first, std::fs::read(&second_path).unwrap());
+        assert_eq!(first_digest, second_digest);
+        assert_eq!(
+            first_digest,
+            crate::selfhost::hash::digest_file(&first_path).unwrap()
+        );
+        let value: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        assert_eq!(value["schema"], "gate-evidence/v1");
+        let checks = value["checks"].as_array().unwrap();
+        assert_eq!(
+            checks
+                .iter()
+                .map(|check| check["name"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            [
+                "config",
+                "scope",
+                "forbidden_paths",
+                "forbidden_patterns",
+                "CHK-001"
+            ]
+        );
+        let evidence = &checks[4]["evidence"];
+        assert_eq!(evidence["exit"], 0);
+        assert_eq!(evidence["stdout"], "stable-output");
+        assert_eq!(evidence["stderr"], "");
+        assert_eq!(evidence["matchers"][0]["kind"], "exit");
+        assert_eq!(evidence["matchers"][1]["kind"], "stdout.contains");
+        assert_eq!(evidence["matchers"][0]["pass"], true);
+        assert_eq!(evidence["matchers"][1]["pass"], true);
     }
 }

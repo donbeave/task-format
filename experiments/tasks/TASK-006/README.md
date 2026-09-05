@@ -108,8 +108,10 @@ Then the task can execute against TASK-005
 
 ## Fixed decisions
 
-- **D-025, D-034:** custom SQL validation and interaction.
-- **D-011, D-013, D-060:** runtime outcomes and layout.
+- **D-025:** Trim whitespace and one trailing semicolon; reject multiple statements; use simple-query; cap row results at 500; command results report `ok: <n> rows affected` and clear the SQL grid.
+- **D-034:** `x` opens CustomSql, input edits normally, Esc returns to Browser retaining its prior state, and Enter submits. SQL results do not sort and never gain preview markers.
+- **D-011, D-013:** Runtime returns query results through `QueryDone`; failures surface as status errors without losing existing state.
+- **D-060:** Draw the deterministic SQL input/result split through `ui::draw`, with marker-free shared-grid results.
 
 ## Checklist
 

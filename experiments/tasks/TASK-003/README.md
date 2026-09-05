@@ -98,10 +98,10 @@ Then prohibited and unrelated changes are absent
 
 ## Fixed decisions
 
-- **D-010:** Form shape, field order, blank state, and validation.
-- **D-011–D-012:** Save effects and runtime round trip.
-- **D-032:** Form keys, messages, save, and cancel transitions.
-- **D-060–D-061:** Form layout and single drawing entry point.
+- **D-010:** `CreateForm` has Name, Host, Port, Database, User, Password in that order; blank form validates non-empty fields except password and port `1..=65535`.
+- **D-011–D-012:** Form save emits `SaveConnection`; runtime returns `Saved`; success reloads the list and selects the new row, while failures retain the form.
+- **D-032:** Tab/BackTab wrap focus, printable input edits its field, port accepts digits only, Backspace removes, Esc discards, and Enter reports the decided lowercase validation or duplicate-name error.
+- **D-060–D-061:** Draw the deterministic six-line form only through `ui::draw`; show focus and help, and mask every password character.
 
 ## Checklist
 

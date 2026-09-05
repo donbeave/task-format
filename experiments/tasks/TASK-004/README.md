@@ -108,8 +108,9 @@ Then the task can be executed against its stated predecessor
 
 ## Fixed decisions
 
-- **D-023–D-026:** simple-query-only session, timeout, table SQL, and database types.
-- **D-033, D-060:** browser interactions and layout.
+- **D-023–D-026:** All PostgreSQL statements use `Client::simple_query`; query/prepare/execute APIs are forbidden. Connect with decided field config, `application_name=pgtui`, `NoTls`, and a five-second timeout. Keep the decided database types, identifier quoting, `PREVIEW_LIMIT = 500`, and ordered base-table SQL.
+- **D-033:** Browser sidebar navigation clamps; Tab toggles sidebar/grid only when a grid exists; Enter starts the selected-table preview only in its owning later slice.
+- **D-060:** Draw the 100x30 browser through `ui::draw`: 30-column table sidebar, focus marker, `schema.name` rows, and an empty main panel titled by connection.
 
 ## Checklist
 

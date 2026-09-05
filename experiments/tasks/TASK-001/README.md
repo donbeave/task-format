@@ -87,10 +87,10 @@ Then trusted material and unrelated artifacts remain untouched
 
 ## Fixed decisions
 
-- **D-001:** Workspace layout, toolchain pin, exact dependency pins and features, committed lockfile.
-- **D-002:** The render module and font are trusted; later modules arrive in later tasks.
-- **D-040:** Both bootstrap binaries exit 2 with their decided diagnostics.
-- **D-070:** Trusted behavioral material is read-only.
+- **D-001:** Use one Cargo 2024/resolver-3 workspace with only `crates/pgtui` (library plus `pgtui` and `gallery` binaries), committed lockfile, `unsafe_code = "forbid"`, and the exact pinned dependency set checked by CHK-002. Member dependencies inherit from the workspace; do not add or change dependencies.
+- **D-002:** The library exports only planner-supplied `render`; `render.rs` and fonts are protected input, never executor output.
+- **D-040:** Until their owning slices replace them, both binaries print `error: not implemented` to stderr and exit 2.
+- **D-070:** Planner-supplied render/font/tests are read-only and outside writable scope; behavior tests assert semantics, not golden snapshots.
 
 ## Checklist
 

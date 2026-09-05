@@ -109,11 +109,11 @@ Then prohibited and unrelated changes are absent
 
 ## Fixed decisions
 
-- **D-010–D-013:** Application state, effects, loop, and status semantics.
-- **D-020–D-022:** Turso store and exact API.
-- **D-030–D-031:** Global and connection-list keys.
-- **D-040–D-042:** Exit diagnostics and non-interactive behavior.
-- **D-060–D-061:** List layout and drawing entry point.
+- **D-010–D-013:** `App` owns screen, connections, cursor, form, session/grid placeholders, SQL state, status, and quit state. `update` is pure and returns effects; the runtime performs I/O; status replaces per-screen help until the next key.
+- **D-020–D-022:** Use local Turso with `--db`, then `$PGTUI_DB`, then XDG path precedence; keep the decided `connections` schema and public `ConnectionStore`, `NewConnection`, `SavedConnection`, and `StoreError` API. List names ascending; never display a password.
+- **D-030–D-031:** `Ctrl+C` disconnects if needed then quits. List `j`/`k` (and arrows) clamps, `n` opens a blank form, `q` quits, and `Enter` is deferred/no-op in this slice.
+- **D-040–D-042:** Exit 0 for normal quit, 2 for usage/config errors, and 1 for unexpected runtime failure after terminal restoration. Non-terminal `pgtui` reports exactly `error: no terminal: pgtui requires an interactive terminal` on stderr and exits 2.
+- **D-060–D-061:** Draw only through `ui::draw` into the deterministic 100x30 buffer: list title, selection, empty guidance, and status line must match trusted behavior.
 
 ## Checklist
 

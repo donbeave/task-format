@@ -108,8 +108,10 @@ Then the task can execute against TASK-004
 
 ## Fixed decisions
 
-- **D-025, D-050–D-053:** preview SQL and frozen grid/sort model.
-- **D-011, D-033, D-060:** preview state, keys, and layout.
+- **D-025:** Preview uses only `SELECT * FROM "<schema>"."<table>" LIMIT 500` through simple-query; loaded rows are never re-queried for sorting.
+- **D-050–D-053:** `Grid` retains original rows and exposes a sorted view. Sort is stable: numeric only when every non-null cell parses as `f64`, otherwise byte order; nulls last ascending/first descending; `s` cycles none/asc/desc and a new result resets it.
+- **D-011, D-033:** Preview result/error returns through `QueryDone`; grid focus supports row/column navigation and sorting while an error preserves prior state.
+- **D-060:** Reuse the shared deterministic grid: decided column widths, cursor/headers/sort markers, `NULL`, and preview title.
 
 ## Checklist
 

@@ -14,7 +14,7 @@ The executable harness lives in [`../harness/`](../harness/README.md). This dire
 
 ## Package contract
 
-Each package contains the task contract (`README.md`), fixed decisions (`decisions.md`), gate configuration (`verify.toml`), and planner-owned verification material (`trusted/`). The task contract, decisions, and gate configuration are mounted read-only for the agent. The harness adds the standard task protocol from [`reference/task-template/`](../reference/task-template/) when a package does not carry it.
+Each package contains one human task contract (`README.md`, including fixed decisions), gate configuration (`verify.toml`), and planner-owned verification material (`trusted/`). The contract and gate configuration are mounted read-only for the agent. The harness adds the standard task protocol from [`reference/task-template/`](../reference/task-template/) when a package does not carry it.
 
 Before an agent starts, the harness creates a fresh clone of the experiment repository's `main` branch, overlays that task's `trusted/` material, and commits the overlay as the run's base commit. The agent works only in that clone. `verify.toml`'s `writable_paths` restrict what it may change, so trusted tests and support files remain outside its scope. A passing frozen candidate can be promoted to `main`; a failed or mutated candidate is never promoted.
 

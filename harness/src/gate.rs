@@ -951,9 +951,17 @@ mod tests {
             ("{ exit = 1 }", "exit"),
             ("{ stdout_contains = [\"missing\"] }", "stdout.contains"),
             ("{ stderr_contains = [\"missing\"] }", "stderr.contains"),
+            ("{ stdout_excludes = [\"alpha\"] }", "stdout.excludes"),
+            ("{ stderr_excludes = [\"beta\"] }", "stderr.excludes"),
+            ("{ stdout_regex = [\"z+\"] }", "stdout.regex"),
+            ("{ stderr_regex = [\"z+\"] }", "stderr.regex"),
             (
                 "{ stdout_occurrences = [{ text = \"alpha\", count = 1 }] }",
                 "stdout.occurrences",
+            ),
+            (
+                "{ stderr_occurrences = [{ text = \"beta\", count = 2 }] }",
+                "stderr.occurrences",
             ),
             (
                 "{ required_artifacts = [\"missing\"] }",
@@ -966,14 +974,38 @@ mod tests {
         ];
         for (expected, kind) in cases {
             let evidence = evaluate_expected(root.path(), &check(expected), &captured);
-            assert!(
-                evidence.matchers.iter().any(|m| m.kind == kind && !m.pass),
-                "{expected:?}: {evidence:?}"
-            );
+            let failed: Vec<_> = evidence.matchers.iter().filter(|m| !m.pass).collect();
+            assert_eq!(failed.len(), 1, "{expected:?}: {evidence:?}");
+            assert!(failed[0].kind == kind, "{expected:?}: {evidence:?}");
             assert_eq!(evidence.exit, 0);
             assert_eq!(evidence.stdout, "alpha alpha\n");
             assert_eq!(evidence.stderr, "beta\n");
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_artifact_expectation_fails_without_escape() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret"), "not part of the candidate").unwrap();
+        symlink(outside.path(), root.path().join("outside")).unwrap();
+        let captured = ops::Captured::default();
+        let evidence = evaluate_expected(
+            root.path(),
+            &check("{ required_artifacts = [\"outside/secret\"] }"),
+            &captured,
+        );
+        assert_eq!(evidence.matchers.len(), 2); // exit + artifact
+        let artifact = evidence
+            .matchers
+            .iter()
+            .find(|m| m.kind == "artifact.required")
+            .unwrap();
+        assert!(!artifact.pass);
+        assert!(artifact.actual.contains("unreadable path"), "{artifact:?}");
     }
 
     #[test]
@@ -985,23 +1017,52 @@ mod tests {
     }
 
     #[test]
-    fn configured_command_runs_once_and_mismatch_fails_after_zero_exit() {
+    fn configured_commands_run_exactly_once_for_argv_and_shell() {
+        let cases = [
+            (
+                "argv",
+                "argv = [\"bash\", \"-c\", \"printf a >> invoked; printf actual\"]",
+            ),
+            ("shell", "shell = \"printf b >> invoked; printf actual\""),
+        ];
+        for (name, command) in cases {
+            let root = tempfile::tempdir().unwrap();
+            let check = verifycfg::VerifyConfig::parse(&format!(
+                "schema = \"verify/v2\"\ntask_id = \"TASK-001\"\nbase_tree = \"0123456789012345678901234567890123456789\"\nwritable_paths = [\"src\"]\n[[checks]]\nid = \"CHK-001\"\nphase = \"gate\"\n{command}\nexpected = {{ stdout_contains = [\"actual\"] }}\n",
+            ))
+            .unwrap()
+            .checks
+            .into_iter()
+            .next()
+            .unwrap();
+            let (body, evidence) = run_configured_check(root.path(), &check);
+            assert!(body.is_ok(), "{name}: {body:?}");
+            assert_eq!(
+                std::fs::read_to_string(root.path().join("invoked")).unwrap(),
+                if name == "argv" { "a" } else { "b" },
+                "{name} executed more than once"
+            );
+            assert_eq!(evidence.stdout, "actual", "{name}");
+            assert!(evidence.matchers.iter().all(|matcher| matcher.pass));
+        }
+    }
+
+    #[test]
+    fn spawn_failure_is_structured_failed_evidence() {
         let root = tempfile::tempdir().unwrap();
         let check = verifycfg::VerifyConfig::parse(
-            "schema = \"verify/v2\"\ntask_id = \"TASK-001\"\nbase_tree = \"0123456789012345678901234567890123456789\"\nwritable_paths = [\"src\"]\n[[checks]]\nid = \"CHK-001\"\nphase = \"gate\"\nshell = \"printf x >> invoked; printf actual\"\nexpected = { stdout_contains = [\"impossible\"] }\n",
-        ).unwrap().checks.into_iter().next().unwrap();
+            "schema = \"verify/v2\"\ntask_id = \"TASK-001\"\nbase_tree = \"0123456789012345678901234567890123456789\"\nwritable_paths = [\"src\"]\n[[checks]]\nid = \"CHK-001\"\nphase = \"gate\"\nargv = [\"taskfmt-matcher-test-command-that-does-not-exist\"]\n",
+        )
+        .unwrap()
+        .checks
+        .into_iter()
+        .next()
+        .unwrap();
         let (body, evidence) = run_configured_check(root.path(), &check);
         assert!(body.is_err());
-        assert_eq!(
-            std::fs::read_to_string(root.path().join("invoked")).unwrap(),
-            "x"
-        );
-        assert_eq!(evidence.stdout, "actual");
-        assert!(
-            evidence
-                .matchers
-                .iter()
-                .any(|m| m.kind == "stdout.contains" && !m.pass)
-        );
+        assert_eq!(evidence.exit, 127);
+        assert_eq!(evidence.matchers.len(), 1);
+        assert_eq!(evidence.matchers[0].kind, "spawn");
+        assert!(!evidence.matchers[0].pass);
     }
 }

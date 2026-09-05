@@ -2,14 +2,13 @@
 
 Your goal is to fully implement this task: `/task/README.md`.
 
-`/task/` is read-only: it holds the task contract (`README.md`, this protocol, `verify.toml`, and optionally `decisions.md`). Keep coordination state in `/progress/progress.md`. Do all work in `/work/`.
+`/task/` is read-only: it holds the task contract (`README.md`, this protocol, and `verify.toml`). Keep coordination state in `/progress/progress.md`. Do all work in `/work/`.
 
 ## Files
 
 | Path | Access | Purpose |
 | --- | --- | --- |
 | `/task/README.md` | read-only | The contract: goal, requirements, acceptance criteria, decisions, checklist. |
-| `/task/decisions.md` | read-only, optional | Full text of the fixed decisions; binding when present. |
 | `/task/verify.toml` | read-only | Machine authority: checks, expected results, and writable paths; never edit. |
 | `/progress/progress.md` | read-write | Coordination event stream and handoff. |
 | `/work/` | read-write | The repository. All code changes happen here. |
@@ -25,7 +24,7 @@ Cucumber feature files, and have no runtime step definitions.
 
 ## Protocol
 
-1. Read `/task/README.md` fully (and `/task/decisions.md` if present), then the files listed under "Read before editing".
+1. Read `/task/README.md` fully, then the files listed under "Read before editing".
 2. If `/progress/progress.md` exists you are resuming: read it, run `git status` and `git diff --stat`, and continue from its derived current leaf. The on-disk event stream is the only authority for coordination state; summaries are claims to check, never a substitute. Re-read it before appending an event and before the final report. Re-read `/task/README.md` before editing after any resume or context compaction.
 3. State in the transcript: task ID, one-sentence goal, acceptance IDs, and the first leaf.
 4. Run every `precondition` check. If one fails, append the prescribed blocking event and emit `STATUS: BLOCKED`. Do not work around it.

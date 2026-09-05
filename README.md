@@ -20,10 +20,9 @@ It is not a model leaderboard, a universal prompting recipe, or proof that the c
 
 One package describes one bounded, observable outcome:
 
-- `README.md` — goal, context, requirements, scope, acceptance criteria, and checklist;
+- `README.md` — the binding goal, context, requirements, scope, acceptance criteria, fixed decisions, and checklist;
 - `AGENTS.md` — execution protocol and progress rules;
 - `verify.toml` — commands, path limits, and completion gate;
-- `decisions.md` — binding choices when the executor must not improvise; and
 - `trusted/` — planner-owned tests or fixtures outside the agent's edit scope.
 
 The package is read-only during a run. Progress is derived state stored outside the package and is never itself proof of completion.

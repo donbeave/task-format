@@ -464,14 +464,6 @@ fn lint_mutants(readme: &str) -> Vec<(&'static str, String)> {
             1,
         ),
     ));
-    out.push((
-        "hint references /task/ (C8)",
-        readme.replacen(
-            "4. `docs/decisions/D-041.md` — error-code contract.",
-            "4. `/task/decisions.md` — error-code contract.",
-            1,
-        ),
-    ));
     out
 }
 

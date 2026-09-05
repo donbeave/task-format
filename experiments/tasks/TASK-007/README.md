@@ -108,9 +108,10 @@ Then TASK-007 can execute against TASK-006
 
 ## Fixed decisions
 
-- **D-024, D-033:** disconnect and teardown.
-- **D-012, D-030, D-040:** loop and terminal exits.
-- **D-080, D-005:** gallery and Screens index.
+- **D-024, D-033:** `d` disconnects from Browser: drop the client, await the connection task, then reset session, grids, and SQL while retaining saved connections and list cursor.
+- **D-012, D-030, D-040:** `q` and Ctrl+C restore the terminal and exit 0; Ctrl+C disconnects first when connected. Usage/config errors exit 2; unexpected runtime failures exit 1 after restoration.
+- **D-080:** `gallery [--out <dir>]` defaults to `docs/screens`, emits the ten named deterministic SVG/PNG pairs using the shared renderer, exits 0/2/1 for success/usage-or-output/render failure, and writes no rendering code of its own.
+- **D-005:** This release writes the repository README `## Screens` index and commits one default gallery run.
 
 ## Checklist
 
