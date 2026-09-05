@@ -4,7 +4,7 @@ writable_paths = ["Cargo.toml", "Cargo.lock", "crates"]
 forbidden_paths = ["crates/pgtui/src/render.rs", "crates/pgtui/src/fonts", "crates/pgtui/tests"]
 
 [[forbidden_patterns]]
-regex = 'todo!\\(|unimplemented!\\(|dbg!\\(|tokio_postgres'
+regex = 'todo!\(|unimplemented!\(|dbg!\(|tokio_postgres'
 paths = ["crates"]
 
 [[checks]]

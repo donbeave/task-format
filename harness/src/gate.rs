@@ -451,6 +451,11 @@ fn glob_regex(glob: &str) -> anyhow::Result<Regex> {
             other => pattern.push_str(&regex::escape(&other.to_string())),
         }
     }
+    // A bare writable path names either that file or the directory rooted at
+    // that path. Task packages use `crates` and `.cargo` as directory roots.
+    if !glob.contains(['*', '?']) {
+        pattern.push_str("(?:/.*)?");
+    }
     pattern.push('$');
     Ok(Regex::new(&pattern)?)
 }
@@ -874,6 +879,8 @@ mod tests {
             ("src/*", "tests/auth/x.rs", false),
             ("src/**/*.rs", "src/a/b/c.rs", true),
             ("Cargo.lock", "Cargo.lock", true),
+            ("crates", "crates/pgtui/src/lib.rs", true),
+            ("crates", "crates-old/src/lib.rs", false),
             ("docs/*", "docs/sub/dir.md", true),
         ];
         for (glob, path, want) in cases {

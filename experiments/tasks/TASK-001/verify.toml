@@ -4,7 +4,7 @@ writable_paths = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "rustfmt.to
 forbidden_paths = ["crates/pgtui/src/render.rs", "crates/pgtui/src/fonts", "crates/pgtui/tests"]
 
 [[forbidden_patterns]]
-regex = 'todo!\\(|unimplemented!\\(|dbg!\\('
+regex = 'todo!\(|unimplemented!\(|dbg!\('
 paths = ["crates"]
 
 [[checks]]
@@ -17,7 +17,7 @@ acceptance = ["AC-001"]
 [[checks]]
 id = "CHK-002"
 phase = "focused"
-shell = "grep -qE '^ratatui = \\\"=0\\\\.30\\\\.2\\\"' Cargo.toml && grep -q '1.98.0' rust-toolchain.toml && grep -q 'edition = \\\"2024\\\"' rustfmt.toml"
+shell = "grep -qE '^ratatui = \"=0\\.30\\.2\"' Cargo.toml && grep -qE '^crossterm = \"=0\\.29\\.0\"' Cargo.toml && grep -qE '^tokio-postgres = \"=0\\.7\\.18\"' Cargo.toml && grep -qE '^turso = \\{ version = \"=0\\.7\\.2\"' Cargo.toml && grep -qE '^tokio = \\{ version = \"=1\\.53\\.1\"' Cargo.toml && grep -qE '^clap = \\{ version = \"=4\\.6\\.6\"' Cargo.toml && grep -qE '^thiserror = \"=2\\.0\\.20\"' Cargo.toml && grep -qE '^directories = \"=6\\.0\\.0\"' Cargo.toml && grep -qE '^resvg = \"=0\\.48\\.1\"' Cargo.toml && grep -qE '^tempfile = \"=3\\.27\\.0\"' Cargo.toml && grep -qE '^testcontainers = \"=0\\.27\\.3\"' Cargo.toml && grep -qE '^testcontainers-modules = \\{ version = \"=0\\.15\\.0\"' Cargo.toml && grep -qE '^nix = \\{ version = \"=0\\.30\\.1\"' Cargo.toml && grep -q '1.98.0' rust-toolchain.toml && grep -q 'edition = \"2024\"' rustfmt.toml && grep -qFx 'TESTCONTAINERS_COMMAND = \"remove\"' .cargo/config.toml && grep -qFx 'target/' .gitignore && grep -qFx 'edition.workspace = true' crates/pgtui/Cargo.toml && grep -qFx 'workspace = true' crates/pgtui/Cargo.toml && grep -qFx 'name = \"pgtui\"' crates/pgtui/Cargo.toml && grep -qFx 'name = \"gallery\"' crates/pgtui/Cargo.toml"
 requirements = ["R-002", "R-003"]
 acceptance = ["AC-002"]
 
