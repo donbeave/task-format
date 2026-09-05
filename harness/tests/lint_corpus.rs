@@ -2,8 +2,10 @@
 
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::Duration;
 
 use taskfmt::lint::{self, Finding, Severity};
+use taskfmt::ops;
 use taskfmt::taskfile::TaskFile;
 
 fn repo_root() -> PathBuf {
@@ -267,17 +269,18 @@ fn lint_cli_keeps_batch_and_ndjson_reports_attributable() {
         if json {
             command.arg("--json");
         }
-        command.output().unwrap()
+        ops::capture_with_timeout(&mut command, Duration::from_secs(10))
+            .expect("taskfmt lint CLI timed out")
     };
     let text = run(false);
-    assert_eq!(text.status.code(), Some(1));
-    let stdout = String::from_utf8(text.stdout).unwrap();
+    assert_eq!(text.status, 1);
+    let stdout = text.stdout;
     assert!(stdout.contains("PACKAGE "));
     assert_eq!(stdout.matches("PACKAGE ").count(), 2);
     let json = run(true);
-    assert_eq!(json.status.code(), Some(0), "JSON mode is streamable");
-    let records: Vec<serde_json::Value> = String::from_utf8(json.stdout)
-        .unwrap()
+    assert_eq!(json.status, 0, "JSON mode is streamable");
+    let records: Vec<serde_json::Value> = json
+        .stdout
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
