@@ -37,7 +37,7 @@ The harness protects the experiment in layers:
 3. Trusted verification material is overlaid before execution and kept outside the agent's allowed paths.
 4. `taskfmt verify` checks the task's declared commands, progress, and scope.
 5. The host repeats the gate after the agent stops. The host verdict, not the agent's report, decides success.
-6. Only a passing result can be promoted to `main`; every result retains an inspectable record.
+6. Host gating and promotion remain disabled until secure `run/v1` records bind isolated verification to an immutable tree.
 
 ## Operating a run
 
@@ -47,8 +47,7 @@ Use this sequence:
 2. `taskfmt selfcheck TASK-001 <workspace>`
 3. `taskfmt run --task TASK-001 --repo <repository-url> --agent codex-default`
 4. `taskfmt status <run-id> --wait` or `taskfmt attach <run-id>`
-5. `taskfmt gate <run-id>`
-6. `taskfmt promote <run-id>`
+5. Inspect the run record. Host `gate` and `promote` currently fail closed pending the secure boundary.
 
 Use `taskfmt experiment --tasks 1-3 --repo <repository-url>` for an ordered series. See [harness/README.md](harness/README.md) for setup, flags, safety, configuration, and development checks.
 
