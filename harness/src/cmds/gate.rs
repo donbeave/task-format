@@ -16,6 +16,9 @@ pub fn run(ctx: &Ctx, run_id: &str) -> anyhow::Result<i32> {
     let mut manifest = Manifest::load(&run_dir)?;
     let status = crate::cmds::status::check(&manifest, &run_dir)?;
     manifest.status_state = status.state.clone();
+    // `gate` is also callable directly, not only through `run --wait`.  Remove the executor
+    // writer before freezing the candidate in both paths.
+    crate::cmds::run::quiesce(&manifest);
     let passed = gate_run(&run_dir, &resolved, &mut manifest)?;
 
     redact::emit(&format!(
@@ -47,9 +50,23 @@ pub fn gate_run(
     let progress_file = run_dir.join("progress/progress.md");
     let out_dir = run_dir.join("out");
     let base = manifest.base_sha.clone();
+    let started = crate::config::timestamp_rfc3339();
+
+    // The index is our candidate snapshot.  It includes every worktree state, including ignored
+    // and untracked paths, so promotion cannot silently drop work the agent produced.
+    crate::ops::git::add_all_including_ignored(&workspace)?;
+    let parent = crate::ops::git::head(&workspace)?;
+    let candidate_tree = crate::ops::git::write_tree(&workspace)?;
+    let task_sha256 = crate::selfhost::hash::digest_file(&snapshot.join("README.md"))?;
+    let verifier_sha256 = crate::selfhost::hash::digest_file(&snapshot.join("verify.toml"))?;
+
+    // Verify a detached materialization of the recorded tree, never the executor's mutable
+    // workspace. The synthetic checkout retains the recorded parent so scope checks see the same
+    // history a later promotion will use.
+    let frozen = crate::ops::git::detached_tree_worktree(&workspace, &candidate_tree, &parent)?;
 
     let output = gate::run(GateOpts {
-        root: workspace.clone(),
+        root: frozen.path().to_path_buf(),
         task_dir: snapshot,
         progress: Some(progress_file.display().to_string()),
         base: Some(base),
@@ -63,11 +80,47 @@ pub fn gate_run(
         .with_context(|| format!("writing {}", gate_log.display()))?;
 
     let head = crate::ops::git::head(&workspace)?;
+    // Re-stage only to observe the complete post-verification tree.  A command which writes
+    // after (or during) verification cannot change the tree later promoted.
+    crate::ops::git::add_all_including_ignored(&workspace)?;
+    let observed_tree = crate::ops::git::write_tree(&workspace)?;
+    let immutable = observed_tree == candidate_tree;
+    if !immutable {
+        let detail = format!(
+            "IMMUTABLE CANDIDATE ABORT expected_tree={candidate_tree} observed_tree={observed_tree}\n"
+        );
+        let mut prior = std::fs::read_to_string(&gate_log)
+            .with_context(|| format!("reading {}", gate_log.display()))?;
+        prior.push_str(&detail);
+        redact::write_scrubbed(&gate_log, prior.as_bytes())
+            .with_context(|| format!("writing {}", gate_log.display()))?;
+    }
+    let evidence_sha256 = crate::selfhost::hash::digest_file(&gate_log)?;
     manifest.gate = Some(GateRecord {
-        verdict: if output.is_pass() { "pass" } else { "fail" }.to_string(),
-        exit: output.exit,
-        last_line: output.last_line,
+        schema: "gate/v2".to_string(),
+        verdict: if immutable && output.is_pass() {
+            "pass"
+        } else if immutable {
+            "fail"
+        } else {
+            "abort"
+        }
+        .to_string(),
+        exit: if immutable { output.exit } else { 1 },
+        last_line: if immutable {
+            output.last_line
+        } else {
+            "RESULT FAIL".to_string()
+        },
         head,
+        candidate_tree,
+        parent,
+        task_sha256,
+        verifier_sha256,
+        harness_fingerprint: crate::HARNESS_FINGERPRINT.to_string(),
+        evidence_sha256,
+        terminal_state: manifest.status_state.clone(),
+        started,
         log: gate_log.display().to_string(),
         finished: crate::config::timestamp_rfc3339(),
     });

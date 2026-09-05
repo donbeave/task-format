@@ -264,9 +264,11 @@ mod tests {
                 head: "head".into(),
                 log: "/tmp/gate.log".into(),
                 finished: "2026-08-29T20:00:00Z".into(),
+                ..crate::runstate::GateRecord::default()
             }),
             status_state: "GOAL_MET".into(),
             result_sha: None,
+            pending_promotion_sha: None,
         };
         manifest.save(&run_dir).unwrap();
         let info = ContainerInfo {

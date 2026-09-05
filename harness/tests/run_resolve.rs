@@ -56,9 +56,11 @@ fn manifest(run: &str, container: &str) -> Manifest {
             head: "head".into(),
             log: "/tmp/gate.log".into(),
             finished: "2026-08-28T11:00:00Z".into(),
+            ..GateRecord::default()
         }),
         status_state: String::new(),
         result_sha: None,
+        pending_promotion_sha: None,
     }
 }
 

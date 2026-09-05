@@ -254,6 +254,7 @@ pub fn dispatch_one(
         gate: None,
         status_state: String::new(),
         result_sha: None,
+        pending_promotion_sha: None,
     };
 
     let secrets = crate::ops::op::resolve_all(&profile.env_secret)?;
@@ -404,7 +405,7 @@ pub fn wait_and_gate(
 /// it is now the rule for every path into the gate rather than a special case of one.
 ///
 /// The container is kept, never removed: `taskfmt attach` restarts a stopped one.
-fn quiesce(manifest: &Manifest) {
+pub(crate) fn quiesce(manifest: &Manifest) {
     if !docker::is_running(&manifest.container) {
         return;
     }
@@ -868,6 +869,7 @@ mod tests {
             head: "head".into(),
             log: "/tmp/gate.log".into(),
             finished: "2026-08-29T19:57:59Z".into(),
+            ..crate::runstate::GateRecord::default()
         };
         assert!(
             !record.passed(),
@@ -1061,6 +1063,7 @@ mod tests {
             gate: None,
             status_state: String::new(),
             result_sha: None,
+            pending_promotion_sha: None,
         };
         let err = fail_prereqs(&manifest, dir.path());
         println!("FAILPREREQS returned={err}");

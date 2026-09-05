@@ -884,6 +884,7 @@ mod tests {
             gate: None,
             status_state: String::new(),
             result_sha: None,
+            pending_promotion_sha: None,
         }
     }
 

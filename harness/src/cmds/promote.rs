@@ -1,5 +1,4 @@
-//! `taskfmt promote <RUN>` — push a gated workspace. Refuses unless the manifest records a PASS
-//! gate and the workspace HEAD is the gated HEAD.
+//! `taskfmt promote <RUN>` — create and push precisely the immutable tree a gate recorded.
 
 use std::path::Path;
 
@@ -20,10 +19,52 @@ pub fn promote_run(_ctx: &Ctx, run_dir: &Path, _yes: bool) -> anyhow::Result<()>
     if !workspace.is_dir() {
         bail!("no workspace at {}", workspace.display());
     }
+    let mut manifest = Manifest::load(run_dir)?;
+    let gate = manifest
+        .gate
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("promotion refused: no gate record"))?;
+    if !gate.promotable() {
+        bail!(
+            "promotion refused: gate is not a complete immutable passing record (schema={} verdict={} terminal={})",
+            gate.schema,
+            gate.verdict,
+            gate.terminal_state
+        );
+    }
+    if manifest.result_sha.is_some() {
+        bail!("promotion refused: run already has a result commit");
+    }
 
-    // Security stopgap: current records do not bind an immutable tree, trusted Git metadata, or
-    // isolated verifier evidence. Promotion must remain unavailable until run/v1 does all three.
-    bail!("promotion disabled: legacy gate records do not prove an isolated immutable candidate");
+    // `commit-tree` consumes recorded object IDs directly. Moving local branches or a dirty
+    // worktree cannot alter this commit; the remote lease rejects a concurrently changed main.
+    let commit = match manifest.pending_promotion_sha.clone() {
+        Some(commit) => commit,
+        None => {
+            let message = commit_message(&manifest, gate, &title_of(run_dir));
+            let commit = crate::ops::git::commit_tree(
+                &workspace,
+                &gate.candidate_tree,
+                &gate.parent,
+                &message,
+                true,
+            )?;
+            manifest.pending_promotion_sha = Some(commit.clone());
+            manifest.save(run_dir)?;
+            commit
+        }
+    };
+    if crate::ops::git::remote_main(&workspace, "origin")?.as_deref() == Some(commit.as_str()) {
+        manifest.result_sha = Some(commit);
+        manifest.pending_promotion_sha = None;
+        manifest.save(run_dir)?;
+        return Ok(());
+    }
+    crate::ops::git::push_main_with_lease(&workspace, "origin", &commit, &gate.parent)?;
+    manifest.result_sha = Some(commit);
+    manifest.pending_promotion_sha = None;
+    manifest.save(run_dir)?;
+    Ok(())
 }
 
 /// The commit message a promoted run pushes into the experiment repo: `<TASK>: <README title>`, a
@@ -45,7 +86,7 @@ pub fn commit_message(manifest: &Manifest, gate: &GateRecord, title: &str) -> St
          Co-Authored-By: {model} <{kind}@taskfmt.local>\n\
          Taskfmt-Profile: {agent} effort={effort}\n\
          Taskfmt-Run: {run}\n\
-         Taskfmt-Gate: {verdict} head={head}\n\
+         Taskfmt-Gate: {verdict} tree={tree} parent={parent}\n\
          Taskfmt-Version: {version}\n",
         task = manifest.task,
         model = manifest.model,
@@ -54,7 +95,8 @@ pub fn commit_message(manifest: &Manifest, gate: &GateRecord, title: &str) -> St
         effort = manifest.effort,
         run = manifest.run,
         verdict = gate.verdict,
-        head = gate.head,
+        tree = gate.candidate_tree,
+        parent = gate.parent,
         version = env!("CARGO_PKG_VERSION"),
     )
 }
@@ -74,6 +116,7 @@ pub fn title_of(run_dir: &Path) -> String {
 mod tests {
     use super::*;
     use crate::runstate::SELFCHECK_PASS;
+    use std::process::Command;
 
     fn fixture() -> (Manifest, GateRecord) {
         let gate = GateRecord {
@@ -81,8 +124,11 @@ mod tests {
             exit: 0,
             last_line: "DONE".into(),
             head: "def4560000000000000000000000000000000000".into(),
+            candidate_tree: "tree789000000000000000000000000000000000".into(),
+            parent: "parent00000000000000000000000000000000000".into(),
             log: "/tmp/run/out/gate.log".into(),
             finished: "2026-08-30T11:00:00Z".into(),
+            ..GateRecord::default()
         };
         let manifest = Manifest {
             run: "20260830-101010-zai-flash-TASK-101".into(),
@@ -105,8 +151,145 @@ mod tests {
             gate: Some(gate.clone()),
             status_state: "GOAL_MET".into(),
             result_sha: None,
+            pending_promotion_sha: None,
         };
         (manifest, gate)
+    }
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        crate::ops::git::output(Command::new("git").current_dir(dir).args(args))
+            .unwrap()
+            .trim()
+            .to_string()
+    }
+
+    /// A complete on-disk run plus a bare `origin/main`. The candidate is deliberately left as a
+    /// tree object rather than a branch commit: promotion must reconstruct from this exact object.
+    fn gated_run() -> (
+        tempfile::TempDir,
+        std::path::PathBuf,
+        std::path::PathBuf,
+        String,
+        String,
+    ) {
+        let tmp = tempfile::tempdir().unwrap();
+        let bare = tmp.path().join("remote.git");
+        std::fs::create_dir_all(&bare).unwrap();
+        git(&bare, &["init", "-q", "--bare", "-b", "main"]);
+
+        let run_dir = tmp.path().join("run");
+        let workspace = run_dir.join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        crate::ops::git::init(&workspace).unwrap();
+        std::fs::write(workspace.join("base.txt"), "base\n").unwrap();
+        crate::ops::git::add_all(&workspace).unwrap();
+        let parent = crate::ops::git::commit(&workspace, "base", true, false).unwrap();
+        crate::ops::git::remote_add(&workspace, "origin", &format!("file://{}", bare.display()))
+            .unwrap();
+        crate::ops::git::push_upstream(&workspace, "origin", "main").unwrap();
+
+        std::fs::write(workspace.join("candidate.txt"), "gated\n").unwrap();
+        crate::ops::git::add_all_including_ignored(&workspace).unwrap();
+        let tree = crate::ops::git::write_tree(&workspace).unwrap();
+        std::fs::create_dir_all(run_dir.join("task-snapshot")).unwrap();
+        std::fs::write(
+            run_dir.join("task-snapshot/README.md"),
+            "---\ntitle: Exact promotion\n---\n",
+        )
+        .unwrap();
+
+        let (mut manifest, mut gate) = fixture();
+        manifest.run_dir = run_dir.display().to_string();
+        gate.schema = "gate/v2".into();
+        gate.candidate_tree = tree.clone();
+        gate.parent = parent.clone();
+        gate.task_sha256 = "task-digest".into();
+        gate.verifier_sha256 = "verifier-digest".into();
+        gate.harness_fingerprint = "harness-digest".into();
+        gate.evidence_sha256 = "evidence-digest".into();
+        gate.terminal_state = "GOAL_MET".into();
+        manifest.gate = Some(gate);
+        manifest.save(&run_dir).unwrap();
+        (tmp, run_dir, bare, parent, tree)
+    }
+
+    #[test]
+    fn promotion_uses_the_recorded_tree_after_local_main_moves() {
+        let (_tmp, run_dir, bare, _parent, tree) = gated_run();
+        let workspace = run_dir.join("workspace");
+
+        // This moves local main to a different tree after the candidate was recorded.
+        git(&workspace, &["reset", "--hard", "HEAD"]);
+        std::fs::write(workspace.join("distraction.txt"), "later local work\n").unwrap();
+        crate::ops::git::add_all(&workspace).unwrap();
+        crate::ops::git::commit(&workspace, "local distraction", true, false).unwrap();
+        promote_fixture(&run_dir).unwrap();
+
+        let pushed = crate::ops::git::head(&bare).unwrap();
+        assert_eq!(
+            git(&bare, &["rev-parse", &format!("{pushed}^{{tree}}")]),
+            tree,
+            "remote main must contain the gate's tree, not later local main"
+        );
+        let manifest = Manifest::load(&run_dir).unwrap();
+        assert_eq!(manifest.result_sha.as_deref(), Some(pushed.as_str()));
+    }
+
+    #[test]
+    fn promotion_refuses_when_the_remote_main_lease_changed() {
+        let (_tmp, run_dir, bare, _parent, _tree) = gated_run();
+        let racer = run_dir.parent().unwrap().join("racer");
+        crate::ops::git::clone_main(&format!("file://{}", bare.display()), &racer).unwrap();
+        std::fs::write(racer.join("race.txt"), "race\n").unwrap();
+        crate::ops::git::add_all(&racer).unwrap();
+        crate::ops::git::commit(&racer, "race", true, false).unwrap();
+        crate::ops::git::push(&racer, "origin", "main").unwrap();
+        let raced_head = crate::ops::git::head(&bare).unwrap();
+
+        let error = promote_fixture(&run_dir).unwrap_err().to_string();
+        assert!(error.contains("git push with main lease failed"), "{error}");
+        assert_eq!(crate::ops::git::head(&bare).unwrap(), raced_head);
+        assert!(Manifest::load(&run_dir).unwrap().result_sha.is_none());
+    }
+
+    #[test]
+    fn promotion_refuses_an_incomplete_gate_record() {
+        let (_tmp, run_dir, _bare, _parent, _tree) = gated_run();
+        let mut manifest = Manifest::load(&run_dir).unwrap();
+        let gate = manifest.gate.as_mut().unwrap();
+        gate.evidence_sha256.clear();
+        manifest.save(&run_dir).unwrap();
+
+        let error = promote_fixture(&run_dir).unwrap_err().to_string();
+        assert!(
+            error.contains("not a complete immutable passing record"),
+            "{error}"
+        );
+        assert!(Manifest::load(&run_dir).unwrap().result_sha.is_none());
+    }
+
+    #[test]
+    fn promotion_refuses_a_nonpromotable_terminal_gate_record() {
+        let (_tmp, run_dir, _bare, _parent, _tree) = gated_run();
+        let mut manifest = Manifest::load(&run_dir).unwrap();
+        manifest.gate.as_mut().unwrap().terminal_state = "AGENT_EXITED".into();
+        manifest.save(&run_dir).unwrap();
+
+        let error = promote_fixture(&run_dir).unwrap_err().to_string();
+        assert!(
+            error.contains("not a complete immutable passing record"),
+            "{error}"
+        );
+        assert!(Manifest::load(&run_dir).unwrap().result_sha.is_none());
+    }
+
+    fn promote_fixture(run_dir: &Path) -> anyhow::Result<()> {
+        let ctx = Ctx {
+            config_path: std::path::PathBuf::new(),
+            verbose: false,
+            interaction: crate::interactive::Interaction::new(true, true),
+        };
+        promote_run(&ctx, run_dir, true)
     }
 
     /// The promoted message names the model that did the work, and names it from the run record.
@@ -127,7 +310,7 @@ mod tests {
                 "Co-Authored-By: glm-5.3-flash <claude@taskfmt.local>",
                 "Taskfmt-Profile: zai-flash effort=low",
                 "Taskfmt-Run: 20260830-101010-zai-flash-TASK-101",
-                "Taskfmt-Gate: pass head=def4560000000000000000000000000000000000",
+                "Taskfmt-Gate: pass tree=tree789000000000000000000000000000000000 parent=parent00000000000000000000000000000000000",
                 &format!("Taskfmt-Version: {}", env!("CARGO_PKG_VERSION")),
             ]
         );

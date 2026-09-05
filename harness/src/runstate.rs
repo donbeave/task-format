@@ -67,6 +67,10 @@ pub struct Manifest {
     pub status_state: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result_sha: Option<String>,
+    /// Commit created from the immutable tree and durably recorded before the external push.
+    /// This makes a crash between push and final record recoverable without recreating a commit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_promotion_sha: Option<String>,
 }
 
 fn default_agent_name() -> String {
@@ -80,19 +84,80 @@ fn default_selfcheck() -> String {
 /// The gate verdict for one run, recorded by `taskfmt gate`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GateRecord {
+    /// Immutable gate-record format. Older records are deliberately non-promotable.
+    #[serde(default)]
+    pub schema: String,
     /// "pass" only when verify exited 0 with last line DONE.
     pub verdict: String,
     pub exit: i32,
     pub last_line: String,
     /// Workspace HEAD at gate time — what `promote` compares against.
     pub head: String,
+    /// Complete staged candidate tree verified by this record.
+    #[serde(default)]
+    pub candidate_tree: String,
+    /// Exact commit parent recorded before verification.
+    #[serde(default)]
+    pub parent: String,
+    #[serde(default)]
+    pub task_sha256: String,
+    #[serde(default)]
+    pub verifier_sha256: String,
+    #[serde(default)]
+    pub harness_fingerprint: String,
+    #[serde(default)]
+    pub evidence_sha256: String,
+    /// Terminal executor state that authorized this gate.
+    #[serde(default)]
+    pub terminal_state: String,
+    #[serde(default)]
+    pub started: String,
     pub log: String,
     pub finished: String,
+}
+
+impl Default for GateRecord {
+    fn default() -> Self {
+        Self {
+            schema: String::new(),
+            verdict: String::new(),
+            exit: 1,
+            last_line: String::new(),
+            head: String::new(),
+            candidate_tree: String::new(),
+            parent: String::new(),
+            task_sha256: String::new(),
+            verifier_sha256: String::new(),
+            harness_fingerprint: String::new(),
+            evidence_sha256: String::new(),
+            terminal_state: String::new(),
+            started: String::new(),
+            log: String::new(),
+            finished: String::new(),
+        }
+    }
 }
 
 impl GateRecord {
     pub fn passed(&self) -> bool {
         self.verdict == "pass"
+    }
+
+    /// A record is promotion evidence only when all identities were written by the immutable
+    /// gate. Deserialized v1 records intentionally fail this predicate.
+    pub fn promotable(&self) -> bool {
+        self.schema == "gate/v2"
+            && self.passed()
+            && !self.candidate_tree.is_empty()
+            && !self.parent.is_empty()
+            && !self.task_sha256.is_empty()
+            && !self.verifier_sha256.is_empty()
+            && !self.harness_fingerprint.is_empty()
+            && !self.evidence_sha256.is_empty()
+            && matches!(
+                self.terminal_state.as_str(),
+                "GOAL_MET" | "IDLE" | "GOAL_CLEARED_ERROR"
+            )
     }
 }
 
@@ -290,9 +355,11 @@ mod tests {
                 head: "def456".into(),
                 log: "/tmp/run/out/gate.log".into(),
                 finished: "2026-08-28T11:00:00Z".into(),
+                ..GateRecord::default()
             }),
             status_state: String::new(),
             result_sha: None,
+            pending_promotion_sha: None,
         };
         manifest.save(dir.path()).unwrap();
         let loaded = Manifest::load(dir.path()).unwrap();
@@ -374,6 +441,7 @@ mod tests {
             gate: None,
             status_state: String::new(),
             result_sha: None,
+            pending_promotion_sha: None,
         };
         manifest.status_state = "GOAL_MET".into();
         manifest.save(dir.path()).unwrap();
