@@ -631,6 +631,7 @@ mod tests {
             name: name.into(),
             pass: rc == 0,
             rc,
+            evidence: None,
         }
     }
 

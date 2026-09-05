@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use regex::Regex;
+use serde::Serialize;
 
 use crate::ops;
 use crate::progress::ProgressFile;
@@ -59,14 +60,43 @@ pub struct GateOutput {
 }
 
 /// One named check and its verdict, e.g. `focused.1` / `regression.2` / `scope`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CheckResult {
     pub name: String,
     pub pass: bool,
-    /// Return code of the check: 0 on PASS; for command checks the shell's status (126 not
-    /// executable, 127 not found — also used when the shell could not be spawned); 1 for a
-    /// failing built-in check.
+    /// Gate verdict code: 0 on PASS. Command evidence retains its actual exit code.
     pub rc: i32,
+    /// Stable, scrubbed command evidence. Built-in checks have no command evidence.
+    pub evidence: Option<CommandEvidence>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CommandEvidence {
+    pub exit: i32,
+    pub stdout: String,
+    pub stderr: String,
+    pub matchers: Vec<MatcherResult>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MatcherResult {
+    pub kind: String,
+    pub expected: String,
+    pub actual: String,
+    pub pass: bool,
+}
+
+/// Canonical, timestamp-free evidence sidecar for a gate run.
+pub fn evidence_json(checks: &[CheckResult]) -> anyhow::Result<Vec<u8>> {
+    #[derive(Serialize)]
+    struct Evidence<'a> {
+        schema: &'static str,
+        checks: &'a [CheckResult],
+    }
+    Ok(serde_json::to_vec_pretty(&Evidence {
+        schema: "gate-evidence/v1",
+        checks,
+    })?)
 }
 
 impl GateOutput {
@@ -130,10 +160,14 @@ impl Session {
 
     /// Run one named check. Returns `false` when a `--fail-fast` run must stop.
     fn check(&mut self, name: &str, body: impl FnOnce() -> CheckBody) -> bool {
+        self.record(name, body(), None)
+    }
+
+    fn record(&mut self, name: &str, body: CheckBody, evidence: Option<CommandEvidence>) -> bool {
         if self.halted {
             return false;
         }
-        let (report, rc) = match body() {
+        let (report, rc) = match body {
             Ok(lines) => (lines, 0),
             Err((lines, rc)) => (lines, rc),
         };
@@ -148,6 +182,7 @@ impl Session {
             name: name.to_string(),
             pass: rc == 0,
             rc,
+            evidence,
         });
         if rc == 0 {
             self.lines.push(format!("CHECK {name} PASS"));
@@ -178,11 +213,8 @@ impl Session {
             let name = check.id.clone();
             let root = self.root.clone();
             let check = check.clone();
-            if !self.check(&name, move || match (&check.argv, &check.shell) {
-                (Some(argv), None) => run_argv(&root, argv),
-                (None, Some(shell)) => run_shell(&root, shell),
-                _ => fail(vec![format!("invalid command definition {}", check.id)]),
-            }) {
+            let (body, evidence) = run_configured_check(&root, &check);
+            if !self.record(&name, body, Some(evidence)) {
                 return;
             }
         }
@@ -259,6 +291,7 @@ fn run_inner(opts: GateOpts) -> anyhow::Result<GateOutput> {
                 name: "config".to_string(),
                 pass: false,
                 rc: EXIT_FAIL,
+                evidence: None,
             }],
             text,
         });
@@ -271,6 +304,7 @@ fn run_inner(opts: GateOpts) -> anyhow::Result<GateOutput> {
         name: "config".to_string(),
         pass: true,
         rc: 0,
+        evidence: None,
     });
 
     // Direct gate enforces the same complete package contract as dispatch lint.
@@ -510,51 +544,237 @@ fn confined_path(root: &Path, relative: &str) -> anyhow::Result<PathBuf> {
     Ok(candidate)
 }
 
-fn run_shell(root: &Path, cmd: &str) -> CheckBody {
-    let mut command = Command::new("bash");
-    command
-        .current_dir(root)
-        .args(["-eo", "pipefail", "-c", cmd]);
-    match ops::capture(&mut command) {
-        Ok(out) => {
-            let mut lines = Vec::new();
-            if !out.stdout.trim_end().is_empty() {
-                lines.push(out.stdout.trim_end().to_string());
-            }
-            if !out.stderr.trim_end().is_empty() {
-                lines.push(out.stderr.trim_end().to_string());
-            }
-            if out.status == 0 {
-                Ok(lines)
-            } else {
-                lines.insert(0, format!("command: {cmd}"));
-                Err((lines, out.status))
-            }
+fn run_configured_check(root: &Path, check: &verifycfg::Check) -> (CheckBody, CommandEvidence) {
+    let mut command = match (&check.argv, &check.shell) {
+        (Some(argv), None) => {
+            let mut c = Command::new(&argv[0]);
+            c.current_dir(root).args(&argv[1..]);
+            c
         }
-        Err(err) => Err((vec![format!("command: {cmd}"), err.to_string()], 127)),
+        (None, Some(shell)) => {
+            let mut c = Command::new("bash");
+            c.current_dir(root).args(["-eo", "pipefail", "-c", shell]);
+            c
+        }
+        _ => {
+            return (
+                fail(vec![format!("invalid command definition {}", check.id)]),
+                CommandEvidence {
+                    exit: 127,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    matchers: vec![],
+                },
+            );
+        }
+    };
+    let captured = match ops::capture(&mut command) {
+        Ok(out) => out,
+        Err(err) => {
+            let evidence = CommandEvidence {
+                exit: 127,
+                stdout: String::new(),
+                stderr: crate::redact::scrub(&err.to_string()),
+                matchers: vec![MatcherResult {
+                    kind: "spawn".into(),
+                    expected: "command starts".into(),
+                    actual: "spawn error".into(),
+                    pass: false,
+                }],
+            };
+            return (
+                Err((
+                    vec![format!("command {} failed to start: {err}", check.id)],
+                    127,
+                )),
+                evidence,
+            );
+        }
+    };
+    let evidence = evaluate_expected(root, check, &captured);
+    let mut report = vec![format!("exit={}", evidence.exit)];
+    report.extend(evidence.matchers.iter().map(|m| {
+        format!(
+            "matcher kind={} expected={:?} actual={:?} pass={}",
+            m.kind, m.expected, m.actual, m.pass
+        )
+    }));
+    if !evidence.stdout.is_empty() {
+        report.push(format!("stdout:\n{}", evidence.stdout));
+    }
+    if !evidence.stderr.is_empty() {
+        report.push(format!("stderr:\n{}", evidence.stderr));
+    }
+    let pass = evidence.matchers.iter().all(|m| m.pass);
+    (
+        if pass {
+            Ok(report)
+        } else {
+            // A zero process status can still fail its declared expectation.
+            Err((
+                report,
+                if captured.status == 0 {
+                    1
+                } else {
+                    captured.status
+                },
+            ))
+        },
+        evidence,
+    )
+}
+
+fn evaluate_expected(
+    root: &Path,
+    check: &verifycfg::Check,
+    captured: &ops::Captured,
+) -> CommandEvidence {
+    let expected = &check.expected;
+    let stdout = crate::redact::scrub(&captured.stdout);
+    let stderr = crate::redact::scrub(&captured.stderr);
+    let mut matchers = Vec::new();
+    let want_exit = expected.exit.unwrap_or(0);
+    push_match(
+        &mut matchers,
+        "exit",
+        want_exit.to_string(),
+        captured.status.to_string(),
+        captured.status == want_exit,
+    );
+    stream_matchers(
+        &mut matchers,
+        "stdout",
+        &captured.stdout,
+        &expected.stdout_contains,
+        &expected.stdout_excludes,
+        &expected.stdout_regex,
+        &expected.stdout_occurrences,
+    );
+    stream_matchers(
+        &mut matchers,
+        "stderr",
+        &captured.stderr,
+        &expected.stderr_contains,
+        &expected.stderr_excludes,
+        &expected.stderr_regex,
+        &expected.stderr_occurrences,
+    );
+    for path in &expected.required_artifacts {
+        artifact_match(root, path, true, &mut matchers);
+    }
+    for path in &expected.forbidden_artifacts {
+        artifact_match(root, path, false, &mut matchers);
+    }
+    CommandEvidence {
+        exit: captured.status,
+        stdout,
+        stderr,
+        matchers,
     }
 }
 
-fn run_argv(root: &Path, argv: &[String]) -> CheckBody {
-    let mut command = Command::new(&argv[0]);
-    command.current_dir(root).args(&argv[1..]);
-    match ops::capture(&mut command) {
-        Ok(out) if out.status == 0 => Ok([out.stdout, out.stderr]
-            .into_iter()
-            .filter_map(|s| {
-                let s = s.trim_end().to_string();
-                (!s.is_empty()).then_some(s)
-            })
-            .collect()),
-        Ok(out) => Err((
-            vec![format!("argv: {}", argv.join(" ")), out.stdout, out.stderr],
-            out.status,
-        )),
-        Err(err) => Err((
-            vec![format!("argv: {}", argv.join(" ")), err.to_string()],
-            127,
-        )),
+fn push_match(
+    out: &mut Vec<MatcherResult>,
+    kind: &str,
+    expected: String,
+    actual: String,
+    pass: bool,
+) {
+    out.push(MatcherResult {
+        kind: kind.into(),
+        expected,
+        actual,
+        pass,
+    });
+}
+fn stream_matchers(
+    out: &mut Vec<MatcherResult>,
+    stream: &str,
+    value: &str,
+    contains: &[String],
+    excludes: &[String],
+    regexes: &[String],
+    occurrences: &[verifycfg::Occurrence],
+) {
+    for needle in contains {
+        push_match(
+            out,
+            &format!("{stream}.contains"),
+            needle.clone(),
+            value.contains(needle).to_string(),
+            value.contains(needle),
+        );
     }
+    for needle in excludes {
+        push_match(
+            out,
+            &format!("{stream}.excludes"),
+            needle.clone(),
+            value.contains(needle).to_string(),
+            !value.contains(needle),
+        );
+    }
+    for pattern in regexes {
+        let pass = Regex::new(pattern).is_ok_and(|re| re.is_match(value));
+        push_match(
+            out,
+            &format!("{stream}.regex"),
+            pattern.clone(),
+            pass.to_string(),
+            pass,
+        );
+    }
+    for occurrence in occurrences {
+        let got = value.matches(&occurrence.text).count();
+        push_match(
+            out,
+            &format!("{stream}.occurrences"),
+            format!("{}={}", occurrence.text, occurrence.count),
+            got.to_string(),
+            got == occurrence.count,
+        );
+    }
+}
+fn artifact_match(root: &Path, path: &str, required: bool, out: &mut Vec<MatcherResult>) {
+    let candidate = match confined_path(root, path) {
+        Ok(p) => p,
+        Err(e) => {
+            push_match(
+                out,
+                if required {
+                    "artifact.required"
+                } else {
+                    "artifact.forbidden"
+                },
+                path.into(),
+                format!("unreadable path: {e}"),
+                false,
+            );
+            return;
+        }
+    };
+    let state = match std::fs::metadata(&candidate) {
+        Ok(meta) if meta.is_file() => "file".to_string(),
+        Ok(_) => "not-file".to_string(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => "missing".to_string(),
+        Err(e) => format!("unreadable: {e}"),
+    };
+    let pass = if required {
+        state == "file"
+    } else {
+        state == "missing"
+    };
+    push_match(
+        out,
+        if required {
+            "artifact.required"
+        } else {
+            "artifact.forbidden"
+        },
+        path.into(),
+        state,
+        pass,
+    );
 }
 
 /// Normalize a checklist block: every checkbox becomes `[ ]` (the only token that may differ).
@@ -772,5 +992,78 @@ mod tests {
         let actual = vec!["a".to_string(), "b!".to_string(), "c".to_string()];
         let diff = unified_diff(&expected, &actual);
         assert_eq!(diff, vec!["- b", "+ b!", "+ c"]);
+    }
+
+    fn check(expected: &str) -> verifycfg::Check {
+        verifycfg::VerifyConfig::parse(&format!(
+            "schema = \"verify/v2\"\ntask_id = \"TASK-001\"\nbase_tree = \"0123456789012345678901234567890123456789\"\nwritable_paths = [\"src\"]\n[[checks]]\nid = \"CHK-001\"\nphase = \"gate\"\nargv = [\"true\"]\nexpected = {expected}\n"
+        )).unwrap().checks.remove(0)
+    }
+
+    #[test]
+    fn expected_matchers_fail_independently_and_record_complete_evidence() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("present"), "ok").unwrap();
+        let captured = ops::Captured {
+            status: 0,
+            stdout: "alpha alpha\n".into(),
+            stderr: "beta\n".into(),
+        };
+        let cases = [
+            ("{ exit = 1 }", "exit"),
+            ("{ stdout_contains = [\"missing\"] }", "stdout.contains"),
+            ("{ stderr_contains = [\"missing\"] }", "stderr.contains"),
+            (
+                "{ stdout_occurrences = [{ text = \"alpha\", count = 1 }] }",
+                "stdout.occurrences",
+            ),
+            (
+                "{ required_artifacts = [\"missing\"] }",
+                "artifact.required",
+            ),
+            (
+                "{ forbidden_artifacts = [\"present\"] }",
+                "artifact.forbidden",
+            ),
+        ];
+        for (expected, kind) in cases {
+            let evidence = evaluate_expected(root.path(), &check(expected), &captured);
+            assert!(
+                evidence.matchers.iter().any(|m| m.kind == kind && !m.pass),
+                "{expected:?}: {evidence:?}"
+            );
+            assert_eq!(evidence.exit, 0);
+            assert_eq!(evidence.stdout, "alpha alpha\n");
+            assert_eq!(evidence.stderr, "beta\n");
+        }
+    }
+
+    #[test]
+    fn invalid_matcher_definition_is_rejected_before_execution() {
+        let err = verifycfg::VerifyConfig::parse(
+            "schema = \"verify/v2\"\ntask_id = \"TASK-001\"\nbase_tree = \"0123456789012345678901234567890123456789\"\nwritable_paths = [\"src\"]\n[[checks]]\nid = \"CHK-001\"\nphase = \"gate\"\nargv = [\"true\"]\nexpected = { stdout_regex = [\"(\"] }\n",
+        ).unwrap_err().to_string();
+        assert!(err.contains("invalid regex"), "{err}");
+    }
+
+    #[test]
+    fn configured_command_runs_once_and_mismatch_fails_after_zero_exit() {
+        let root = tempfile::tempdir().unwrap();
+        let check = verifycfg::VerifyConfig::parse(
+            "schema = \"verify/v2\"\ntask_id = \"TASK-001\"\nbase_tree = \"0123456789012345678901234567890123456789\"\nwritable_paths = [\"src\"]\n[[checks]]\nid = \"CHK-001\"\nphase = \"gate\"\nshell = \"printf x >> invoked; printf actual\"\nexpected = { stdout_contains = [\"impossible\"] }\n",
+        ).unwrap().checks.into_iter().next().unwrap();
+        let (body, evidence) = run_configured_check(root.path(), &check);
+        assert!(body.is_err());
+        assert_eq!(
+            std::fs::read_to_string(root.path().join("invoked")).unwrap(),
+            "x"
+        );
+        assert_eq!(evidence.stdout, "actual");
+        assert!(
+            evidence
+                .matchers
+                .iter()
+                .any(|m| m.kind == "stdout.contains" && !m.pass)
+        );
     }
 }

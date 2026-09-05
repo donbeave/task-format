@@ -107,6 +107,11 @@ pub struct GateRecord {
     pub harness_fingerprint: String,
     #[serde(default)]
     pub evidence_sha256: String,
+    /// Digest and location of canonical per-check matcher evidence.
+    #[serde(default)]
+    pub matcher_evidence_sha256: String,
+    #[serde(default)]
+    pub matcher_evidence: String,
     /// Terminal executor state that authorized this gate.
     #[serde(default)]
     pub terminal_state: String,
@@ -130,6 +135,8 @@ impl Default for GateRecord {
             verifier_sha256: String::new(),
             harness_fingerprint: String::new(),
             evidence_sha256: String::new(),
+            matcher_evidence_sha256: String::new(),
+            matcher_evidence: String::new(),
             terminal_state: String::new(),
             started: String::new(),
             log: String::new(),
@@ -146,7 +153,7 @@ impl GateRecord {
     /// A record is promotion evidence only when all identities were written by the immutable
     /// gate. Deserialized v1 records intentionally fail this predicate.
     pub fn promotable(&self) -> bool {
-        self.schema == "gate/v2"
+        self.schema == "gate/v3"
             && self.passed()
             && !self.candidate_tree.is_empty()
             && !self.parent.is_empty()
@@ -154,6 +161,8 @@ impl GateRecord {
             && !self.verifier_sha256.is_empty()
             && !self.harness_fingerprint.is_empty()
             && !self.evidence_sha256.is_empty()
+            && !self.matcher_evidence_sha256.is_empty()
+            && !self.matcher_evidence.is_empty()
             && matches!(
                 self.terminal_state.as_str(),
                 "GOAL_MET" | "IDLE" | "GOAL_CLEARED_ERROR"

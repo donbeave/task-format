@@ -78,6 +78,8 @@ pub fn gate_run(
     let gate_log = out_dir.join("gate.log");
     redact::write_scrubbed(&gate_log, output.text.as_bytes())
         .with_context(|| format!("writing {}", gate_log.display()))?;
+    let matcher_evidence = out_dir.join("gate-evidence.json");
+    let matcher_evidence_sha256 = write_matcher_evidence(&matcher_evidence, &output)?;
 
     let head = crate::ops::git::head(&workspace)?;
     // Re-stage only to observe the complete post-verification tree.  A command which writes
@@ -97,7 +99,7 @@ pub fn gate_run(
     }
     let evidence_sha256 = crate::selfhost::hash::digest_file(&gate_log)?;
     manifest.gate = Some(GateRecord {
-        schema: "gate/v2".to_string(),
+        schema: "gate/v3".to_string(),
         verdict: if immutable && output.is_pass() {
             "pass"
         } else if immutable {
@@ -119,6 +121,8 @@ pub fn gate_run(
         verifier_sha256,
         harness_fingerprint: crate::HARNESS_FINGERPRINT.to_string(),
         evidence_sha256,
+        matcher_evidence_sha256,
+        matcher_evidence: matcher_evidence.display().to_string(),
         terminal_state: manifest.status_state.clone(),
         started,
         log: gate_log.display().to_string(),
@@ -126,4 +130,59 @@ pub fn gate_run(
     });
     manifest.save(run_dir)?;
     Ok(manifest.gate.as_ref().is_some_and(GateRecord::passed))
+}
+
+fn write_matcher_evidence(path: &Path, output: &gate::GateOutput) -> anyhow::Result<String> {
+    let bytes = gate::evidence_json(&output.checks)?;
+    redact::write_scrubbed(path, &bytes).with_context(|| format!("writing {}", path.display()))?;
+    crate::selfhost::hash::digest_file(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn matcher_evidence_is_canonical_and_digestable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("gate-evidence.json");
+        let output = gate::GateOutput {
+            exit: 1,
+            text: String::new(),
+            last_line: "RESULT FAIL".into(),
+            summary: String::new(),
+            log_dir: Path::new("/irrelevant").into(),
+            failed_checks: vec!["CHK-001".into()],
+            checks: vec![gate::CheckResult {
+                name: "CHK-001".into(),
+                pass: false,
+                rc: 1,
+                evidence: Some(gate::CommandEvidence {
+                    exit: 0,
+                    stdout: "out".into(),
+                    stderr: String::new(),
+                    matchers: vec![gate::MatcherResult {
+                        kind: "stdout.contains".into(),
+                        expected: "wanted".into(),
+                        actual: "false".into(),
+                        pass: false,
+                    }],
+                }),
+            }],
+        };
+        let first_digest = write_matcher_evidence(&path, &output).unwrap();
+        let first = std::fs::read(&path).unwrap();
+        let second_digest = write_matcher_evidence(&path, &output).unwrap();
+        assert_eq!(first, std::fs::read(&path).unwrap());
+        assert_eq!(first_digest, second_digest);
+        assert_eq!(
+            first_digest,
+            crate::selfhost::hash::digest_file(&path).unwrap()
+        );
+        assert!(
+            std::str::from_utf8(&first)
+                .unwrap()
+                .contains("gate-evidence/v1")
+        );
+    }
 }

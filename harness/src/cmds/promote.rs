@@ -200,13 +200,15 @@ mod tests {
 
         let (mut manifest, mut gate) = fixture();
         manifest.run_dir = run_dir.display().to_string();
-        gate.schema = "gate/v2".into();
+        gate.schema = "gate/v3".into();
         gate.candidate_tree = tree.clone();
         gate.parent = parent.clone();
         gate.task_sha256 = "task-digest".into();
         gate.verifier_sha256 = "verifier-digest".into();
         gate.harness_fingerprint = "harness-digest".into();
         gate.evidence_sha256 = "evidence-digest".into();
+        gate.matcher_evidence_sha256 = "matcher-evidence-digest".into();
+        gate.matcher_evidence = "/tmp/run/out/gate-evidence.json".into();
         gate.terminal_state = "GOAL_MET".into();
         manifest.gate = Some(gate);
         manifest.save(&run_dir).unwrap();
@@ -266,6 +268,21 @@ mod tests {
             "{error}"
         );
         assert!(Manifest::load(&run_dir).unwrap().result_sha.is_none());
+
+        let mut manifest = Manifest::load(&run_dir).unwrap();
+        manifest.gate.as_mut().unwrap().evidence_sha256 = "evidence-digest".into();
+        manifest
+            .gate
+            .as_mut()
+            .unwrap()
+            .matcher_evidence_sha256
+            .clear();
+        manifest.save(&run_dir).unwrap();
+        let error = promote_fixture(&run_dir).unwrap_err().to_string();
+        assert!(
+            error.contains("not a complete immutable passing record"),
+            "{error}"
+        );
     }
 
     #[test]

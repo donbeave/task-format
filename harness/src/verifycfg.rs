@@ -1,4 +1,5 @@
 //! Strict machine contract (`verify/v2`).
+use regex::Regex;
 use serde::Deserialize;
 use std::collections::BTreeSet;
 use std::path::{Component, Path};
@@ -47,6 +48,39 @@ pub struct Check {
     pub requirements: Vec<String>,
     #[serde(default)]
     pub acceptance: Vec<String>,
+    #[serde(default)]
+    pub expected: Expected,
+}
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Expected {
+    pub exit: Option<i32>,
+    #[serde(default)]
+    pub stdout_contains: Vec<String>,
+    #[serde(default)]
+    pub stdout_excludes: Vec<String>,
+    #[serde(default)]
+    pub stdout_regex: Vec<String>,
+    #[serde(default)]
+    pub stderr_contains: Vec<String>,
+    #[serde(default)]
+    pub stderr_excludes: Vec<String>,
+    #[serde(default)]
+    pub stderr_regex: Vec<String>,
+    #[serde(default)]
+    pub stdout_occurrences: Vec<Occurrence>,
+    #[serde(default)]
+    pub stderr_occurrences: Vec<Occurrence>,
+    #[serde(default)]
+    pub required_artifacts: Vec<String>,
+    #[serde(default)]
+    pub forbidden_artifacts: Vec<String>,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Occurrence {
+    pub text: String,
+    pub count: usize,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -106,6 +140,7 @@ impl VerifyConfig {
             };
             unique_ids("requirements", &c.requirements, "R-")?;
             unique_ids("acceptance", &c.acceptance, "AC-")?;
+            validate_expected(&c.id, &c.expected)?;
             if c.phase == Phase::Gate {
                 gate += 1;
             }
@@ -113,6 +148,40 @@ impl VerifyConfig {
         anyhow::ensure!(gate == 1, "exactly one gate check required");
         Ok(())
     }
+}
+fn validate_expected(id: &str, expected: &Expected) -> anyhow::Result<()> {
+    for (name, patterns) in [
+        ("stdout_regex", &expected.stdout_regex),
+        ("stderr_regex", &expected.stderr_regex),
+    ] {
+        for pattern in patterns {
+            Regex::new(pattern)
+                .map_err(|e| anyhow::anyhow!("{id} {name} invalid regex {pattern:?}: {e}"))?;
+        }
+    }
+    for (name, entries) in [
+        ("stdout_occurrences", &expected.stdout_occurrences),
+        ("stderr_occurrences", &expected.stderr_occurrences),
+    ] {
+        let mut seen = BTreeSet::new();
+        for entry in entries {
+            anyhow::ensure!(
+                !entry.text.is_empty() && seen.insert(&entry.text),
+                "{id} {name} has empty or duplicate text"
+            );
+        }
+    }
+    unique_paths("required_artifacts", &expected.required_artifacts)?;
+    unique_paths("forbidden_artifacts", &expected.forbidden_artifacts)?;
+    let required: BTreeSet<_> = expected.required_artifacts.iter().collect();
+    anyhow::ensure!(
+        expected
+            .forbidden_artifacts
+            .iter()
+            .all(|p| !required.contains(p)),
+        "{id} artifact both required and forbidden"
+    );
+    Ok(())
 }
 fn id(s: &str, p: &str) -> bool {
     s.strip_prefix(p)
