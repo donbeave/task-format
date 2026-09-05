@@ -6,6 +6,7 @@ writable_paths = ["src", "tests"]
 id = "CHK-001"
 phase = "precondition"
 argv = ["<precondition-command>"]
+expected = { exit = 0 }
 requirements = ["R-001"]
 acceptance = ["AC-001"]
 
@@ -13,6 +14,7 @@ acceptance = ["AC-001"]
 id = "CHK-002"
 phase = "focused"
 argv = ["<focused-test-command>"]
+expected = { exit = 0 }
 requirements = ["R-002"]
 acceptance = ["AC-002"]
 
@@ -20,6 +22,7 @@ acceptance = ["AC-002"]
 id = "CHK-003"
 phase = "regression"
 argv = ["<regression-command>"]
+expected = { exit = 0 }
 requirements = ["R-003"]
 acceptance = ["AC-003"]
 
@@ -27,6 +30,7 @@ acceptance = ["AC-003"]
 id = "CHK-004"
 phase = "lint"
 argv = ["<lint-command>"]
+expected = { exit = 0 }
 requirements = ["R-004"]
 acceptance = ["AC-004"]
 
@@ -34,5 +38,6 @@ acceptance = ["AC-004"]
 id = "CHK-005"
 phase = "gate"
 argv = ["taskfmt", "verify"]
+expected = { exit = 0 }
 requirements = ["R-005"]
 acceptance = ["AC-005"]

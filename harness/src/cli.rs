@@ -128,6 +128,22 @@ pub enum Command {
         keep: bool,
     },
 
+    /// Run a non-promoting, immutable-base format study and write one observation per assignment.
+    Study {
+        /// study/v1 TOML schema.
+        #[arg(long)]
+        config: PathBuf,
+        /// Git repository containing the candidate tree.
+        #[arg(long)]
+        root: PathBuf,
+        /// Trusted task package containing verify.toml.
+        #[arg(long)]
+        task_dir: PathBuf,
+        /// NDJSON observation record output.
+        #[arg(long)]
+        out: PathBuf,
+    },
+
     /// Build the harness container images.
     BuildImages {
         /// Which agent image to layer on harness-base.

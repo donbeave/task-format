@@ -18,6 +18,7 @@ pub mod selfcheck;
 pub mod selfhost;
 pub mod selftest;
 pub mod status;
+pub mod study;
 pub mod verify;
 
 use std::path::{Path, PathBuf};
@@ -241,6 +242,12 @@ pub fn dispatch(cli: &Cli) -> anyhow::Result<i32> {
             reference,
             keep,
         } => selfcheck::run(task, workspace, base.clone(), reference.as_deref(), *keep),
+        Command::Study {
+            config,
+            root,
+            task_dir,
+            out,
+        } => study::run(config, root, task_dir, out),
         Command::BuildImages { agent, no_cache } => {
             build_images::run(&ctx, (*agent).into(), *no_cache)
         }

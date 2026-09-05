@@ -16,7 +16,7 @@ The executable harness lives in [`../harness/`](../harness/README.md). This dire
 
 Each package contains the task contract (`README.md`), fixed decisions (`decisions.md`), gate configuration (`verify.toml`), and planner-owned verification material (`trusted/`). The task contract, decisions, and gate configuration are mounted read-only for the agent. The harness adds the standard task protocol from [`reference/task-template/`](../reference/task-template/) when a package does not carry it.
 
-Before an agent starts, the harness creates a fresh clone of the experiment repository's `main` branch, overlays that task's `trusted/` material, and commits the overlay as the run's base commit. The agent works only in that clone. `expected_paths` and `allowed_globs` restrict what it may change, so trusted tests and support files remain outside its scope. A passing run can be promoted to `main`; a failed run is never promoted.
+Before an agent starts, the harness creates a fresh clone of the experiment repository's `main` branch, overlays that task's `trusted/` material, and commits the overlay as the run's base commit. The agent works only in that clone. `verify.toml`'s `writable_paths` restrict what it may change, so trusted tests and support files remain outside its scope. A passing frozen candidate can be promoted to `main`; a failed or mutated candidate is never promoted.
 
 The series starts from an empty repository. TASK-001 creates the Rust workspace, and later tasks build `pgtui` one gated slice at a time. No task relies on fixture-supplied application code.
 

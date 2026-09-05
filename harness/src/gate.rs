@@ -358,7 +358,7 @@ fn run_inner(opts: GateOpts) -> anyhow::Result<GateOutput> {
     Ok(session.finish())
 }
 
-/// `--base` > `TASKFMT_BASE` > exact verifier base tree.
+/// `--base` > `TASKFMT_BASE` > an optional immutable standalone verifier base.
 pub fn resolve_base(
     explicit: &Option<String>,
     cfg: &verifycfg::VerifyConfig,

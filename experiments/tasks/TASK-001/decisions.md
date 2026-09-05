@@ -9,7 +9,7 @@ In force for TASK-001: D-001..D-005 (workspace, pins, layout, lint, no task runn
 - **D-001 Workspace and exact pins.** Cargo workspace, `edition = "2024"`, `resolver = "3"`, single member `crates/pgtui` (lib + bins `pgtui`, `gallery`). The workspace `Cargo.toml` owns `[workspace.dependencies]` and `[workspace.lints.rust] unsafe_code = "forbid"`; the member manifest uses `workspace = true` for every runtime dependency. Executors never add, remove, or bump a dependency. Exact pins, all with `=`:
   runtime: `ratatui 0.30.2`, `crossterm 0.29.0`, `turso 0.7.2` (`default-features = false`), `tokio 1.53.1` (features `rt`, `macros`, `time`, `sync`), `tokio-postgres 0.7.18`, `clap 4.6.6` (feature `derive`), `thiserror 2.0.20`, `directories 6.0.0`, `resvg 0.48.1` (used only by the planner-shipped `render.rs`);
   dev: `tempfile 3.27.0`, `testcontainers 0.27.3`, `testcontainers-modules 0.15.0` (feature `postgres`), `nix 0.30.1` (feature `term`).
-  `Cargo.lock` is committed and stays in sync. There is no `insta` and no `assert_cmd`: verification material asserts behaviour, never snapshots (D-071). `crates/pgtui/src/render.rs`, `crates/pgtui/src/fonts/` and everything under `crates/pgtui/tests/` are placed on the run base commit by the harness (trusted overlay, D-070); they are not created by this task, are outside the scope whitelist (D-003), and the manifests must still compile them.
+  `Cargo.lock` is committed and stays in sync. There is no `insta` and no `assert_cmd`: verification material asserts behaviour, never snapshots (D-071). `crates/pgtui/src/render.rs`, `crates/pgtui/src/fonts/` and everything under `crates/pgtui/tests/` are placed on the run base commit by the harness (trusted overlay, D-070); they are not created by this task, are outside `verify.toml`'s writable paths (D-003), and the manifests must still compile them.
 
 - **D-002 Module layout** (final shape; modules arrive with their task and may be empty stubs until then):
 
@@ -31,9 +31,9 @@ In force for TASK-001: D-001..D-005 (workspace, pins, layout, lint, no task runn
   crates/pgtui/src/bin/gallery.rs   gallery binary (D-080), declared in the manifest from TASK-001
   ```
 
-  `render.rs` and `fonts/` are never created, edited, or deleted by the executor; they ship with the trusted overlay and are excluded from the scope whitelist.
+  `render.rs` and `fonts/` are never created, edited, or deleted by the executor; they ship with the trusted overlay and are excluded from `verify.toml`'s writable paths.
 
-- **D-003 Test placement and trusted material.** Trusted tests (planner-shipped) live in `crates/pgtui/tests/*_test.rs` with `crates/pgtui/tests/support/mod.rs` and `crates/pgtui/tests/fixtures/seed.sql`; they are protected, are outside `expected_paths`/`allowed_globs`, and must not be created, edited, or deleted. Executor-written tests are `#[cfg(test)] mod tests` inside the `src/` module they test; no executor-written file goes under `tests/`.
+- **D-003 Test placement and trusted material.** Trusted tests (planner-shipped) live in `crates/pgtui/tests/*_test.rs` with `crates/pgtui/tests/support/mod.rs` and `crates/pgtui/tests/fixtures/seed.sql`; they are protected, are outside `verify.toml`'s writable paths, and must not be created, edited, or deleted. Executor-written tests are `#[cfg(test)] mod tests` inside the `src/` module they test; no executor-written file goes under `tests/`.
 
 - **D-004 Toolchain and lint gate.** `rust-toolchain.toml` pins `1.98.0`; `rustfmt.toml` sets `edition = "2024"`; `.cargo/config.toml` sets `TESTCONTAINERS_COMMAND = "remove"`; `.gitignore` lists `target/`. Gate lint: `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D warnings`. Forbidden in `crates/pgtui/src/`: `#![allow(...)]`, `#[allow(clippy::...)]`, `#[allow(dead_code)]`, `#[allow(unused)]`, `todo!()`, `unimplemented!()`, `dbg!()`. Forbidden in `crates/pgtui/tests/`: `#[ignore]`.
 

@@ -19,6 +19,7 @@ pub mod selection;
 pub mod selfcheck;
 pub mod selfhost;
 pub mod selftest;
+pub mod study;
 pub mod taskfile;
 pub mod verifycfg;
 

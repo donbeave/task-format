@@ -8,7 +8,7 @@
 
 An AI coding agent turns prose into edits, checks, and a completion claim. If scope, decisions, or proof are unclear, it can drift into unrelated work or report success without solving the problem. Faster agents make this ambiguity more expensive, not less.
 
-This project treats task writing as an engineering variable. It gives an agent one explicit contract, isolates the run, and checks the result outside the agent's control.
+This project treats task writing as an engineering variable. It gives an agent one explicit contract and checks the result at a caller-provided execution boundary.
 
 ## What this project is—and is not
 
@@ -32,12 +32,12 @@ The package is read-only during a run. Progress is derived state stored outside 
 
 The harness protects the experiment in layers:
 
-1. A fresh clone, container, and agent session prevent previous state from contaminating a run.
-2. A recorded baseline anchors scope checks to a known commit.
-3. Trusted verification material is overlaid before execution and kept outside the agent's allowed paths.
-4. `taskfmt verify` checks the task's declared commands, progress, and scope.
-5. The host repeats the gate after the agent stops. The host verdict, not the agent's report, decides success.
-6. Host gating and promotion remain disabled until secure `run/v1` records bind isolated verification to an immutable tree.
+1. A fresh workspace and agent session prevent previous state from contaminating a run.
+2. A recorded baseline anchors scope checks to a known Git tree.
+3. Trusted verification material is overlaid before execution and kept outside `verify.toml`'s writable paths.
+4. `taskfmt verify` executes the declared checks, expected matchers, progress validation, and scope check.
+5. The host freezes one complete candidate tree, gates that exact tree, and records its evidence.
+6. Promotion creates and pushes a commit directly from the recorded tree with an expected-parent lease. The host verdict, not the agent's report, decides success.
 
 ## Operating a run
 
@@ -47,7 +47,7 @@ Use this sequence:
 2. `taskfmt selfcheck TASK-001 <workspace>`
 3. `taskfmt run --task TASK-001 --repo <repository-url> --agent codex-default`
 4. `taskfmt status <run-id> --wait` or `taskfmt attach <run-id>`
-5. Inspect the run record. Host `gate` and `promote` currently fail closed pending the secure boundary.
+5. Run `taskfmt gate <run-id>`, inspect its record, then use `taskfmt promote <run-id>` only for a passing gate.
 
 Use `taskfmt experiment --tasks 1-3 --repo <repository-url>` for an ordered series. See [harness/README.md](harness/README.md) for setup, flags, safety, configuration, and development checks.
 
@@ -95,7 +95,7 @@ No completed ablation matrix yet proves that one wording or checklist style prod
 
 When documents disagree, use this order: harness code and `experiment.toml`, then the task template and live experiment packages, then this documentation. Documentation explains behavior; it does not override executable rules.
 
-Do not alter task-package structure, task metadata, trusted verification, or fixtures while changing explanatory documentation. A task may change only its declared `expected_paths` and matching `allowed_globs`.
+Do not alter task-package structure, task metadata, trusted verification, or fixtures while changing explanatory documentation. A task may change only paths declared by `verify.toml`'s `writable_paths`.
 
 ## License
 

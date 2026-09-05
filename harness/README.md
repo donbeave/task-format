@@ -1,8 +1,8 @@
 # Harness
 
-`taskfmt` runs one bounded coding task in an isolated container. Host gating and promotion are temporarily disabled until verification uses an isolated immutable candidate.
+`taskfmt` runs one bounded coding task in the caller-provided execution boundary. It gates a frozen candidate tree and can promote that exact tree.
 
-AI agents can change a repository quickly. Task dispatch and in-container verification remain available. Do not treat legacy run records as secure promotion evidence.
+AI agents can change a repository quickly. A run record is promotion evidence only after a passing host gate has recorded an immutable candidate tree, its expected parent, and verifier evidence.
 
 The Rust crate and `taskfmt` binary live in this directory. Repository-level settings live in [`experiment.toml`](../experiment.toml).
 
@@ -15,7 +15,8 @@ For each task, `taskfmt`:
 3. Adds planner-owned trusted verification material to that workspace.
 4. Starts one headed agent container with a writable `/work` workspace and read-only task instructions.
 5. Records run state under `experiments/runs/`.
-6. Stops before host gating or promotion. Those operations require the pending secure `run/v1` boundary.
+6. Stops the executor, stages one complete candidate tree, and runs the host gate against that tree.
+7. Records gate evidence, tree, and expected parent; `promote` creates and pushes only that recorded tree with an expected-parent lease.
 
 The harness supports Claude and Codex agent profiles. Images are built from [`images/`](images/); profile, runtime, repository, and path settings belong in [`experiment.toml`](../experiment.toml).
 
@@ -24,8 +25,8 @@ The harness supports Claude and Codex agent profiles. Images are built from [`im
 - **Task package** — planner-owned instructions and verifier inputs. Start from the [task template](../reference/task-template/README.md); configured packages are under [`experiments/tasks/`](../experiments/tasks/).
 - **Trusted material** — tests, fixtures, support code, or other verifier inputs supplied by the planner. It is added to the run workspace before the agent starts and is outside the agent's allowed output paths.
 - **Run** — one task, one fresh container, one recorded workspace. Its record is `experiments/runs/<id>/manifest.json`.
-- **Gate** — `taskfmt verify` runs inside the task container. Legacy host gate records are inspectable but cannot be created or promoted securely.
-- **Promotion** — disabled until a record binds an immutable tree, trusted Git metadata, isolated verifier evidence, and expected remote parent.
+- **Gate** — `taskfmt verify` runs against the frozen candidate at the caller-provided boundary. Its record includes the candidate tree, parent, verifier evidence, and verdict.
+- **Promotion** — creates a commit from the recorded passing tree and parent, then pushes it with an expected-parent lease. It refuses failed, incomplete, changed, or stale-parent records.
 
 Task-package Markdown, the launch prompt, and bundled task fixtures are executable inputs. Do not casually rewrite them while changing operator documentation.
 
@@ -44,7 +45,8 @@ Run one task against an existing repository:
 taskfmt lint TASK-001
 taskfmt run --task TASK-001 --repo <repository-url> --agent codex-default
 taskfmt status <run-id> --wait
-# Host gate and promotion are disabled pending secure run/v1 records.
+taskfmt gate <run-id>
+taskfmt promote <run-id>
 ```
 
 Without `--repo`, `taskfmt run` can create a disposable private experiment repository. To run a selected series, use the complete loop:
@@ -61,7 +63,7 @@ Commands that change state or spend substantial resources ask for confirmation. 
 taskfmt ps
 taskfmt status <run-id>
 taskfmt attach <run-id>
-# Host gate is disabled pending isolated immutable verification.
+taskfmt gate <run-id>
 ```
 
 `attach` reconnects to the agent TUI; detach with `ctrl+b q`, not `ctrl+c`. A `<run-id>` may also be the container name, run directory, or that run's `manifest.json` path. `taskfmt ps` works without a manifest and is the quickest way to find local runs.
@@ -70,7 +72,7 @@ taskfmt attach <run-id>
 
 `taskfmt lint` checks task-package structure before a run. `taskfmt progress-init` creates the agent's uncommitted progress file from the package README.
 
-`taskfmt verify` runs commands declared by the package's `verify.toml`, checks the allowed change scope, and checks progress unless disabled explicitly. `taskfmt gate` and `taskfmt promote` fail closed because legacy runs expose executor-controlled code and Git metadata to host processes.
+`taskfmt verify` runs ordered checks declared by the package's `verify.toml`, evaluates their executable expected results, checks `writable_paths`, and checks progress unless disabled explicitly. `taskfmt gate` freezes and verifies one candidate tree; `taskfmt promote` refuses anything except its recorded passing result.
 
 Use `--selfcheck` with `run` or `experiment` to test a task gate before dispatch. `taskfmt selfcheck` requires the untouched base to fail relevant focused checks; with a reference solution, it also requires the gate to pass. Selfcheck is opt-in because it uses the task's host toolchain; dispatch refuses both a failing result and a no-verdict result.
 
@@ -96,8 +98,8 @@ taskfmt selfcheck <TASK> <WORKSPACE> prove gate distinguishes base from solution
 taskfmt run --task <TASK>             dispatch one containerized task
 taskfmt status <RUN> [--wait]         inspect or wait for a run
 taskfmt attach <RUN>                  reconnect to agent TUI
-taskfmt gate <RUN>                    disabled pending secure run/v1 records
-taskfmt promote <RUN>                 disabled pending secure run/v1 records
+taskfmt gate <RUN>                    gate one frozen candidate tree
+taskfmt promote <RUN>                 push the recorded passing tree
 taskfmt experiment [FLAGS]            run selected tasks in order
 taskfmt ps [--json]                  list local run containers
 taskfmt build-images [--agent ...]   build harness images
