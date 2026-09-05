@@ -52,17 +52,72 @@ The harness protects the experiment in layers:
 5. The host freezes one complete candidate tree, gates that exact tree, and records its evidence.
 6. Promotion creates and pushes a commit directly from the recorded tree with an expected-parent lease. The host verdict, not the agent's report, decides success.
 
-## Operating a run
+## Running experiments
 
-Use this sequence:
+Run commands from the repository root. Docker must be running, and the agent credentials
+referenced by `experiment.toml` must be available.
 
-1. `taskfmt lint TASK-001`
-2. `taskfmt selfcheck TASK-001 <workspace>`
-3. `taskfmt run --task TASK-001 --repo <repository-url> --agent codex-default`
-4. `taskfmt status <run-id> --wait` or `taskfmt attach <run-id>`
-5. Run `taskfmt gate <run-id>`, inspect its record, then use `taskfmt promote <run-id>` only for a passing gate.
+### First-time setup
 
-Use `taskfmt experiment --tasks 1-3 --repo <repository-url>` for an ordered series. See [harness/README.md](harness/README.md) for setup, flags, safety, configuration, and development checks.
+Install the host binary, preload the pinned PostgreSQL prerequisite image, and build the agent
+image you plan to use:
+
+```sh
+cargo install --path harness --locked
+taskfmt preload --auto
+taskfmt build-images --agent codex --auto
+```
+
+Use `--agent claude` for a Claude profile or `--agent all` to build both agent images. You do not
+need to run `docker build` directly. Re-run `build-images` after changing harness Rust code so the
+binary on the host and the binary inside the image match.
+
+### Run one task
+
+Lint the task, then dispatch it to a fresh container:
+
+```sh
+taskfmt lint TASK-001
+taskfmt run --task TASK-001 --repo <repository-url> --agent codex-default --wait
+```
+
+Without `--repo`, `taskfmt run` creates a disposable private repository after confirmation. Omit
+`--wait` to return immediately; follow the run with `taskfmt status <run-id> --wait`, then inspect
+and gate it:
+
+```sh
+taskfmt gate <run-id>
+taskfmt promote <run-id>  # only after a passing gate
+```
+
+`taskfmt selfcheck TASK-001 <workspace>` is an optional pre-dispatch check that proves the task
+gate distinguishes the untouched base from a reference solution.
+
+### Run an ordered experiment series
+
+`experiment` runs the repository lifecycle and, for each selected task, performs dispatch, gating,
+and promotion in order. It stops on the first failure or blocked task:
+
+```sh
+taskfmt experiment \
+  --tasks 1-3 \
+  --repo <repository-url> \
+  --agent codex-default \
+  --auto
+```
+
+Omit `--repo` to create a disposable experiment repository. Use `--tasks all` or selections such
+as `1-3,5` and `TASK-002..TASK-004`. Resume an interrupted series with its experiment ID:
+
+```sh
+taskfmt experiment --resume <experiment-id> --agent codex-default --auto
+```
+
+Use `taskfmt ps`, `taskfmt status <run-id>`, or `taskfmt attach <run-id>` to inspect a live or
+completed run. Run records and evidence are stored under `experiments/runs/`.
+
+See [harness/README.md](harness/README.md) for complete flags, safety rules, configuration, and
+development checks.
 
 ## Research question and method
 
