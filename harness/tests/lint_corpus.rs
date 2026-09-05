@@ -131,7 +131,7 @@ fn typed_example_package_passes_clean() {
 }
 
 #[test]
-fn canonical_corpus_uses_one_evidence_form() {
+fn canonical_corpus_uses_one_acceptance_layout() {
     let root = repo_root();
     let mut readmes = vec![
         root.join("reference/task-template/README.md"),
@@ -140,25 +140,22 @@ fn canonical_corpus_uses_one_evidence_form() {
     readmes
         .extend((1..=7).map(|id| root.join(format!("experiments/tasks/TASK-{id:03}/README.md"))));
 
-    let mut evidence_count = 0;
+    let mut criterion_count = 0;
     for readme in readmes {
         let text = std::fs::read_to_string(&readme).unwrap();
-        let lines: Vec<&str> = text.lines().collect();
-        for (index, line) in lines.iter().enumerate() {
-            if *line != "Evidence:" {
-                continue;
-            }
-            evidence_count += 1;
-            assert_eq!(
-                lines.get(index + 1),
-                Some(&"```sh"),
-                "{}:{} Evidence must use immediate ```sh fence",
-                readme.display(),
-                index + 1
-            );
-        }
+        assert!(!text.contains("\nClass:"), "{}", readme.display());
+        assert!(!text.contains("\nType:"), "{}", readme.display());
+        assert!(!text.contains("\nCovers:"), "{}", readme.display());
+        assert!(!text.contains("\nEvidence:"), "{}", readme.display());
+        let task = TaskFile::parse(text, &readme).unwrap();
+        assert!(
+            task.typed_acceptance.errors.is_empty(),
+            "{}",
+            readme.display()
+        );
+        criterion_count += task.typed_acceptance.criteria.len();
     }
-    assert_eq!(evidence_count, 63);
+    assert_eq!(criterion_count, 63);
 }
 
 #[test]
@@ -376,7 +373,11 @@ fn c3_every_requirement_is_cited() {
 
     // R-003 is cited only by AC-001
     let uncited = mutate(
-        &mutate(&text, "Covers: R-001, R-003", "Covers: R-001"),
+        &mutate(
+            &text,
+            "- **Covers:** `R-001, R-003`",
+            "- **Covers:** `R-001`",
+        ),
         "(`R-001`, `R-003`)",
         "(`R-001`)",
     );
@@ -878,8 +879,8 @@ fn c9_tolerates_a_narrower_or_broader_filter_on_the_ac_001_suite() {
     // `--test` subset of a multi-target AC-001 (tokens shuffled)
     let multi = text
         .replacen(
-            "Covers: R-001, R-003\nEvidence:\n```sh\ncargo test -p auth expired_refresh_token\n```",
-            "Covers: R-001, R-003\nEvidence:\n```sh\ncargo test -p auth --test expiry --test rotation\n```",
+            "- **Expected:** exit 0, `1 passed`; response is 401 and session state is unchanged\n\n```sh\ncargo test -p auth expired_refresh_token\n```",
+            "- **Expected:** exit 0, `1 passed`; response is 401 and session state is unchanged\n\n```sh\ncargo test -p auth --test expiry --test rotation\n```",
             1,
         )
         .replacen(BASELINE_BLOCK, "Baseline (run from repo root, before any edit):\n\n```sh\ncargo test --test expiry --package auth\n```", 1);
@@ -913,8 +914,8 @@ fn c9_baseline_matching_a_gate_suite_is_not_a_warning() {
     // regression command
     let regression = mutate(
         &replace_baseline(&text, "cargo test --package auth"),
-        "Covers: R-001, R-003\nEvidence:\n```sh\ncargo test -p auth expired_refresh_token\n```",
-        "Covers: R-001, R-003\nEvidence:\n```sh\ncargo build -p auth --all-targets\n```",
+        "- **Expected:** exit 0, `1 passed`; response is 401 and session state is unchanged\n\n```sh\ncargo test -p auth expired_refresh_token\n```",
+        "- **Expected:** exit 0, `1 passed`; response is 401 and session state is unchanged\n\n```sh\ncargo build -p auth --all-targets\n```",
     );
     let findings = lint_text(&regression, &readme);
     assert!(

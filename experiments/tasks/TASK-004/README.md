@@ -90,90 +90,101 @@ Canonical typed acceptance blocks use taskfmt's Markdown profile. They are task 
 Cucumber feature files and have no runtime step definitions.
 
 ### AC-001 — Seed tables are listed in order
-Type: scenario
-Class: delta
-Covers: R-001, R-002, R-003, R-004
-Evidence:
-```sh
-cargo test -p pgtui --test pg_connect_test
-```
-Expected: exit 0, `4 passed`
-
 ```gherkin
 Given a seeded postgres:16-alpine container
 When PgSession connects and lists tables
 Then the four seed tables are returned in schema order through the decided query path
 ```
 
-### AC-002 — Connection failures map to decided errors
-Type: scenario
-Class: failure
-Covers: R-003
-Evidence:
+**Verification**
+
+- **Type:** scenario
+- **Covers:** `R-001, R-002, R-003, R-004`
+- **Expected:** exit 0, `4 passed`
+
 ```sh
 cargo test -p pgtui --test pg_connect_test
 ```
-Expected: exit 0, `4 passed`
 
+### AC-002 — Connection failures map to decided errors
 ```gherkin
 Given a refused port or an invalid database password
 When PgSession attempts to connect
 Then the corresponding decided error is returned without terminating the list flow
 ```
 
-### AC-003 — Runtime connection returns tables
-Type: scenario
-Class: delta
-Covers: R-003
-Evidence:
-```sh
-cargo test -p pgtui --test pg_runtime_connect_test
-```
-Expected: exit 0, `1 passed`
+**Verification**
 
+- **Type:** scenario
+- **Covers:** `R-003`
+- **Expected:** exit 0, `4 passed`
+
+```sh
+cargo test -p pgtui --test pg_connect_test
+```
+
+### AC-003 — Runtime connection returns tables
 ```gherkin
 Given a live database session
 When Effect::Connect is executed
 Then runtime replies with Msg::Connected(Ok(tables)) containing the listed tables
 ```
 
-### AC-004 — Browser transitions and navigation behave
-Type: scenario
-Class: delta
-Covers: R-005
-Evidence:
-```sh
-cargo test -p pgtui --test app_browser_test
-```
-Expected: exit 0, `6 passed`
+**Verification**
 
+- **Type:** scenario
+- **Covers:** `R-003`
+- **Expected:** exit 0, `1 passed`
+
+```sh
+cargo test -p pgtui --test pg_runtime_connect_test
+```
+
+### AC-004 — Browser transitions and navigation behave
 ```gherkin
 Given the connection list receives a successful or failed connection result
 When browser keys and connection effects are applied
 Then success enters the browser, failure stays on the list, and sidebar cursors clamp
 ```
 
-### AC-005 — Browser rendering follows D-060
-Type: scenario
-Class: delta
-Covers: R-005
-Evidence:
-```sh
-cargo test -p pgtui --test screen_browser_test
-```
-Expected: exit 0, `2 passed`
+**Verification**
 
+- **Type:** scenario
+- **Covers:** `R-005`
+- **Expected:** exit 0, `6 passed`
+
+```sh
+cargo test -p pgtui --test app_browser_test
+```
+
+### AC-005 — Browser rendering follows D-060
 ```gherkin
 Given a connected App with table rows
 When the 100x30 browser buffer is rendered
 Then schema.name rows, the selected marker, and the focused-pane marker appear as decided
 ```
 
+**Verification**
+
+- **Type:** scenario
+- **Covers:** `R-005`
+- **Expected:** exit 0, `2 passed`
+
+```sh
+cargo test -p pgtui --test screen_browser_test
+```
+
 ### AC-006 — Earlier trusted behavior remains green
-Type: invariant
-Class: regression
-Covers: R-001, R-002, R-003, R-004, R-005
-Evidence:
+```gherkin
+The complete trusted suite for the task remains green.
+```
+
+**Verification**
+
+- **Type:** invariant
+- **Covers:** `R-001, R-002, R-003, R-004, R-005`
+- **Expected:** exit 0, 12 `test result: ok.` lines (one per target), no `FAILED`
+
 ```sh
 cargo test -p pgtui \
   --test store_test \
@@ -189,19 +200,16 @@ cargo test -p pgtui \
   --test screen_browser_test \
   --test skeleton_test -- --skip pgtui_stub_exits_2
 ```
-Expected: exit 0, 12 `test result: ok.` lines (one per target), no `FAILED`
-
-```gherkin
-The complete trusted suite for the task remains green.
-```
 
 ### AC-007 — Completion gate passes
-Type: gate
-Evidence:
+**Verification**
+
+- **Type:** gate
+- **Expected:** exit 0, last line `DONE`
+
 ```sh
 taskfmt verify
 ```
-Expected: exit 0, last line `DONE`
 
 ## Fixed decisions
 

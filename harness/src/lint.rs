@@ -24,8 +24,9 @@
 //!   narrower/broader filter or `--test` subset tolerated — or match a verify.toml `[focused]` /
 //!   `[regression]` command by target set (warning). Other kinds skip the comparison.
 //! - `preconditions` every P-NNN line carries a backticked command
-//! - `acceptance`    every typed AC-NNN block has one fenced `sh` evidence command and an expected
-//!   result; every legacy AC-NNN row has an evidence command and an expected result; each AC
+//! - `acceptance`    every typed AC-NNN block has behavior first, bulleted verification metadata,
+//!   and one fenced `sh` command; every legacy AC-NNN row has an evidence command and an expected
+//!   result; each AC
 //!   command is run by verify.toml (warning): the gate command itself is exempt (the gate cannot
 //!   list itself); `cargo test` commands match a `[focused]`/`[regression]`/`[lint]` command by
 //!   parsed target set — package, `--test`/`--bin`/`--example`/`--bench` targets, positional

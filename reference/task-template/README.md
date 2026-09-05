@@ -73,71 +73,74 @@ Out of scope:
 
 ## Acceptance criteria
 
-Canonical typed acceptance blocks use taskfmt's Markdown profile. Each non-gate block has
-`Type`, `Class`, `Covers`, `Evidence`, and `Expected` metadata plus one exact `gherkin` fence.
-`Covers` names real `R-*` requirements. `Evidence` is always one exact command in a fenced `sh`
-block. Keep a short command on one line. Break long shell chains after `&&` so each assertion is
-visible. Wrap long argument lists with shell continuations and one logical argument per line.
-`Expected` is the exact passing result. A gate has no `Class`, `Covers`,
-or Gherkin body. These blocks are task metadata, not Cucumber feature files and have no runtime
-step definitions.
+Canonical typed acceptance blocks use taskfmt's Markdown profile. Behavior comes first in one
+exact `gherkin` fence. A `Verification` section follows with `Type`, `Covers`, and `Expected`
+bullets, then one exact command in a fenced `sh` block. Keep a short command on one line. Break
+long shell chains after `&&`. Wrap long argument lists with shell continuations and one logical
+argument per line. A gate has no `Covers` or Gherkin body. These blocks are task metadata, not
+Cucumber feature files and have no runtime step definitions.
 
 ### AC-001 — <primary success scenario>
-Type: scenario
-Class: delta
-Covers: R-001
-Evidence:
-```sh
-<focused command>
-```
-Expected: <exit 0 / output>
-
 ```gherkin
 Given the starting state described by the task
 When the primary action occurs
 Then the required observable outcome is true
 ```
 
-### AC-002 — <important edge or failure scenario>
-Type: scenario
-Class: failure
-Covers: R-002
-Evidence:
-```sh
-<focused command part one> &&
-<focused command part two>
-```
-Expected: <expected result>
+**Verification**
 
+- **Type:** scenario
+- **Covers:** `R-001`
+- **Expected:** <exit 0 / output>
+
+```sh
+<focused command>
+```
+
+### AC-002 — <important edge or failure scenario>
 ```gherkin
 Given the edge or failure state described by the task
 When the action is applied
 Then the required error or preserved invariant is observable
 ```
 
-### AC-003 — <non-regression or removal scenario>
-Type: invariant
-Class: regression
-Covers: R-003
-Evidence:
-```sh
-! <grep command>
-```
-Expected: exit 0, no output
+**Verification**
 
+- **Type:** scenario
+- **Covers:** `R-002`
+- **Expected:** <expected result>
+
+```sh
+<focused command part one> &&
+<focused command part two>
+```
+
+### AC-003 — <non-regression or removal scenario>
 ```gherkin
 Given an existing supported behavior or superseded path
 When the changed path is exercised
 Then the required behavior is preserved or the old path is absent
 ```
 
+**Verification**
+
+- **Type:** invariant
+- **Covers:** `R-003`
+- **Expected:** exit 0, no output
+
+```sh
+! <grep command>
+```
+
 ### AC-004 — Completion gate passes
-Type: gate
-Evidence:
+**Verification**
+
+- **Type:** gate
+- **Expected:** exit 0, last line `DONE`
+
 ```sh
 taskfmt verify
 ```
-Expected: exit 0, last line `DONE`
 
 ## Fixed decisions
 

@@ -91,26 +91,35 @@ Canonical typed acceptance blocks use taskfmt's Markdown profile. The blocks are
 Cucumber feature files and have no runtime step definitions.
 
 ### AC-001 — Workspace builds
-Type: scenario
-Class: delta
-Covers: R-001
-Evidence:
-```sh
-cargo build --workspace --all-targets
-```
-Expected: exit 0
-
 ```gherkin
 Given the repository starts with the trusted scaffold
 When the workspace is built with every target
 Then the workspace compiles successfully
 ```
 
+**Verification**
+
+- **Type:** scenario
+- **Covers:** `R-001`
+- **Expected:** exit 0
+
+```sh
+cargo build --workspace --all-targets
+```
+
 ### AC-002 — Dependency pins are exact
-Type: invariant
-Class: policy
-Covers: R-001
-Evidence:
+```gherkin
+Given the workspace manifest
+When its dependency declarations are inspected
+Then every D-001 dependency uses its exact pinned version
+```
+
+**Verification**
+
+- **Type:** invariant
+- **Covers:** `R-001`
+- **Expected:** exit 0
+
 ```sh
 grep -qE '^ratatui = "=0\.30\.2"' Cargo.toml &&
 grep -qE '^crossterm = "=0\.29\.0"' Cargo.toml &&
@@ -126,86 +135,85 @@ grep -qE '^testcontainers = "=0\.27\.3"' Cargo.toml &&
 grep -qE '^testcontainers-modules = \{ version = "=0\.15\.0"' Cargo.toml &&
 grep -qE '^nix = \{ version = "=0\.30\.1"' Cargo.toml
 ```
-Expected: exit 0
-
-```gherkin
-Given the workspace manifest
-When its dependency declarations are inspected
-Then every D-001 dependency uses its exact pinned version
-```
 
 ### AC-003 — Toolchain metadata is configured
-Type: invariant
-Class: policy
-Covers: R-003
-Evidence:
+```gherkin
+The channel, rustfmt edition, container environment, and ignore list match D-001.
+```
+
+**Verification**
+
+- **Type:** invariant
+- **Covers:** `R-003`
+- **Expected:** exit 0
+
 ```sh
 grep -q '1.98.0' rust-toolchain.toml &&
 grep -q 'edition = "2024"' rustfmt.toml &&
 grep -q 'TESTCONTAINERS_COMMAND' .cargo/config.toml &&
 grep -q 'target/' .gitignore
 ```
-Expected: exit 0
-
-```gherkin
-The channel, rustfmt edition, container environment, and ignore list match D-001.
-```
 
 ### AC-004 — The pgtui stub has its exit contract
-Type: scenario
-Class: delta
-Covers: R-005
-Evidence:
-```sh
-cargo test -p pgtui --test skeleton_test -- stub
-```
-Expected: exit 0, `2 passed`
-
 ```gherkin
 Given the pgtui binary before later application tasks land
 When its stub test runs
 Then pgtui explains that it is not implemented on stderr and returns exit code 2
 ```
 
-### AC-005 — The gallery stub has its exit contract
-Type: scenario
-Class: delta
-Covers: R-005
-Evidence:
+**Verification**
+
+- **Type:** scenario
+- **Covers:** `R-005`
+- **Expected:** exit 0, `2 passed`
+
 ```sh
 cargo test -p pgtui --test skeleton_test -- stub
 ```
-Expected: exit 0, `2 passed`
 
+### AC-005 — The gallery stub has its exit contract
 ```gherkin
 Given the gallery binary before the gallery task lands
 When its stub test runs
 Then gallery prints usage on stderr and returns exit code 2
 ```
 
-### AC-006 — The protected render pipeline works
-Type: scenario
-Class: invariant
-Covers: R-004
-Evidence:
-```sh
-cargo test -p pgtui --test skeleton_test -- trims pipeline
-```
-Expected: exit 0, `2 passed`
+**Verification**
 
+- **Type:** scenario
+- **Covers:** `R-005`
+- **Expected:** exit 0, `2 passed`
+
+```sh
+cargo test -p pgtui --test skeleton_test -- stub
+```
+
+### AC-006 — The protected render pipeline works
 ```gherkin
 Given the planner-shipped render module
 When its text, SVG, and PNG pipeline tests run
 Then all three representations behave as specified
 ```
 
+**Verification**
+
+- **Type:** scenario
+- **Covers:** `R-004`
+- **Expected:** exit 0, `2 passed`
+
+```sh
+cargo test -p pgtui --test skeleton_test -- trims pipeline
+```
+
 ### AC-007 — Completion gate passes
-Type: gate
-Evidence:
+**Verification**
+
+- **Type:** gate
+- **Expected:** exit 0, last line `DONE`
+
 ```sh
 taskfmt verify
 ```
-Expected: exit 0, last line `DONE`
 
 ## Fixed decisions
 

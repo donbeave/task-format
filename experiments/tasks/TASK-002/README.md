@@ -92,138 +92,152 @@ Canonical typed acceptance blocks use taskfmt's Markdown profile. They are task 
 Cucumber feature files and have no runtime step definitions.
 
 ### AC-001 — Connections persist and sort
-Type: scenario
-Class: delta
-Covers: R-001
-Evidence:
-```sh
-cargo test -p pgtui --test store_test
-```
-Expected: exit 0, `5 passed`
-
 ```gherkin
 Given a fresh temporary database
 When named connections are inserted and the store is reopened
 Then connections are listed in ascending name order and survive the reopen
 ```
 
-### AC-002 — Duplicate names are rejected
-Type: scenario
-Class: delta
-Covers: R-001
-Evidence:
+**Verification**
+
+- **Type:** scenario
+- **Covers:** `R-001`
+- **Expected:** exit 0, `5 passed`
+
 ```sh
 cargo test -p pgtui --test store_test
 ```
-Expected: exit 0, `5 passed`
 
+### AC-002 — Duplicate names are rejected
 ```gherkin
 Given a connection name already exists
 When the same name is inserted again
 Then the store returns the decided duplicate-name error
 ```
 
-### AC-003 — List navigation is clamped
-Type: scenario
-Class: delta
-Covers: R-002, R-003
-Evidence:
-```sh
-cargo test -p pgtui --test app_connection_list_test
-```
-Expected: exit 0, `5 passed`
+**Verification**
 
+- **Type:** scenario
+- **Covers:** `R-001`
+- **Expected:** exit 0, `5 passed`
+
+```sh
+cargo test -p pgtui --test store_test
+```
+
+### AC-003 — List navigation is clamped
 ```gherkin
 Given an App with saved connections
 When navigation keys move beyond either end of the list
 Then the cursor remains clamped within the list
 ```
 
-### AC-004 — List quit keys emit the quit effect
-Type: scenario
-Class: invariant
-Covers: R-003
-Evidence:
+**Verification**
+
+- **Type:** scenario
+- **Covers:** `R-002, R-003`
+- **Expected:** exit 0, `5 passed`
+
 ```sh
 cargo test -p pgtui --test app_connection_list_test
 ```
-Expected: exit 0, `5 passed`
 
+### AC-004 — List quit keys emit the quit effect
 ```gherkin
 Given the connection-list screen
 When q or Ctrl+C is pressed
 Then App emits Effect::Quit
 ```
 
-### AC-005 — Connection rows render without secrets
-Type: scenario
-Class: delta
-Covers: R-004
-Evidence:
-```sh
-cargo test -p pgtui --test screen_connection_list_test
-```
-Expected: exit 0, `3 passed`
+**Verification**
 
+- **Type:** scenario
+- **Covers:** `R-003`
+- **Expected:** exit 0, `5 passed`
+
+```sh
+cargo test -p pgtui --test app_connection_list_test
+```
+
+### AC-005 — Connection rows render without secrets
 ```gherkin
 Given saved connections and a selected row
 When the 100x30 connection-list buffer is rendered
 Then the title, DSN rows, and selected-row marker match D-060 without a password
 ```
 
-### AC-006 — Empty-list guidance and status render
-Type: scenario
-Class: invariant
-Covers: R-004
-Evidence:
+**Verification**
+
+- **Type:** scenario
+- **Covers:** `R-004`
+- **Expected:** exit 0, `3 passed`
+
 ```sh
 cargo test -p pgtui --test screen_connection_list_test
 ```
-Expected: exit 0, `3 passed`
 
+### AC-006 — Empty-list guidance and status render
 ```gherkin
 Given an empty connection list
 When the connection-list buffer is rendered
 Then its hint, help line, and status line are visible
 ```
 
-### AC-007 — CLI diagnostics follow D-040
-Type: scenario
-Class: delta
-Covers: R-005
-Evidence:
-```sh
-cargo test -p pgtui --test cli_test
-```
-Expected: exit 0, `3 passed`
+**Verification**
 
+- **Type:** scenario
+- **Covers:** `R-004`
+- **Expected:** exit 0, `3 passed`
+
+```sh
+cargo test -p pgtui --test screen_connection_list_test
+```
+
+### AC-007 — CLI diagnostics follow D-040
 ```gherkin
 Given an invalid store path or a version/help request
 When the pgtui command is invoked
 Then the decided stderr diagnostics and exit codes are returned
 ```
 
-### AC-008 — Interactive quit restores the terminal
-Type: scenario
-Class: invariant
-Covers: R-005
-Evidence:
+**Verification**
+
+- **Type:** scenario
+- **Covers:** `R-005`
+- **Expected:** exit 0, `3 passed`
+
 ```sh
 cargo test -p pgtui --test cli_test
 ```
-Expected: exit 0, `3 passed`
 
+### AC-008 — Interactive quit restores the terminal
 ```gherkin
 Given the real pgtui binary in an interactive terminal
 When a quit key ends the connection-list session
 Then the process returns successfully after restoring the terminal
 ```
 
+**Verification**
+
+- **Type:** scenario
+- **Covers:** `R-005`
+- **Expected:** exit 0, `3 passed`
+
+```sh
+cargo test -p pgtui --test cli_test
+```
+
 ### AC-009 — Earlier trusted behavior remains green
-Type: invariant
-Class: regression
-Covers: R-001, R-002, R-003, R-004, R-005
-Evidence:
+```gherkin
+The complete trusted suite for the task remains green.
+```
+
+**Verification**
+
+- **Type:** invariant
+- **Covers:** `R-001, R-002, R-003, R-004, R-005`
+- **Expected:** exit 0, 5 `test result: ok.` lines (one per target), no `FAILED`
+
 ```sh
 cargo test -p pgtui \
   --test store_test \
@@ -232,19 +246,16 @@ cargo test -p pgtui \
   --test cli_test \
   --test skeleton_test -- --skip pgtui_stub_exits_2
 ```
-Expected: exit 0, 5 `test result: ok.` lines (one per target), no `FAILED`
-
-```gherkin
-The complete trusted suite for the task remains green.
-```
 
 ### AC-010 — Completion gate passes
-Type: gate
-Evidence:
+**Verification**
+
+- **Type:** gate
+- **Expected:** exit 0, last line `DONE`
+
 ```sh
 taskfmt verify
 ```
-Expected: exit 0, last line `DONE`
 
 ## Fixed decisions
 

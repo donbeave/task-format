@@ -92,120 +92,133 @@ Canonical typed acceptance blocks use taskfmt's Markdown profile. They are task 
 Cucumber feature files and have no runtime step definitions.
 
 ### AC-001 — Grid ordering and null placement are correct
-Type: scenario
-Class: delta
-Covers: R-001, R-002, R-003
-Evidence:
-```sh
-cargo test -p pgtui --test grid_sort_test
-```
-Expected: exit 0, `8 passed`
-
 ```gherkin
 Given result sets from seed and synthetic tables
 When Grid sorts the fetched rows
 Then numeric and byte-wise ordering, stable ties, and D-052 null placement match the contract
 ```
 
-### AC-002 — Grid reset and empty cases are safe
-Type: invariant
-Class: invariant
-Covers: R-001, R-002, R-003
-Evidence:
+**Verification**
+
+- **Type:** scenario
+- **Covers:** `R-001, R-002, R-003`
+- **Expected:** exit 0, `8 passed`
+
 ```sh
 cargo test -p pgtui --test grid_sort_test
 ```
-Expected: exit 0, `8 passed`
 
+### AC-002 — Grid reset and empty cases are safe
 ```gherkin
 The grid resets sort and cursors for a new preview and handles an empty result without mutation.
 ```
 
-### AC-003 — Preview rows preserve data and apply the cap
-Type: scenario
-Class: delta
-Covers: R-004
-Evidence:
-```sh
-cargo test -p pgtui --test pg_preview_test
-```
-Expected: exit 0, `4 passed`
+**Verification**
 
+- **Type:** invariant
+- **Covers:** `R-001, R-002, R-003`
+- **Expected:** exit 0, `8 passed`
+
+```sh
+cargo test -p pgtui --test grid_sort_test
+```
+
+### AC-003 — Preview rows preserve data and apply the cap
 ```gherkin
 Given a seeded database and a previewable table
 When a preview query runs
 Then rows match the fixture cell-for-cell, NULLs survive, and 600 rows are capped at 500
 ```
 
-### AC-004 — Unknown preview tables return a query error
-Type: scenario
-Class: failure
-Covers: R-004
-Evidence:
+**Verification**
+
+- **Type:** scenario
+- **Covers:** `R-004`
+- **Expected:** exit 0, `4 passed`
+
 ```sh
 cargo test -p pgtui --test pg_preview_test
 ```
-Expected: exit 0, `4 passed`
 
+### AC-004 — Unknown preview tables return a query error
 ```gherkin
 Given a table name that does not exist
 When a preview query runs
 Then the database failure maps to DbError::Query
 ```
 
-### AC-005 — Preview results build and focus the grid
-Type: scenario
-Class: delta
-Covers: R-005
-Evidence:
-```sh
-cargo test -p pgtui --test app_preview_test
-```
-Expected: exit 0, `8 passed`
+**Verification**
 
+- **Type:** scenario
+- **Covers:** `R-004`
+- **Expected:** exit 0, `4 passed`
+
+```sh
+cargo test -p pgtui --test pg_preview_test
+```
+
+### AC-005 — Preview results build and focus the grid
 ```gherkin
 Given a connected App and a selected table
 When Enter completes a preview query
 Then the result builds the grid, focuses it, and clamps its row cursor
 ```
 
-### AC-006 — Grid keys and failures preserve state
-Type: scenario
-Class: invariant
-Covers: R-005
-Evidence:
+**Verification**
+
+- **Type:** scenario
+- **Covers:** `R-005`
+- **Expected:** exit 0, `8 passed`
+
 ```sh
 cargo test -p pgtui --test app_preview_test
 ```
-Expected: exit 0, `8 passed`
 
+### AC-006 — Grid keys and failures preserve state
 ```gherkin
 Given a loaded grid or a previous grid with a query failure
 When grid navigation, sort, Tab, or the error result is applied
 Then sorting cycles as decided and a failed query keeps the previous grid with an error status
 ```
 
-### AC-007 — Preview rendering follows D-060
-Type: scenario
-Class: delta
-Covers: R-006
-Evidence:
-```sh
-cargo test -p pgtui --test screen_preview_test
-```
-Expected: exit 0, `5 passed`
+**Verification**
 
+- **Type:** scenario
+- **Covers:** `R-005`
+- **Expected:** exit 0, `8 passed`
+
+```sh
+cargo test -p pgtui --test app_preview_test
+```
+
+### AC-007 — Preview rendering follows D-060
 ```gherkin
 Given grid state with rows and a selected column
 When the 100x30 preview buffer is rendered
 Then headers, cursor and sort markers, rows, status, and help appear as decided
 ```
 
+**Verification**
+
+- **Type:** scenario
+- **Covers:** `R-006`
+- **Expected:** exit 0, `5 passed`
+
+```sh
+cargo test -p pgtui --test screen_preview_test
+```
+
 ### AC-008 — Earlier trusted behavior remains green
-Type: invariant
-Class: regression
-Covers: R-001, R-002, R-003, R-004, R-005, R-006
-Evidence:
+```gherkin
+The complete trusted suite for the task remains green.
+```
+
+**Verification**
+
+- **Type:** invariant
+- **Covers:** `R-001, R-002, R-003, R-004, R-005, R-006`
+- **Expected:** exit 0, 16 `test result: ok.` lines (one per target), no `FAILED`
+
 ```sh
 cargo test -p pgtui \
   --test store_test \
@@ -225,19 +238,16 @@ cargo test -p pgtui \
   --test screen_preview_test \
   --test skeleton_test -- --skip pgtui_stub_exits_2
 ```
-Expected: exit 0, 16 `test result: ok.` lines (one per target), no `FAILED`
-
-```gherkin
-The complete trusted suite for the task remains green.
-```
 
 ### AC-009 — Completion gate passes
-Type: gate
-Evidence:
+**Verification**
+
+- **Type:** gate
+- **Expected:** exit 0, last line `DONE`
+
 ```sh
 taskfmt verify
 ```
-Expected: exit 0, last line `DONE`
 
 ## Fixed decisions
 

@@ -86,106 +86,118 @@ Canonical typed acceptance blocks use taskfmt's Markdown profile. They are task 
 Cucumber feature files and have no runtime step definitions.
 
 ### AC-001 — Form navigation wraps
-Type: scenario
-Class: delta
-Covers: R-001, R-002
-Evidence:
-```sh
-cargo test -p pgtui --test app_create_form_test
-```
-Expected: exit 0, `9 passed`
-
 ```gherkin
 Given the connection list screen
 When n opens the new-connection form and Tab or BackTab is pressed
 Then the six fields cycle with wraparound and the blank form has the D-010 field order
 ```
 
-### AC-002 — Form editing applies field rules
-Type: scenario
-Class: delta
-Covers: R-002
-Evidence:
+**Verification**
+
+- **Type:** scenario
+- **Covers:** `R-001, R-002`
+- **Expected:** exit 0, `9 passed`
+
 ```sh
 cargo test -p pgtui --test app_create_form_test
 ```
-Expected: exit 0, `9 passed`
 
+### AC-002 — Form editing applies field rules
 ```gherkin
 Given a focused form field
 When printable characters, Backspace, or a non-digit port character are entered
 Then text appends, Backspace removes the last character, and the port keeps digits only
 ```
 
-### AC-003 — Escape discards the form
-Type: scenario
-Class: invariant
-Covers: R-002
-Evidence:
+**Verification**
+
+- **Type:** scenario
+- **Covers:** `R-002`
+- **Expected:** exit 0, `9 passed`
+
 ```sh
 cargo test -p pgtui --test app_create_form_test
 ```
-Expected: exit 0, `9 passed`
 
+### AC-003 — Escape discards the form
 ```gherkin
 Given a form containing unsaved values
 When Esc is pressed
 Then the values are discarded and the connection list returns
 ```
 
-### AC-004 — A valid form is saved and selected
-Type: scenario
-Class: delta
-Covers: R-003, R-004
-Evidence:
-```sh
-cargo test -p pgtui --test runtime_create_test
-```
-Expected: exit 0, `3 passed`
+**Verification**
 
+- **Type:** scenario
+- **Covers:** `R-002`
+- **Expected:** exit 0, `9 passed`
+
+```sh
+cargo test -p pgtui --test app_create_form_test
+```
+
+### AC-004 — A valid form is saved and selected
 ```gherkin
 Given a valid new-connection form
 When Enter saves it through the runtime
 Then the row is inserted, the list reloads, and the new row is selected
 ```
 
-### AC-005 — Duplicate names stay on the form
-Type: scenario
-Class: failure
-Covers: R-003
-Evidence:
+**Verification**
+
+- **Type:** scenario
+- **Covers:** `R-003, R-004`
+- **Expected:** exit 0, `3 passed`
+
 ```sh
 cargo test -p pgtui --test runtime_create_test
 ```
-Expected: exit 0, `3 passed`
 
+### AC-005 — Duplicate names stay on the form
 ```gherkin
 Given a connection name already exists
 When a form with that name is saved
 Then the decided duplicate-name error is shown and the form remains open
 ```
 
-### AC-006 — Form rendering masks passwords
-Type: scenario
-Class: delta
-Covers: R-005
-Evidence:
-```sh
-cargo test -p pgtui --test screen_create_form_test
-```
-Expected: exit 0, `3 passed`
+**Verification**
 
+- **Type:** scenario
+- **Covers:** `R-003`
+- **Expected:** exit 0, `3 passed`
+
+```sh
+cargo test -p pgtui --test runtime_create_test
+```
+
+### AC-006 — Form rendering masks passwords
 ```gherkin
 Given a populated form with one focused field
 When the 100x30 form buffer is rendered
 Then labels, focus, masked password characters, and the D-060 help line appear
 ```
 
+**Verification**
+
+- **Type:** scenario
+- **Covers:** `R-005`
+- **Expected:** exit 0, `3 passed`
+
+```sh
+cargo test -p pgtui --test screen_create_form_test
+```
+
 ### AC-007 — Earlier trusted behavior remains green
-Type: invariant
-Class: regression
-Covers: R-001, R-002, R-003, R-004, R-005
-Evidence:
+```gherkin
+The complete trusted suite for the task remains green.
+```
+
+**Verification**
+
+- **Type:** invariant
+- **Covers:** `R-001, R-002, R-003, R-004, R-005`
+- **Expected:** exit 0, 8 `test result: ok.` lines (one per target), no `FAILED`
+
 ```sh
 cargo test -p pgtui \
   --test store_test \
@@ -197,19 +209,16 @@ cargo test -p pgtui \
   --test screen_create_form_test \
   --test skeleton_test -- --skip pgtui_stub_exits_2
 ```
-Expected: exit 0, 8 `test result: ok.` lines (one per target), no `FAILED`
-
-```gherkin
-The complete trusted suite for the task remains green.
-```
 
 ### AC-008 — Completion gate passes
-Type: gate
-Evidence:
+**Verification**
+
+- **Type:** gate
+- **Expected:** exit 0, last line `DONE`
+
 ```sh
 taskfmt verify
 ```
-Expected: exit 0, last line `DONE`
 
 ## Fixed decisions
 

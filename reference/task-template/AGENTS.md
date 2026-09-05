@@ -16,12 +16,12 @@ Your goal is to fully implement this task: `/task/README.md`.
 
 The completion gate is `taskfmt verify` (binary baked into the image, read-only). Run it from `/work`; never modify or bypass it. `$TASKFMT_BASE` is the scope base commit.
 
-The task README uses canonical typed acceptance blocks. Each non-gate `AC-*` block has `Type`,
-`Class`, real `Covers` requirement IDs, exact `Evidence` and `Expected` fields, and one exact
-` ```gherkin ` fence containing only constrained Given/When/Then-shaped behavior. A gate block
-has `Type: gate`, exact `Evidence`/`Expected`, and no body. These are task metadata, not Cucumber
-feature files and have no runtime step definitions. Every `Evidence` field uses one exact
-` ```sh ` fence representing one command, regardless of command length.
+The task README uses canonical typed acceptance blocks. Each non-gate `AC-*` block starts with one
+exact ` ```gherkin ` fence containing only constrained Given/When/Then-shaped behavior. Its
+`Verification` section has bulleted `Type`, real `Covers` requirement IDs, and `Expected` result,
+followed by one exact ` ```sh ` command fence. A gate has `Type: gate`, `Expected`, and a command
+fence, but no `Covers` or Gherkin body. These are task metadata, not Cucumber feature files and
+have no runtime step definitions.
 
 ## Protocol
 

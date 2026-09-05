@@ -90,106 +90,118 @@ Canonical typed acceptance blocks use taskfmt's Markdown profile. They are task 
 Cucumber feature files and have no runtime step definitions.
 
 ### AC-001 — Custom SQL opens and edits
-Type: scenario
-Class: delta
-Covers: R-001
-Evidence:
-```sh
-cargo test -p pgtui --test app_custom_sql_test
-```
-Expected: exit 0, `9 passed`
-
 ```gherkin
 Given a connected App on the browser screen
 When x opens CustomSql and editing keys are applied
 Then printable input, Backspace, and the empty-Enter no-op behave as decided
 ```
 
-### AC-002 — Custom SQL runs and builds results
-Type: scenario
-Class: delta
-Covers: R-001, R-003, R-004
-Evidence:
+**Verification**
+
+- **Type:** scenario
+- **Covers:** `R-001`
+- **Expected:** exit 0, `9 passed`
+
 ```sh
 cargo test -p pgtui --test app_custom_sql_test
 ```
-Expected: exit 0, `9 passed`
 
+### AC-002 — Custom SQL runs and builds results
 ```gherkin
 Given a non-empty custom SQL input
 When Enter runs the query
 Then the custom query effect is emitted and returned rows build the decided grid and status
 ```
 
-### AC-003 — Escape retains custom SQL input
-Type: scenario
-Class: invariant
-Covers: R-001, R-004
-Evidence:
+**Verification**
+
+- **Type:** scenario
+- **Covers:** `R-001, R-003, R-004`
+- **Expected:** exit 0, `9 passed`
+
 ```sh
 cargo test -p pgtui --test app_custom_sql_test
 ```
-Expected: exit 0, `9 passed`
 
+### AC-003 — Escape retains custom SQL input
 ```gherkin
 Given CustomSql contains input and a prior result
 When Esc returns to the browser
 Then the session, grid, and SQL input are retained
 ```
 
-### AC-004 — Single-statement results follow D-025
-Type: scenario
-Class: delta
-Covers: R-002, R-003
-Evidence:
-```sh
-cargo test -p pgtui --test pg_custom_sql_test
-```
-Expected: exit 0, `5 passed`
+**Verification**
 
+- **Type:** scenario
+- **Covers:** `R-001, R-004`
+- **Expected:** exit 0, `9 passed`
+
+```sh
+cargo test -p pgtui --test app_custom_sql_test
+```
+
+### AC-004 — Single-statement results follow D-025
 ```gherkin
 Given a seeded database and a custom statement
 When the statement executes
 Then SELECT rows, affected counts, trimming, and the 500-row cap follow D-025
 ```
 
-### AC-005 — Invalid custom SQL is rejected safely
-Type: scenario
-Class: failure
-Covers: R-002
-Evidence:
+**Verification**
+
+- **Type:** scenario
+- **Covers:** `R-002, R-003`
+- **Expected:** exit 0, `5 passed`
+
 ```sh
 cargo test -p pgtui --test pg_custom_sql_test
 ```
-Expected: exit 0, `5 passed`
 
+### AC-005 — Invalid custom SQL is rejected safely
 ```gherkin
 Given multi-statement or syntactically invalid custom SQL
 When the database receives it
 Then multi-statement input is rejected and syntax errors map to DbError::Query
 ```
 
-### AC-006 — Custom SQL rendering follows D-060
-Type: scenario
-Class: delta
-Covers: R-005
-Evidence:
-```sh
-cargo test -p pgtui --test screen_custom_sql_test
-```
-Expected: exit 0, `3 passed`
+**Verification**
 
+- **Type:** scenario
+- **Covers:** `R-002`
+- **Expected:** exit 0, `5 passed`
+
+```sh
+cargo test -p pgtui --test pg_custom_sql_test
+```
+
+### AC-006 — Custom SQL rendering follows D-060
 ```gherkin
 Given empty and populated CustomSql states
 When the 100x30 buffer is rendered
 Then the SQL input, result title, hint, echoed SQL, and marker-free grid match D-060
 ```
 
+**Verification**
+
+- **Type:** scenario
+- **Covers:** `R-005`
+- **Expected:** exit 0, `3 passed`
+
+```sh
+cargo test -p pgtui --test screen_custom_sql_test
+```
+
 ### AC-007 — Earlier trusted behavior remains green
-Type: invariant
-Class: regression
-Covers: R-001, R-002, R-003, R-004, R-005
-Evidence:
+```gherkin
+The complete trusted suite for the task remains green.
+```
+
+**Verification**
+
+- **Type:** invariant
+- **Covers:** `R-001, R-002, R-003, R-004, R-005`
+- **Expected:** exit 0, 19 `test result: ok.` lines (one per target), no `FAILED`
+
 ```sh
 cargo test -p pgtui \
   --test store_test \
@@ -212,19 +224,16 @@ cargo test -p pgtui \
   --test screen_custom_sql_test \
   --test skeleton_test -- --skip pgtui_stub_exits_2
 ```
-Expected: exit 0, 19 `test result: ok.` lines (one per target), no `FAILED`
-
-```gherkin
-The complete trusted suite for the task remains green.
-```
 
 ### AC-008 — Completion gate passes
-Type: gate
-Evidence:
+**Verification**
+
+- **Type:** gate
+- **Expected:** exit 0, last line `DONE`
+
 ```sh
 taskfmt verify
 ```
-Expected: exit 0, last line `DONE`
 
 ## Fixed decisions
 

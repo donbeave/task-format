@@ -75,20 +75,11 @@ Out of scope:
 
 ## Acceptance criteria
 
-Typed acceptance uses the taskfmt Markdown profile: each `AC-*` block has metadata, one exact
-`Evidence` command in a fenced `sh` block, an `Expected` result, and a fenced Gherkin-shaped
-behavior description. It is not a Cucumber document and has no runtime step definitions.
+Typed acceptance uses the taskfmt Markdown profile: each `AC-*` block presents its fenced
+Gherkin-shaped behavior first, then bulleted verification metadata and one fenced `sh` command.
+It is not a Cucumber document and has no runtime step definitions.
 
 ### AC-001 — Expired refresh is rejected
-Type: scenario
-Class: delta
-Covers: R-001, R-003
-Evidence:
-```sh
-cargo test -p auth expired_refresh_token
-```
-Expected: exit 0, `1 passed`; response is 401 and session state is unchanged
-
 ```gherkin
 Given an existing session and an expired refresh token
 When the refresh endpoint receives the token
@@ -96,45 +87,59 @@ Then it returns 401 with error code refresh_token_expired
 And no session state is changed
 ```
 
-### AC-002 — Valid refresh still rotates
-Type: scenario
-Class: invariant
-Covers: R-002
-Evidence:
-```sh
-cargo test -p auth valid_refresh_rotation
-```
-Expected: exit 0, `1 passed`; rotation succeeds as before
+**Verification**
 
+- **Type:** scenario
+- **Covers:** `R-001, R-003`
+- **Expected:** exit 0, `1 passed`; response is 401 and session state is unchanged
+
+```sh
+cargo test -p auth expired_refresh_token
+```
+
+### AC-002 — Valid refresh still rotates
 ```gherkin
 Given a valid refresh token
 When the refresh endpoint receives the token
 Then rotation succeeds exactly as before
 ```
 
-### AC-003 — Legacy helper is absent
-Type: scenario
-Class: removal
-Covers: R-004
-Evidence:
-```sh
-! grep -rn legacy_expiry_check src tests
-```
-Expected: exit 0, no output; no reference remains
+**Verification**
 
+- **Type:** scenario
+- **Covers:** `R-002`
+- **Expected:** exit 0, `1 passed`; rotation succeeds as before
+
+```sh
+cargo test -p auth valid_refresh_rotation
+```
+
+### AC-003 — Legacy helper is absent
 ```gherkin
 Given the repository after the change
 When the source tree is inspected
 Then the legacy expiry helper is absent
 ```
 
+**Verification**
+
+- **Type:** scenario
+- **Covers:** `R-004`
+- **Expected:** exit 0, no output; no reference remains
+
+```sh
+! grep -rn legacy_expiry_check src tests
+```
+
 ### AC-004 — Completion gate passes
-Type: gate
-Evidence:
+**Verification**
+
+- **Type:** gate
+- **Expected:** exit 0 and the last line is DONE
+
 ```sh
 taskfmt verify
 ```
-Expected: exit 0 and the last line is DONE
 
 ## Fixed decisions
 

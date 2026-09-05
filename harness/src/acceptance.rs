@@ -26,7 +26,6 @@ pub struct AcceptanceCriterion {
     pub id: String,
     pub title: String,
     pub kind: AcceptanceType,
-    pub class: Option<String>,
     pub covers: Vec<String>,
     pub evidence: String,
     pub expected: String,
@@ -133,76 +132,181 @@ pub fn parse(text: &str) -> AcceptanceDocument {
         let title = caps[2].trim().to_string();
         let mut fields: BTreeMap<String, (String, usize)> = BTreeMap::new();
         i += 1;
-        while i < lines.len()
-            && !lines[i].trim_start().starts_with("### ")
-            && !lines[i].trim_start().starts_with("## ")
-        {
+        let end = (i..lines.len())
+            .find(|&index| {
+                lines[index].trim_start().starts_with("### ")
+                    || lines[index].trim_start().starts_with("## ")
+            })
+            .unwrap_or(lines.len());
+        let mut steps = Vec::new();
+        let mut headers = Vec::new();
+        let mut rows = Vec::new();
+        let mut examples_seen = false;
+        let mut gherkin_seen = false;
+        let mut verification_seen = false;
+        let mut evidence = String::new();
+        let mut evidence_line = None;
+        let mut metadata_order = Vec::new();
+        while i < end {
             let line = lines[i].trim();
             if line.is_empty() {
                 i += 1;
                 continue;
             }
-            if line.starts_with("```") {
-                break;
+            if line == "**Verification**" {
+                if verification_seen {
+                    err(
+                        &mut doc.errors,
+                        i + 1,
+                        format!("{id} duplicate Verification section"),
+                    );
+                }
+                verification_seen = true;
+                i += 1;
+                continue;
             }
-            if let Some((key, value)) = line.split_once(':') {
-                let key = key.trim().to_ascii_lowercase();
-                if ["type", "class", "covers", "evidence", "expected"].contains(&key.as_str()) {
-                    if fields.contains_key(&key) {
-                        err(
-                            &mut doc.errors,
-                            i + 1,
-                            format!("{id} duplicate {key} metadata"),
-                        );
-                    }
-                    let field_line = i + 1;
-                    let mut value = strip_value(value);
-                    if key == "evidence" {
-                        if !value.is_empty() {
+            if line == "```gherkin" {
+                if verification_seen {
+                    err(
+                        &mut doc.errors,
+                        i + 1,
+                        format!("{id} Gherkin body must precede Verification"),
+                    );
+                }
+                if gherkin_seen {
+                    err(
+                        &mut doc.errors,
+                        i + 1,
+                        format!("{id} duplicate Gherkin body"),
+                    );
+                }
+                gherkin_seen = true;
+                i += 1;
+                let body_start = i + 1;
+                while i < end && lines[i].trim() != "```" {
+                    let body_line = lines[i].trim();
+                    if body_line.eq_ignore_ascii_case("Examples:") {
+                        examples_seen = true;
+                    } else if let Some(row) = split_row(body_line) {
+                        if !examples_seen {
                             err(
                                 &mut doc.errors,
-                                field_line,
-                                format!("{id} Evidence must use an exact ```sh fence"),
+                                i + 1,
+                                format!("{id} Examples row appears before Examples:"),
                             );
-                        } else if lines.get(i + 1).map(|line| line.trim()) == Some("```sh") {
-                            i += 2;
-                            let body_start = i + 1;
-                            let mut command = Vec::new();
-                            while i < lines.len() && lines[i].trim() != "```" {
-                                command.push(lines[i].trim_end());
-                                i += 1;
-                            }
-                            if i == lines.len() {
-                                err(
-                                    &mut doc.errors,
-                                    body_start,
-                                    format!("{id} unterminated Evidence shell fence"),
-                                );
-                            } else {
-                                value = command.join("\n").trim().to_string();
-                            }
+                        } else if headers.is_empty() {
+                            headers = row;
                         } else {
-                            err(
-                                &mut doc.errors,
-                                field_line,
-                                format!("{id} Evidence must be followed by an exact ```sh fence"),
-                            );
+                            rows.push(row);
+                        }
+                    } else if !body_line.is_empty() {
+                        let mut parts = body_line.splitn(2, char::is_whitespace);
+                        let keyword = parts.next().unwrap_or_default().trim_end_matches(':');
+                        if ["Given", "When", "Then", "And", "But"].contains(&keyword) {
+                            let body = parts.next().unwrap_or("").trim();
+                            if body.is_empty() {
+                                err(&mut doc.errors, i + 1, format!("{id} empty {keyword} step"));
+                            }
+                            steps.push(Step {
+                                keyword: keyword.to_string(),
+                                text: body.to_string(),
+                            });
+                        } else {
+                            steps.push(Step {
+                                keyword: "Statement".to_string(),
+                                text: body_line.to_string(),
+                            });
                         }
                     }
-                    fields.insert(key, (value, field_line));
-                } else {
-                    err(&mut doc.errors, i + 1, format!("{id} unexpected metadata"));
+                    i += 1;
                 }
-            } else {
-                err(
-                    &mut doc.errors,
-                    i + 1,
-                    format!("{id} expected metadata or gherkin fence"),
-                );
+                if i == end {
+                    err(
+                        &mut doc.errors,
+                        body_start,
+                        format!("{id} unterminated gherkin fence"),
+                    );
+                } else {
+                    i += 1;
+                }
+                continue;
             }
+            if line == "```sh" {
+                if !verification_seen {
+                    err(
+                        &mut doc.errors,
+                        i + 1,
+                        format!("{id} Evidence command must follow Verification metadata"),
+                    );
+                }
+                if !evidence.is_empty() {
+                    err(
+                        &mut doc.errors,
+                        i + 1,
+                        format!("{id} duplicate Evidence command"),
+                    );
+                }
+                evidence_line = Some(i + 1);
+                i += 1;
+                let body_start = i + 1;
+                let mut command = Vec::new();
+                while i < end && lines[i].trim() != "```" {
+                    command.push(lines[i].trim_end());
+                    i += 1;
+                }
+                evidence = command.join("\n").trim().to_string();
+                if i == end {
+                    err(
+                        &mut doc.errors,
+                        body_start,
+                        format!("{id} unterminated Evidence shell fence"),
+                    );
+                } else {
+                    i += 1;
+                }
+                continue;
+            }
+            if let Some(metadata) = line.strip_prefix("- **") {
+                if !verification_seen {
+                    err(
+                        &mut doc.errors,
+                        i + 1,
+                        format!("{id} metadata must follow **Verification**"),
+                    );
+                }
+                if let Some((key, value)) = metadata.split_once(":**") {
+                    let key = key.trim().to_ascii_lowercase();
+                    if ["type", "covers", "expected"].contains(&key.as_str()) {
+                        if fields.contains_key(&key) {
+                            err(
+                                &mut doc.errors,
+                                i + 1,
+                                format!("{id} duplicate {key} metadata"),
+                            );
+                        }
+                        metadata_order.push(key.clone());
+                        fields.insert(key, (strip_value(value), i + 1));
+                    } else {
+                        err(&mut doc.errors, i + 1, format!("{id} unexpected metadata"));
+                    }
+                } else {
+                    err(
+                        &mut doc.errors,
+                        i + 1,
+                        format!("{id} malformed metadata bullet"),
+                    );
+                }
+                i += 1;
+                continue;
+            }
+            err(
+                &mut doc.errors,
+                i + 1,
+                format!("{id} unexpected acceptance content"),
+            );
             i += 1;
         }
-        for key in ["type", "class", "covers", "evidence", "expected"] {
+        for key in ["type", "covers", "expected"] {
             if fields
                 .get(key)
                 .is_some_and(|(value, _)| value.trim().is_empty())
@@ -229,7 +333,7 @@ pub fn parse(text: &str) -> AcceptanceDocument {
                 AcceptanceType::Scenario
             }
         };
-        let required = ["type", "evidence", "expected"];
+        let required = ["type", "expected"];
         for key in required {
             if !fields.contains_key(key) {
                 err(
@@ -253,82 +357,52 @@ pub fn parse(text: &str) -> AcceptanceDocument {
                 format!("{id} gate must not have Covers metadata"),
             );
         }
-        let mut steps = Vec::new();
-        let mut headers = Vec::new();
-        let mut rows = Vec::new();
-        let mut examples_seen = false;
-        while i < lines.len() && lines[i].trim().is_empty() {
-            i += 1;
-        }
-        let fenced = i < lines.len() && lines[i].trim() == "```gherkin";
-        if fenced {
-            i += 1;
-            let body_start = i + 1;
-            while i < lines.len() && !lines[i].trim_start().starts_with("```") {
-                let line = lines[i].trim();
-                if line.eq_ignore_ascii_case("Examples:") {
-                    examples_seen = true;
-                    i += 1;
-                    continue;
-                }
-                if let Some(row) = split_row(line) {
-                    if !examples_seen {
-                        err(
-                            &mut doc.errors,
-                            i + 1,
-                            format!("{id} Examples row appears before Examples:"),
-                        );
-                    } else if headers.is_empty() {
-                        headers = row;
-                    } else {
-                        rows.push(row);
-                    }
-                } else if !line.is_empty() {
-                    let mut parts = line.splitn(2, char::is_whitespace);
-                    let keyword = parts.next().unwrap_or_default().trim_end_matches(':');
-                    if ["Given", "When", "Then", "And", "But"].contains(&keyword) {
-                        let body = parts.next().unwrap_or("").trim();
-                        if body.is_empty() {
-                            err(&mut doc.errors, i + 1, format!("{id} empty {keyword} step"));
-                        }
-                        steps.push(Step {
-                            keyword: keyword.to_string(),
-                            text: body.to_string(),
-                        });
-                    } else if matches!(kind, AcceptanceType::Invariant) {
-                        steps.push(Step {
-                            keyword: "Statement".to_string(),
-                            text: line.to_string(),
-                        });
-                    } else {
-                        err(&mut doc.errors, i + 1, format!("{id} invalid gherkin line"));
-                    }
-                }
-                i += 1;
-            }
-            if i == lines.len() {
-                err(
-                    &mut doc.errors,
-                    body_start,
-                    format!("{id} unterminated gherkin fence"),
-                );
-            } else {
-                i += 1;
-            }
-        } else if i < lines.len() && lines[i].trim_start().starts_with("```") {
+        let expected_order: &[&str] = if matches!(kind, AcceptanceType::Gate) {
+            &["type", "expected"]
+        } else {
+            &["type", "covers", "expected"]
+        };
+        if metadata_order
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            != expected_order
+        {
             err(
                 &mut doc.errors,
-                i + 1,
-                format!("{id} body must use an exact ```gherkin fence"),
+                start,
+                format!(
+                    "{id} Verification bullets must be ordered: {}",
+                    expected_order.join(", ")
+                ),
             );
-        } else if !matches!(kind, AcceptanceType::Gate) {
+        }
+        if evidence_line.is_some_and(|line| {
+            fields
+                .get("expected")
+                .is_some_and(|(_, expected_line)| line < *expected_line)
+        }) {
             err(
                 &mut doc.errors,
-                i.min(lines.len().saturating_sub(1)) + 1,
+                evidence_line.unwrap_or(start),
+                format!("{id} Evidence command must follow Verification bullets"),
+            );
+        }
+        if !gherkin_seen && !matches!(kind, AcceptanceType::Gate) {
+            err(
+                &mut doc.errors,
+                start,
                 format!("{id} missing ```gherkin body"),
             );
         }
-        if matches!(kind, AcceptanceType::Gate) && (fenced || examples_seen || !rows.is_empty()) {
+        if !verification_seen {
+            err(
+                &mut doc.errors,
+                start,
+                format!("{id} missing **Verification** section"),
+            );
+        }
+        if matches!(kind, AcceptanceType::Gate) && gherkin_seen {
             err(
                 &mut doc.errors,
                 start,
@@ -346,10 +420,6 @@ pub fn parse(text: &str) -> AcceptanceDocument {
             .get("covers")
             .map(|v| parse_covers(&v.0))
             .unwrap_or_default();
-        let evidence = fields
-            .get("evidence")
-            .map(|v| v.0.clone())
-            .unwrap_or_default();
         let expected = fields
             .get("expected")
             .map(|v| v.0.clone())
@@ -358,10 +428,6 @@ pub fn parse(text: &str) -> AcceptanceDocument {
             id,
             title,
             kind,
-            class: fields
-                .get("class")
-                .map(|v| v.0.clone())
-                .filter(|v| !v.is_empty()),
             covers,
             evidence,
             expected,
@@ -523,27 +589,28 @@ mod tests {
     use super::*;
 
     const SCENARIO: &str = r#"### AC-001 — Recoverable failure
-Type: scenario
-Class: failure
-Covers: R-001, R-002
-Evidence:
-```sh
-cargo test ac_001
-```
-Expected: exit 0
-
 ```gherkin
 Given a saved connection
 When the connection fails
 Then the list remains visible
 And the error is shown
 ```
+
+**Verification**
+
+- **Type:** scenario
+- **Covers:** `R-001, R-002`
+- **Expected:** exit 0
+
+```sh
+cargo test ac_001
+```
 "#;
 
     #[test]
     fn parses_all_types_and_metadata() {
         let text = format!(
-            "{SCENARIO}\n### AC-002 — Static rule\nType: invariant\nCovers: R-003\nEvidence:\n```sh\ngrep rule\n```\nExpected: no output\n\n```gherkin\nThe rule is enforced\n```\n\n### AC-003 — Matrix\nType: outline\nCovers: R-004\nEvidence:\n```sh\ncargo test matrix\n```\nExpected: exit 0\n\n```gherkin\nWhen sorted <direction>\nThen NULL is <placement>\nExamples:\n| direction | placement |\n| ascending | last |\n| descending | first |\n```\n\n### AC-004 — Gate\nType: gate\nEvidence:\n```sh\ntaskfmt verify\n```\nExpected: DONE\n"
+            "{SCENARIO}\n### AC-002 — Static rule\n```gherkin\nThe rule is enforced\n```\n\n**Verification**\n\n- **Type:** invariant\n- **Covers:** `R-003`\n- **Expected:** no output\n\n```sh\ngrep rule\n```\n\n### AC-003 — Matrix\n```gherkin\nWhen sorted <direction>\nThen NULL is <placement>\nExamples:\n| direction | placement |\n| ascending | last |\n| descending | first |\n```\n\n**Verification**\n\n- **Type:** outline\n- **Covers:** `R-004`\n- **Expected:** exit 0\n\n```sh\ncargo test matrix\n```\n\n### AC-004 — Gate\n**Verification**\n\n- **Type:** gate\n- **Expected:** DONE\n\n```sh\ntaskfmt verify\n```\n"
         );
         let doc = parse(&text);
         assert!(doc.detected);
@@ -571,27 +638,19 @@ And the error is shown
     }
 
     #[test]
-    fn rejects_noncanonical_evidence_forms() {
-        for replacement in [
-            "Evidence: `cargo test ac_001`",
-            "Evidence:\n```bash\ncargo test ac_001\n```",
-            "Evidence:\n\n```sh\ncargo test ac_001\n```",
-        ] {
-            let text = SCENARIO.replace("Evidence:\n```sh\ncargo test ac_001\n```", replacement);
+    fn rejects_noncanonical_verification_forms() {
+        for replacement in ["```bash", "Evidence:\n```sh", "- Type: scenario"] {
+            let text = SCENARIO
+                .replace("```sh", replacement)
+                .replace("- **Type:** scenario", replacement);
             let doc = parse(&text);
-            assert!(
-                doc.errors
-                    .iter()
-                    .any(|error| error.message.contains("exact ```sh fence")),
-                "{replacement:?}: {:?}",
-                doc.errors
-            );
+            assert!(!doc.errors.is_empty(), "{replacement:?}: {:?}", doc.errors);
         }
     }
 
     #[test]
     fn rejects_unterminated_fenced_evidence() {
-        let text = "### AC-001 — Broken\nType: scenario\nCovers: R-001\nEvidence:\n```sh\ncargo test ac_001";
+        let text = SCENARIO.trim_end_matches("```\n");
         let doc = parse(&text);
         assert!(
             doc.errors
@@ -624,14 +683,17 @@ And the error is shown
     #[test]
     fn rejects_verifier_language_and_duplicate_metadata() {
         let bad = SCENARIO
-            .replace("Expected: exit 0", "Expected: exit 0\nEvidence: `other`")
+            .replace(
+                "- **Expected:** exit 0",
+                "- **Expected:** exit 0\n- **Expected:** other",
+            )
             .replace("Then the list remains visible", "Then the test passes");
         let doc = parse(&bad);
         let errors = validate_shape(&doc);
         assert!(
             errors
                 .iter()
-                .any(|e| e.message.contains("duplicate evidence"))
+                .any(|e| e.message.contains("duplicate expected"))
         );
         assert!(
             errors

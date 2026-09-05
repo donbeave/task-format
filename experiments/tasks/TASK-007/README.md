@@ -91,15 +91,6 @@ Canonical typed acceptance blocks use taskfmt's Markdown profile. They are task 
 Cucumber feature files and have no runtime step definitions.
 
 ### AC-001 — Disconnect resets the app
-Type: scenario
-Class: delta
-Covers: R-001
-Evidence:
-```sh
-cargo test -p pgtui --test app_disconnect_test
-```
-Expected: exit 0, `5 passed`
-
 ```gherkin
 Given a connected App with saved connections and a selected list row
 When d or Ctrl+C is applied to the browser
@@ -107,59 +98,80 @@ Then the disconnect effect and decided disconnected state are produced
 And the session, grids, and SQL input reset while connections and list cursor remain
 ```
 
-### AC-002 — Disconnect closes the backend
-Type: scenario
-Class: delta
-Covers: R-002
-Evidence:
-```sh
-cargo test -p pgtui --test pg_disconnect_test
-```
-Expected: exit 0, `1 passed`
+**Verification**
 
+- **Type:** scenario
+- **Covers:** `R-001`
+- **Expected:** exit 0, `5 passed`
+
+```sh
+cargo test -p pgtui --test app_disconnect_test
+```
+
+### AC-002 — Disconnect closes the backend
 ```gherkin
 Given a live Postgres session in a container
 When disconnect runs
 Then the pgtui backend is absent from pg_stat_activity before the reply returns
 ```
 
-### AC-003 — Interactive exits restore the terminal
-Type: scenario
-Class: delta
-Covers: R-003
-Evidence:
-```sh
-cargo test -p pgtui --test cli_exit_test
-```
-Expected: exit 0, `2 passed`
+**Verification**
 
+- **Type:** scenario
+- **Covers:** `R-002`
+- **Expected:** exit 0, `1 passed`
+
+```sh
+cargo test -p pgtui --test pg_disconnect_test
+```
+
+### AC-003 — Interactive exits restore the terminal
 ```gherkin
 Given the binary in a 100x30 pty
 When q and Ctrl+C each end a session
 Then both processes exit 0 and leave the alternate screen
 ```
 
-### AC-004 — Gallery output is deterministic
-Type: scenario
-Class: delta
-Covers: R-004
-Evidence:
-```sh
-cargo test -p pgtui --test gallery_test
-```
-Expected: exit 0, `4 passed`
+**Verification**
 
+- **Type:** scenario
+- **Covers:** `R-003`
+- **Expected:** exit 0, `2 passed`
+
+```sh
+cargo test -p pgtui --test cli_exit_test
+```
+
+### AC-004 — Gallery output is deterministic
 ```gherkin
 Given the gallery binary and its default output directory
 When it runs twice
 Then it writes the ten named SVG and PNG pairs with byte-identical output
 ```
 
+**Verification**
+
+- **Type:** scenario
+- **Covers:** `R-004`
+- **Expected:** exit 0, `4 passed`
+
+```sh
+cargo test -p pgtui --test gallery_test
+```
+
 ### AC-005 — The complete trusted series remains green
-Type: invariant
-Class: regression
-Covers: R-001, R-002, R-003, R-004, R-005
-Evidence:
+```gherkin
+Given the complete trusted test series for the task
+When all 23 targets are run
+Then every target reports test result ok and no target reports FAILED
+```
+
+**Verification**
+
+- **Type:** invariant
+- **Covers:** `R-001, R-002, R-003, R-004, R-005`
+- **Expected:** exit 0, 23 `test result: ok.` lines (one per target), no `FAILED`
+
 ```sh
 cargo test -p pgtui \
   --test store_test \
@@ -186,21 +198,16 @@ cargo test -p pgtui \
   --test gallery_test \
   --test skeleton_test -- --skip stub_exits_2
 ```
-Expected: exit 0, 23 `test result: ok.` lines (one per target), no `FAILED`
-
-```gherkin
-Given the complete trusted test series for the task
-When all 23 targets are run
-Then every target reports test result ok and no target reports FAILED
-```
 
 ### AC-006 — Completion gate passes
-Type: gate
-Evidence:
+**Verification**
+
+- **Type:** gate
+- **Expected:** exit 0, last line `DONE`
+
 ```sh
 taskfmt verify
 ```
-Expected: exit 0, last line `DONE`
 
 ## Fixed decisions
 
