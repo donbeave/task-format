@@ -24,7 +24,8 @@
 //!   narrower/broader filter or `--test` subset tolerated — or match a verify.toml `[focused]` /
 //!   `[regression]` command by target set (warning). Other kinds skip the comparison.
 //! - `preconditions` every P-NNN line carries a backticked command
-//! - `acceptance`    every AC-NNN row has an evidence command and an expected result; each AC
+//! - `acceptance`    every typed AC-NNN block has one fenced `sh` evidence command and an expected
+//!   result; every legacy AC-NNN row has an evidence command and an expected result; each AC
 //!   command is run by verify.toml (warning): the gate command itself is exempt (the gate cannot
 //!   list itself); `cargo test` commands match a `[focused]`/`[regression]`/`[lint]` command by
 //!   parsed target set — package, `--test`/`--bin`/`--example`/`--bench` targets, positional
@@ -956,6 +957,7 @@ const CARGO_VALUE_FLAGS: &[&str] = &[
 /// `cargo test` with two or more positional filter words and no ` -- ` separator: cargo takes one
 /// filter; the rest is an error.
 pub fn cargo_multi_filter(command: &str) -> bool {
+    let command = command.replace("\\\r\n", "").replace("\\\n", "");
     if command.contains(" -- ") || command.ends_with(" --") {
         return false;
     }
@@ -1048,6 +1050,7 @@ impl CargoTestSpec {
 /// Parse a plain `cargo [+toolchain] test ...` command. `None` for anything else, including a
 /// compound command (`cargo test x && ...`): those compare verbatim.
 pub fn parse_cargo_test(command: &str) -> Option<CargoTestSpec> {
+    let command = command.replace("\\\r\n", "").replace("\\\n", "");
     let mut tokens = command.split_whitespace().peekable();
     if tokens.next()? != "cargo" {
         return None;
@@ -2145,6 +2148,10 @@ mod tests {
         assert!(commands_equal(
             "cargo test --test b --test a",
             "cargo test --test a --test b"
+        ));
+        assert!(commands_equal(
+            "cargo test -p auth \\\n  --test expiry \\\n  --test rotation",
+            "cargo test --test rotation -p auth --test expiry"
         ));
         assert!(!commands_equal("pytest -q a", "pytest -q b"));
     }

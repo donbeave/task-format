@@ -75,9 +75,10 @@ Out of scope:
 
 Canonical typed acceptance blocks use taskfmt's Markdown profile. Each non-gate block has
 `Type`, `Class`, `Covers`, `Evidence`, and `Expected` metadata plus one exact `gherkin` fence.
-`Covers` names real `R-*` requirements. `Evidence` is the exact command; use inline code for a
-short command or a fenced `sh` block for a long command. Break long shell chains after `&&` so
-each assertion is visible. `Expected` is the exact passing result. A gate has no `Class`, `Covers`,
+`Covers` names real `R-*` requirements. `Evidence` is always one exact command in a fenced `sh`
+block. Keep a short command on one line. Break long shell chains after `&&` so each assertion is
+visible. Wrap long argument lists with shell continuations and one logical argument per line.
+`Expected` is the exact passing result. A gate has no `Class`, `Covers`,
 or Gherkin body. These blocks are task metadata, not Cucumber feature files and have no runtime
 step definitions.
 
@@ -85,8 +86,11 @@ step definitions.
 Type: scenario
 Class: delta
 Covers: R-001
-Evidence: `<focused command>`
-Expected: `<exit 0 / output>`
+Evidence:
+```sh
+<focused command>
+```
+Expected: <exit 0 / output>
 
 ```gherkin
 Given the starting state described by the task
@@ -103,7 +107,7 @@ Evidence:
 <focused command part one> &&
 <focused command part two>
 ```
-Expected: `<expected result>`
+Expected: <expected result>
 
 ```gherkin
 Given the edge or failure state described by the task
@@ -115,7 +119,10 @@ Then the required error or preserved invariant is observable
 Type: invariant
 Class: regression
 Covers: R-003
-Evidence: `! <grep command>`
+Evidence:
+```sh
+! <grep command>
+```
 Expected: exit 0, no output
 
 ```gherkin
@@ -126,7 +133,10 @@ Then the required behavior is preserved or the old path is absent
 
 ### AC-004 — Completion gate passes
 Type: gate
-Evidence: `taskfmt verify`
+Evidence:
+```sh
+taskfmt verify
+```
 Expected: exit 0, last line `DONE`
 
 ## Fixed decisions

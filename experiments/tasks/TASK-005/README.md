@@ -95,7 +95,10 @@ Cucumber feature files and have no runtime step definitions.
 Type: scenario
 Class: delta
 Covers: R-001, R-002, R-003
-Evidence: `cargo test -p pgtui --test grid_sort_test`
+Evidence:
+```sh
+cargo test -p pgtui --test grid_sort_test
+```
 Expected: exit 0, `8 passed`
 
 ```gherkin
@@ -108,7 +111,10 @@ Then numeric and byte-wise ordering, stable ties, and D-052 null placement match
 Type: invariant
 Class: invariant
 Covers: R-001, R-002, R-003
-Evidence: `cargo test -p pgtui --test grid_sort_test`
+Evidence:
+```sh
+cargo test -p pgtui --test grid_sort_test
+```
 Expected: exit 0, `8 passed`
 
 ```gherkin
@@ -119,7 +125,10 @@ The grid resets sort and cursors for a new preview and handles an empty result w
 Type: scenario
 Class: delta
 Covers: R-004
-Evidence: `cargo test -p pgtui --test pg_preview_test`
+Evidence:
+```sh
+cargo test -p pgtui --test pg_preview_test
+```
 Expected: exit 0, `4 passed`
 
 ```gherkin
@@ -132,7 +141,10 @@ Then rows match the fixture cell-for-cell, NULLs survive, and 600 rows are cappe
 Type: scenario
 Class: failure
 Covers: R-004
-Evidence: `cargo test -p pgtui --test pg_preview_test`
+Evidence:
+```sh
+cargo test -p pgtui --test pg_preview_test
+```
 Expected: exit 0, `4 passed`
 
 ```gherkin
@@ -145,7 +157,10 @@ Then the database failure maps to DbError::Query
 Type: scenario
 Class: delta
 Covers: R-005
-Evidence: `cargo test -p pgtui --test app_preview_test`
+Evidence:
+```sh
+cargo test -p pgtui --test app_preview_test
+```
 Expected: exit 0, `8 passed`
 
 ```gherkin
@@ -158,7 +173,10 @@ Then the result builds the grid, focuses it, and clamps its row cursor
 Type: scenario
 Class: invariant
 Covers: R-005
-Evidence: `cargo test -p pgtui --test app_preview_test`
+Evidence:
+```sh
+cargo test -p pgtui --test app_preview_test
+```
 Expected: exit 0, `8 passed`
 
 ```gherkin
@@ -171,7 +189,10 @@ Then sorting cycles as decided and a failed query keeps the previous grid with a
 Type: scenario
 Class: delta
 Covers: R-006
-Evidence: `cargo test -p pgtui --test screen_preview_test`
+Evidence:
+```sh
+cargo test -p pgtui --test screen_preview_test
+```
 Expected: exit 0, `5 passed`
 
 ```gherkin
@@ -184,7 +205,26 @@ Then headers, cursor and sort markers, rows, status, and help appear as decided
 Type: invariant
 Class: regression
 Covers: R-001, R-002, R-003, R-004, R-005, R-006
-Evidence: `cargo test -p pgtui --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test --test app_create_form_test --test runtime_create_test --test screen_create_form_test --test pg_connect_test --test pg_runtime_connect_test --test app_browser_test --test screen_browser_test --test grid_sort_test --test pg_preview_test --test app_preview_test --test screen_preview_test --test skeleton_test -- --skip pgtui_stub_exits_2`
+Evidence:
+```sh
+cargo test -p pgtui \
+  --test store_test \
+  --test app_connection_list_test \
+  --test screen_connection_list_test \
+  --test cli_test \
+  --test app_create_form_test \
+  --test runtime_create_test \
+  --test screen_create_form_test \
+  --test pg_connect_test \
+  --test pg_runtime_connect_test \
+  --test app_browser_test \
+  --test screen_browser_test \
+  --test grid_sort_test \
+  --test pg_preview_test \
+  --test app_preview_test \
+  --test screen_preview_test \
+  --test skeleton_test -- --skip pgtui_stub_exits_2
+```
 Expected: exit 0, 16 `test result: ok.` lines (one per target), no `FAILED`
 
 ```gherkin
@@ -193,7 +233,10 @@ The complete trusted suite for the task remains green.
 
 ### AC-009 — Completion gate passes
 Type: gate
-Evidence: `taskfmt verify`
+Evidence:
+```sh
+taskfmt verify
+```
 Expected: exit 0, last line `DONE`
 
 ## Fixed decisions

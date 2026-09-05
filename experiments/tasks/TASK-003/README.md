@@ -89,7 +89,10 @@ Cucumber feature files and have no runtime step definitions.
 Type: scenario
 Class: delta
 Covers: R-001, R-002
-Evidence: `cargo test -p pgtui --test app_create_form_test`
+Evidence:
+```sh
+cargo test -p pgtui --test app_create_form_test
+```
 Expected: exit 0, `9 passed`
 
 ```gherkin
@@ -102,7 +105,10 @@ Then the six fields cycle with wraparound and the blank form has the D-010 field
 Type: scenario
 Class: delta
 Covers: R-002
-Evidence: `cargo test -p pgtui --test app_create_form_test`
+Evidence:
+```sh
+cargo test -p pgtui --test app_create_form_test
+```
 Expected: exit 0, `9 passed`
 
 ```gherkin
@@ -115,7 +121,10 @@ Then text appends, Backspace removes the last character, and the port keeps digi
 Type: scenario
 Class: invariant
 Covers: R-002
-Evidence: `cargo test -p pgtui --test app_create_form_test`
+Evidence:
+```sh
+cargo test -p pgtui --test app_create_form_test
+```
 Expected: exit 0, `9 passed`
 
 ```gherkin
@@ -128,7 +137,10 @@ Then the values are discarded and the connection list returns
 Type: scenario
 Class: delta
 Covers: R-003, R-004
-Evidence: `cargo test -p pgtui --test runtime_create_test`
+Evidence:
+```sh
+cargo test -p pgtui --test runtime_create_test
+```
 Expected: exit 0, `3 passed`
 
 ```gherkin
@@ -141,7 +153,10 @@ Then the row is inserted, the list reloads, and the new row is selected
 Type: scenario
 Class: failure
 Covers: R-003
-Evidence: `cargo test -p pgtui --test runtime_create_test`
+Evidence:
+```sh
+cargo test -p pgtui --test runtime_create_test
+```
 Expected: exit 0, `3 passed`
 
 ```gherkin
@@ -154,7 +169,10 @@ Then the decided duplicate-name error is shown and the form remains open
 Type: scenario
 Class: delta
 Covers: R-005
-Evidence: `cargo test -p pgtui --test screen_create_form_test`
+Evidence:
+```sh
+cargo test -p pgtui --test screen_create_form_test
+```
 Expected: exit 0, `3 passed`
 
 ```gherkin
@@ -167,7 +185,18 @@ Then labels, focus, masked password characters, and the D-060 help line appear
 Type: invariant
 Class: regression
 Covers: R-001, R-002, R-003, R-004, R-005
-Evidence: `cargo test -p pgtui --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test --test app_create_form_test --test runtime_create_test --test screen_create_form_test --test skeleton_test -- --skip pgtui_stub_exits_2`
+Evidence:
+```sh
+cargo test -p pgtui \
+  --test store_test \
+  --test app_connection_list_test \
+  --test screen_connection_list_test \
+  --test cli_test \
+  --test app_create_form_test \
+  --test runtime_create_test \
+  --test screen_create_form_test \
+  --test skeleton_test -- --skip pgtui_stub_exits_2
+```
 Expected: exit 0, 8 `test result: ok.` lines (one per target), no `FAILED`
 
 ```gherkin
@@ -176,7 +205,10 @@ The complete trusted suite for the task remains green.
 
 ### AC-008 — Completion gate passes
 Type: gate
-Evidence: `taskfmt verify`
+Evidence:
+```sh
+taskfmt verify
+```
 Expected: exit 0, last line `DONE`
 
 ## Fixed decisions

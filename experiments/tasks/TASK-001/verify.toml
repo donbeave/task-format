@@ -57,7 +57,10 @@ grep -qE '^testcontainers = "=0\.27\.3"' Cargo.toml &&
 grep -qE '^testcontainers-modules = \{ version = "=0\.15\.0"' Cargo.toml &&
 grep -qE '^nix = \{ version = "=0\.30\.1"' Cargo.toml''',
   # D-004 toolchain files. Byte-identical to AC-003's evidence command.
-  '''grep -q '1.98.0' rust-toolchain.toml && grep -q 'edition = "2024"' rustfmt.toml && grep -q 'TESTCONTAINERS_COMMAND' .cargo/config.toml && grep -q 'target/' .gitignore''',
+  '''grep -q '1.98.0' rust-toolchain.toml &&
+grep -q 'edition = "2024"' rustfmt.toml &&
+grep -q 'TESTCONTAINERS_COMMAND' .cargo/config.toml &&
+grep -q 'target/' .gitignore''',
 ]
 
 [regression]

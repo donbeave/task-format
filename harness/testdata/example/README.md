@@ -75,15 +75,18 @@ Out of scope:
 
 ## Acceptance criteria
 
-Typed acceptance uses the taskfmt Markdown profile: each `AC-*` block has metadata, a fenced
-Gherkin-shaped behavior description, and separate `Evidence`/`Expected` proof fields. It is not a
-Cucumber document and has no runtime step definitions.
+Typed acceptance uses the taskfmt Markdown profile: each `AC-*` block has metadata, one exact
+`Evidence` command in a fenced `sh` block, an `Expected` result, and a fenced Gherkin-shaped
+behavior description. It is not a Cucumber document and has no runtime step definitions.
 
 ### AC-001 — Expired refresh is rejected
 Type: scenario
 Class: delta
 Covers: R-001, R-003
-Evidence: `cargo test -p auth expired_refresh_token`
+Evidence:
+```sh
+cargo test -p auth expired_refresh_token
+```
 Expected: exit 0, `1 passed`; response is 401 and session state is unchanged
 
 ```gherkin
@@ -97,7 +100,10 @@ And no session state is changed
 Type: scenario
 Class: invariant
 Covers: R-002
-Evidence: `cargo test -p auth valid_refresh_rotation`
+Evidence:
+```sh
+cargo test -p auth valid_refresh_rotation
+```
 Expected: exit 0, `1 passed`; rotation succeeds as before
 
 ```gherkin
@@ -110,7 +116,10 @@ Then rotation succeeds exactly as before
 Type: scenario
 Class: removal
 Covers: R-004
-Evidence: `! grep -rn legacy_expiry_check src tests`
+Evidence:
+```sh
+! grep -rn legacy_expiry_check src tests
+```
 Expected: exit 0, no output; no reference remains
 
 ```gherkin
@@ -121,7 +130,10 @@ Then the legacy expiry helper is absent
 
 ### AC-004 — Completion gate passes
 Type: gate
-Evidence: `taskfmt verify`
+Evidence:
+```sh
+taskfmt verify
+```
 Expected: exit 0 and the last line is DONE
 
 ## Fixed decisions

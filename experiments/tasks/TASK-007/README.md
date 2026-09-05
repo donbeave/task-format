@@ -94,7 +94,10 @@ Cucumber feature files and have no runtime step definitions.
 Type: scenario
 Class: delta
 Covers: R-001
-Evidence: `cargo test -p pgtui --test app_disconnect_test`
+Evidence:
+```sh
+cargo test -p pgtui --test app_disconnect_test
+```
 Expected: exit 0, `5 passed`
 
 ```gherkin
@@ -108,7 +111,10 @@ And the session, grids, and SQL input reset while connections and list cursor re
 Type: scenario
 Class: delta
 Covers: R-002
-Evidence: `cargo test -p pgtui --test pg_disconnect_test`
+Evidence:
+```sh
+cargo test -p pgtui --test pg_disconnect_test
+```
 Expected: exit 0, `1 passed`
 
 ```gherkin
@@ -121,7 +127,10 @@ Then the pgtui backend is absent from pg_stat_activity before the reply returns
 Type: scenario
 Class: delta
 Covers: R-003
-Evidence: `cargo test -p pgtui --test cli_exit_test`
+Evidence:
+```sh
+cargo test -p pgtui --test cli_exit_test
+```
 Expected: exit 0, `2 passed`
 
 ```gherkin
@@ -134,7 +143,10 @@ Then both processes exit 0 and leave the alternate screen
 Type: scenario
 Class: delta
 Covers: R-004
-Evidence: `cargo test -p pgtui --test gallery_test`
+Evidence:
+```sh
+cargo test -p pgtui --test gallery_test
+```
 Expected: exit 0, `4 passed`
 
 ```gherkin
@@ -147,7 +159,33 @@ Then it writes the ten named SVG and PNG pairs with byte-identical output
 Type: invariant
 Class: regression
 Covers: R-001, R-002, R-003, R-004, R-005
-Evidence: `cargo test -p pgtui --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test --test app_create_form_test --test runtime_create_test --test screen_create_form_test --test pg_connect_test --test pg_runtime_connect_test --test app_browser_test --test screen_browser_test --test grid_sort_test --test pg_preview_test --test app_preview_test --test screen_preview_test --test app_custom_sql_test --test pg_custom_sql_test --test screen_custom_sql_test --test app_disconnect_test --test pg_disconnect_test --test cli_exit_test --test gallery_test --test skeleton_test -- --skip stub_exits_2`
+Evidence:
+```sh
+cargo test -p pgtui \
+  --test store_test \
+  --test app_connection_list_test \
+  --test screen_connection_list_test \
+  --test cli_test \
+  --test app_create_form_test \
+  --test runtime_create_test \
+  --test screen_create_form_test \
+  --test pg_connect_test \
+  --test pg_runtime_connect_test \
+  --test app_browser_test \
+  --test screen_browser_test \
+  --test grid_sort_test \
+  --test pg_preview_test \
+  --test app_preview_test \
+  --test screen_preview_test \
+  --test app_custom_sql_test \
+  --test pg_custom_sql_test \
+  --test screen_custom_sql_test \
+  --test app_disconnect_test \
+  --test pg_disconnect_test \
+  --test cli_exit_test \
+  --test gallery_test \
+  --test skeleton_test -- --skip stub_exits_2
+```
 Expected: exit 0, 23 `test result: ok.` lines (one per target), no `FAILED`
 
 ```gherkin
@@ -158,7 +196,10 @@ Then every target reports test result ok and no target reports FAILED
 
 ### AC-006 — Completion gate passes
 Type: gate
-Evidence: `taskfmt verify`
+Evidence:
+```sh
+taskfmt verify
+```
 Expected: exit 0, last line `DONE`
 
 ## Fixed decisions

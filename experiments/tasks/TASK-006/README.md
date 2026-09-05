@@ -93,7 +93,10 @@ Cucumber feature files and have no runtime step definitions.
 Type: scenario
 Class: delta
 Covers: R-001
-Evidence: `cargo test -p pgtui --test app_custom_sql_test`
+Evidence:
+```sh
+cargo test -p pgtui --test app_custom_sql_test
+```
 Expected: exit 0, `9 passed`
 
 ```gherkin
@@ -106,7 +109,10 @@ Then printable input, Backspace, and the empty-Enter no-op behave as decided
 Type: scenario
 Class: delta
 Covers: R-001, R-003, R-004
-Evidence: `cargo test -p pgtui --test app_custom_sql_test`
+Evidence:
+```sh
+cargo test -p pgtui --test app_custom_sql_test
+```
 Expected: exit 0, `9 passed`
 
 ```gherkin
@@ -119,7 +125,10 @@ Then the custom query effect is emitted and returned rows build the decided grid
 Type: scenario
 Class: invariant
 Covers: R-001, R-004
-Evidence: `cargo test -p pgtui --test app_custom_sql_test`
+Evidence:
+```sh
+cargo test -p pgtui --test app_custom_sql_test
+```
 Expected: exit 0, `9 passed`
 
 ```gherkin
@@ -132,7 +141,10 @@ Then the session, grid, and SQL input are retained
 Type: scenario
 Class: delta
 Covers: R-002, R-003
-Evidence: `cargo test -p pgtui --test pg_custom_sql_test`
+Evidence:
+```sh
+cargo test -p pgtui --test pg_custom_sql_test
+```
 Expected: exit 0, `5 passed`
 
 ```gherkin
@@ -145,7 +157,10 @@ Then SELECT rows, affected counts, trimming, and the 500-row cap follow D-025
 Type: scenario
 Class: failure
 Covers: R-002
-Evidence: `cargo test -p pgtui --test pg_custom_sql_test`
+Evidence:
+```sh
+cargo test -p pgtui --test pg_custom_sql_test
+```
 Expected: exit 0, `5 passed`
 
 ```gherkin
@@ -158,7 +173,10 @@ Then multi-statement input is rejected and syntax errors map to DbError::Query
 Type: scenario
 Class: delta
 Covers: R-005
-Evidence: `cargo test -p pgtui --test screen_custom_sql_test`
+Evidence:
+```sh
+cargo test -p pgtui --test screen_custom_sql_test
+```
 Expected: exit 0, `3 passed`
 
 ```gherkin
@@ -171,7 +189,29 @@ Then the SQL input, result title, hint, echoed SQL, and marker-free grid match D
 Type: invariant
 Class: regression
 Covers: R-001, R-002, R-003, R-004, R-005
-Evidence: `cargo test -p pgtui --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test --test app_create_form_test --test runtime_create_test --test screen_create_form_test --test pg_connect_test --test pg_runtime_connect_test --test app_browser_test --test screen_browser_test --test grid_sort_test --test pg_preview_test --test app_preview_test --test screen_preview_test --test app_custom_sql_test --test pg_custom_sql_test --test screen_custom_sql_test --test skeleton_test -- --skip pgtui_stub_exits_2`
+Evidence:
+```sh
+cargo test -p pgtui \
+  --test store_test \
+  --test app_connection_list_test \
+  --test screen_connection_list_test \
+  --test cli_test \
+  --test app_create_form_test \
+  --test runtime_create_test \
+  --test screen_create_form_test \
+  --test pg_connect_test \
+  --test pg_runtime_connect_test \
+  --test app_browser_test \
+  --test screen_browser_test \
+  --test grid_sort_test \
+  --test pg_preview_test \
+  --test app_preview_test \
+  --test screen_preview_test \
+  --test app_custom_sql_test \
+  --test pg_custom_sql_test \
+  --test screen_custom_sql_test \
+  --test skeleton_test -- --skip pgtui_stub_exits_2
+```
 Expected: exit 0, 19 `test result: ok.` lines (one per target), no `FAILED`
 
 ```gherkin
@@ -180,7 +220,10 @@ The complete trusted suite for the task remains green.
 
 ### AC-008 — Completion gate passes
 Type: gate
-Evidence: `taskfmt verify`
+Evidence:
+```sh
+taskfmt verify
+```
 Expected: exit 0, last line `DONE`
 
 ## Fixed decisions

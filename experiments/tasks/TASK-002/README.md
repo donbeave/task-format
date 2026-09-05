@@ -95,7 +95,10 @@ Cucumber feature files and have no runtime step definitions.
 Type: scenario
 Class: delta
 Covers: R-001
-Evidence: `cargo test -p pgtui --test store_test`
+Evidence:
+```sh
+cargo test -p pgtui --test store_test
+```
 Expected: exit 0, `5 passed`
 
 ```gherkin
@@ -108,7 +111,10 @@ Then connections are listed in ascending name order and survive the reopen
 Type: scenario
 Class: delta
 Covers: R-001
-Evidence: `cargo test -p pgtui --test store_test`
+Evidence:
+```sh
+cargo test -p pgtui --test store_test
+```
 Expected: exit 0, `5 passed`
 
 ```gherkin
@@ -121,7 +127,10 @@ Then the store returns the decided duplicate-name error
 Type: scenario
 Class: delta
 Covers: R-002, R-003
-Evidence: `cargo test -p pgtui --test app_connection_list_test`
+Evidence:
+```sh
+cargo test -p pgtui --test app_connection_list_test
+```
 Expected: exit 0, `5 passed`
 
 ```gherkin
@@ -134,7 +143,10 @@ Then the cursor remains clamped within the list
 Type: scenario
 Class: invariant
 Covers: R-003
-Evidence: `cargo test -p pgtui --test app_connection_list_test`
+Evidence:
+```sh
+cargo test -p pgtui --test app_connection_list_test
+```
 Expected: exit 0, `5 passed`
 
 ```gherkin
@@ -147,7 +159,10 @@ Then App emits Effect::Quit
 Type: scenario
 Class: delta
 Covers: R-004
-Evidence: `cargo test -p pgtui --test screen_connection_list_test`
+Evidence:
+```sh
+cargo test -p pgtui --test screen_connection_list_test
+```
 Expected: exit 0, `3 passed`
 
 ```gherkin
@@ -160,7 +175,10 @@ Then the title, DSN rows, and selected-row marker match D-060 without a password
 Type: scenario
 Class: invariant
 Covers: R-004
-Evidence: `cargo test -p pgtui --test screen_connection_list_test`
+Evidence:
+```sh
+cargo test -p pgtui --test screen_connection_list_test
+```
 Expected: exit 0, `3 passed`
 
 ```gherkin
@@ -173,7 +191,10 @@ Then its hint, help line, and status line are visible
 Type: scenario
 Class: delta
 Covers: R-005
-Evidence: `cargo test -p pgtui --test cli_test`
+Evidence:
+```sh
+cargo test -p pgtui --test cli_test
+```
 Expected: exit 0, `3 passed`
 
 ```gherkin
@@ -186,7 +207,10 @@ Then the decided stderr diagnostics and exit codes are returned
 Type: scenario
 Class: invariant
 Covers: R-005
-Evidence: `cargo test -p pgtui --test cli_test`
+Evidence:
+```sh
+cargo test -p pgtui --test cli_test
+```
 Expected: exit 0, `3 passed`
 
 ```gherkin
@@ -199,7 +223,15 @@ Then the process returns successfully after restoring the terminal
 Type: invariant
 Class: regression
 Covers: R-001, R-002, R-003, R-004, R-005
-Evidence: `cargo test -p pgtui --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test --test skeleton_test -- --skip pgtui_stub_exits_2`
+Evidence:
+```sh
+cargo test -p pgtui \
+  --test store_test \
+  --test app_connection_list_test \
+  --test screen_connection_list_test \
+  --test cli_test \
+  --test skeleton_test -- --skip pgtui_stub_exits_2
+```
 Expected: exit 0, 5 `test result: ok.` lines (one per target), no `FAILED`
 
 ```gherkin
@@ -208,7 +240,10 @@ The complete trusted suite for the task remains green.
 
 ### AC-010 — Completion gate passes
 Type: gate
-Evidence: `taskfmt verify`
+Evidence:
+```sh
+taskfmt verify
+```
 Expected: exit 0, last line `DONE`
 
 ## Fixed decisions

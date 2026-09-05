@@ -157,17 +157,15 @@ pub fn parse(text: &str) -> AcceptanceDocument {
                     }
                     let field_line = i + 1;
                     let mut value = strip_value(value);
-                    if key == "evidence" && value.is_empty() {
-                        let mut fence_index = i + 1;
-                        while lines
-                            .get(fence_index)
-                            .is_some_and(|line| line.trim().is_empty())
-                        {
-                            fence_index += 1;
-                        }
-                        let fence = lines.get(fence_index).map(|line| line.trim());
-                        if matches!(fence, Some("```sh" | "```bash")) {
-                            i = fence_index + 1;
+                    if key == "evidence" {
+                        if !value.is_empty() {
+                            err(
+                                &mut doc.errors,
+                                field_line,
+                                format!("{id} Evidence must use an exact ```sh fence"),
+                            );
+                        } else if lines.get(i + 1).map(|line| line.trim()) == Some("```sh") {
+                            i += 2;
                             let body_start = i + 1;
                             let mut command = Vec::new();
                             while i < lines.len() && lines[i].trim() != "```" {
@@ -183,6 +181,12 @@ pub fn parse(text: &str) -> AcceptanceDocument {
                             } else {
                                 value = command.join("\n").trim().to_string();
                             }
+                        } else {
+                            err(
+                                &mut doc.errors,
+                                field_line,
+                                format!("{id} Evidence must be followed by an exact ```sh fence"),
+                            );
                         }
                     }
                     fields.insert(key, (value, field_line));
@@ -522,7 +526,10 @@ mod tests {
 Type: scenario
 Class: failure
 Covers: R-001, R-002
-Evidence: `cargo test ac_001`
+Evidence:
+```sh
+cargo test ac_001
+```
 Expected: exit 0
 
 ```gherkin
@@ -536,7 +543,7 @@ And the error is shown
     #[test]
     fn parses_all_types_and_metadata() {
         let text = format!(
-            "{SCENARIO}\n### AC-002 — Static rule\nType: invariant\nCovers: R-003\nEvidence: `grep rule`\nExpected: no output\n\n```gherkin\nThe rule is enforced\n```\n\n### AC-003 — Matrix\nType: outline\nCovers: R-004\nEvidence: `cargo test matrix`\nExpected: exit 0\n\n```gherkin\nWhen sorted <direction>\nThen NULL is <placement>\nExamples:\n| direction | placement |\n| ascending | last |\n| descending | first |\n```\n\n### AC-004 — Gate\nType: gate\nEvidence: `taskfmt verify`\nExpected: DONE\n"
+            "{SCENARIO}\n### AC-002 — Static rule\nType: invariant\nCovers: R-003\nEvidence:\n```sh\ngrep rule\n```\nExpected: no output\n\n```gherkin\nThe rule is enforced\n```\n\n### AC-003 — Matrix\nType: outline\nCovers: R-004\nEvidence:\n```sh\ncargo test matrix\n```\nExpected: exit 0\n\n```gherkin\nWhen sorted <direction>\nThen NULL is <placement>\nExamples:\n| direction | placement |\n| ascending | last |\n| descending | first |\n```\n\n### AC-004 — Gate\nType: gate\nEvidence:\n```sh\ntaskfmt verify\n```\nExpected: DONE\n"
         );
         let doc = parse(&text);
         assert!(doc.detected);
@@ -551,8 +558,8 @@ And the error is shown
     #[test]
     fn parses_fenced_multiline_evidence() {
         let text = SCENARIO.replace(
-            "Evidence: `cargo test ac_001`",
-            "Evidence:\n\n```sh\ngrep -q first Cargo.toml &&\ngrep -q second Cargo.toml\n```",
+            "cargo test ac_001",
+            "grep -q first Cargo.toml &&\ngrep -q second Cargo.toml",
         );
         let doc = parse(&text);
         assert_eq!(
@@ -561,6 +568,25 @@ And the error is shown
         );
         assert!(doc.errors.is_empty(), "{:?}", doc.errors);
         assert!(validate_shape(&doc).is_empty());
+    }
+
+    #[test]
+    fn rejects_noncanonical_evidence_forms() {
+        for replacement in [
+            "Evidence: `cargo test ac_001`",
+            "Evidence:\n```bash\ncargo test ac_001\n```",
+            "Evidence:\n\n```sh\ncargo test ac_001\n```",
+        ] {
+            let text = SCENARIO.replace("Evidence:\n```sh\ncargo test ac_001\n```", replacement);
+            let doc = parse(&text);
+            assert!(
+                doc.errors
+                    .iter()
+                    .any(|error| error.message.contains("exact ```sh fence")),
+                "{replacement:?}: {:?}",
+                doc.errors
+            );
+        }
     }
 
     #[test]

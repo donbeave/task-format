@@ -131,6 +131,37 @@ fn typed_example_package_passes_clean() {
 }
 
 #[test]
+fn canonical_corpus_uses_one_evidence_form() {
+    let root = repo_root();
+    let mut readmes = vec![
+        root.join("reference/task-template/README.md"),
+        example().join("README.md"),
+    ];
+    readmes
+        .extend((1..=7).map(|id| root.join(format!("experiments/tasks/TASK-{id:03}/README.md"))));
+
+    let mut evidence_count = 0;
+    for readme in readmes {
+        let text = std::fs::read_to_string(&readme).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        for (index, line) in lines.iter().enumerate() {
+            if *line != "Evidence:" {
+                continue;
+            }
+            evidence_count += 1;
+            assert_eq!(
+                lines.get(index + 1),
+                Some(&"```sh"),
+                "{}:{} Evidence must use immediate ```sh fence",
+                readme.display(),
+                index + 1
+            );
+        }
+    }
+    assert_eq!(evidence_count, 63);
+}
+
+#[test]
 fn template_still_has_placeholders() {
     let report = lint::lint_path(&repo_root().join("reference/task-template"));
     assert!(
@@ -576,8 +607,8 @@ fn c6_gate_row_is_exempt() {
     // an acceptance criterion running `taskfmt verify` never warns
     let gate_row = mutate(
         &text,
-        "Evidence: `! grep -rn legacy_expiry_check src tests`",
-        "Evidence: `taskfmt verify`",
+        "```sh\n! grep -rn legacy_expiry_check src tests\n```",
+        "```sh\ntaskfmt verify\n```",
     );
     let findings = lint_text(&gate_row, &readme);
     assert!(errors(&findings).is_empty(), "{findings:?}");
@@ -590,7 +621,7 @@ fn c6_gate_row_is_exempt() {
 #[test]
 fn c6_cargo_test_matches_by_target_set_not_token_order() {
     let (text, _) = example_text();
-    let evidence = "Evidence: `cargo test -p auth valid_refresh_rotation`";
+    let evidence = "```sh\ncargo test -p auth valid_refresh_rotation\n```";
     let verify = example_verify_toml().replace(
         "\"cargo test -p auth valid_refresh_rotation\",",
         "\"cargo test -p auth --test rotation --test expiry -- valid\",",
@@ -600,7 +631,7 @@ fn c6_cargo_test_matches_by_target_set_not_token_order() {
     let shuffled = mutate(
         &text,
         evidence,
-        "Evidence: `cargo test --test expiry --package auth --test rotation -- valid`",
+        "```sh\ncargo test --test expiry --package auth --test rotation -- valid\n```",
     );
     let findings = lint_with_verify(&shuffled, &verify);
     assert!(errors(&findings).is_empty(), "{findings:?}");
@@ -613,7 +644,7 @@ fn c6_cargo_test_matches_by_target_set_not_token_order() {
     let extra = mutate(
         &text,
         evidence,
-        "Evidence: `cargo test -p auth --test rotation --test expiry --test other -- valid`",
+        "```sh\ncargo test -p auth --test rotation --test expiry --test other -- valid\n```",
     );
     let findings = lint_with_verify(&extra, &verify);
     assert!(
@@ -630,7 +661,7 @@ fn c6_cargo_test_matches_by_target_set_not_token_order() {
     let other_filter = mutate(
         &text,
         evidence,
-        "Evidence: `cargo test -p auth --test rotation --test expiry -- other`",
+        "```sh\ncargo test -p auth --test rotation --test expiry -- other\n```",
     );
     let findings = lint_with_verify(&other_filter, &verify);
     assert!(
@@ -728,8 +759,16 @@ fn c8_read_before_editing_must_not_reference_task_dir() {
 }
 
 // ---------- C9: baseline command is AC-001 (or a gate suite) for feature/bugfix ----------
-const BASELINE_FENCE: &str = "```sh\ncargo test -p auth expired_refresh_token\n```";
+const BASELINE_BLOCK: &str = "Baseline (run from repo root, before any edit):\n\n```sh\ncargo test -p auth expired_refresh_token\n```";
 const BASELINE_MISMATCH: &str = "Baseline command does not match the AC-001 command or any verify.toml focused/regression command: ";
+
+fn replace_baseline(text: &str, command: &str) -> String {
+    mutate(
+        text,
+        BASELINE_BLOCK,
+        &format!("Baseline (run from repo root, before any edit):\n\n```sh\n{command}\n```"),
+    )
+}
 
 #[test]
 fn c9_baseline_command_must_match_ac_001() {
@@ -741,11 +780,7 @@ fn c9_baseline_command_must_match_ac_001() {
     );
 
     // negative: a suite neither AC-001 nor verify.toml runs
-    let other = mutate(
-        &text,
-        BASELINE_FENCE,
-        "```sh\ncargo test -p auth --test nope\n```",
-    );
+    let other = replace_baseline(&text, "cargo test -p auth --test nope");
     let findings = lint_text(&other, &readme);
     assert!(
         has(
@@ -758,11 +793,7 @@ fn c9_baseline_command_must_match_ac_001() {
     );
 
     // negative: the same package with a different filter is a different suite
-    let other_filter = mutate(
-        &text,
-        BASELINE_FENCE,
-        "```sh\ncargo test -p auth some_other_test\n```",
-    );
+    let other_filter = replace_baseline(&text, "cargo test -p auth some_other_test");
     let findings = lint_text(&other_filter, &readme);
     assert!(
         has(&findings, Severity::Warn, "baseline", BASELINE_MISMATCH),
@@ -770,7 +801,7 @@ fn c9_baseline_command_must_match_ac_001() {
     );
 
     // the structural warning survives regardless of kind
-    let none = remove_gherkin_bodies(&mutate(&text, &format!("{BASELINE_FENCE}\n"), ""));
+    let none = remove_gherkin_bodies(&mutate(&text, &format!("{BASELINE_BLOCK}\n"), ""));
     let findings = lint_text(&none, &readme);
     assert!(
         has(
@@ -797,11 +828,7 @@ fn c9_baseline_command_must_match_ac_001() {
 #[test]
 fn c9_applies_to_feature_and_bugfix_only() {
     let (text, readme) = example_text();
-    let other = mutate(
-        &text,
-        BASELINE_FENCE,
-        "```sh\ncargo test -p auth --test nope\n```",
-    );
+    let other = replace_baseline(&text, "cargo test -p auth --test nope");
     for kind in ["refactor", "removal", "migration", "test", "docs"] {
         let scoped = mutate(&other, "kind: bugfix", &format!("kind: {kind}"));
         let findings = lint_text(&scoped, &readme);
@@ -830,7 +857,7 @@ fn c9_tolerates_a_narrower_or_broader_filter_on_the_ac_001_suite() {
     );
 
     // broader: AC-001 without its filter
-    let broad = mutate(&text, BASELINE_FENCE, "```sh\ncargo test -p auth\n```");
+    let broad = replace_baseline(&text, "cargo test -p auth");
     let findings = lint_with_verify(&broad, &verify);
     assert!(
         !findings.iter().any(|f| f.rule == "baseline"),
@@ -838,10 +865,9 @@ fn c9_tolerates_a_narrower_or_broader_filter_on_the_ac_001_suite() {
     );
 
     // narrower: AC-001 plus trailing harness args
-    let narrow = mutate(
+    let narrow = replace_baseline(
         &text,
-        BASELINE_FENCE,
-        "```sh\ncargo test -p auth expired_refresh_token -- --nocapture\n```",
+        "cargo test -p auth expired_refresh_token -- --nocapture",
     );
     let findings = lint_with_verify(&narrow, &verify);
     assert!(
@@ -852,15 +878,11 @@ fn c9_tolerates_a_narrower_or_broader_filter_on_the_ac_001_suite() {
     // `--test` subset of a multi-target AC-001 (tokens shuffled)
     let multi = text
         .replacen(
-            "Evidence: `cargo test -p auth expired_refresh_token`",
-            "Evidence: `cargo test -p auth --test expiry --test rotation`",
+            "Covers: R-001, R-003\nEvidence:\n```sh\ncargo test -p auth expired_refresh_token\n```",
+            "Covers: R-001, R-003\nEvidence:\n```sh\ncargo test -p auth --test expiry --test rotation\n```",
             1,
         )
-        .replacen(
-            BASELINE_FENCE,
-            "```sh\ncargo test --test expiry --package auth\n```",
-            1,
-        );
+        .replacen(BASELINE_BLOCK, "Baseline (run from repo root, before any edit):\n\n```sh\ncargo test --test expiry --package auth\n```", 1);
     let findings = lint_with_verify(&multi, &verify);
     assert!(
         !findings.iter().any(|f| f.rule == "baseline"),
@@ -868,11 +890,7 @@ fn c9_tolerates_a_narrower_or_broader_filter_on_the_ac_001_suite() {
     );
 
     // a different package is never tolerated
-    let other_pkg = mutate(
-        &text,
-        BASELINE_FENCE,
-        "```sh\ncargo test -p other expired_refresh_token\n```",
-    );
+    let other_pkg = replace_baseline(&text, "cargo test -p other expired_refresh_token");
     let findings = lint_with_verify(&other_pkg, &verify);
     assert!(
         has(&findings, Severity::Warn, "baseline", BASELINE_MISMATCH),
@@ -884,11 +902,7 @@ fn c9_tolerates_a_narrower_or_broader_filter_on_the_ac_001_suite() {
 fn c9_baseline_matching_a_gate_suite_is_not_a_warning() {
     let (text, readme) = example_text();
     // `expired_error_code` is a focused command; it is not AC-001 and no filter subset of it
-    let focused = mutate(
-        &text,
-        BASELINE_FENCE,
-        "```sh\ncargo test --package auth expired_error_code\n```",
-    );
+    let focused = replace_baseline(&text, "cargo test --package auth expired_error_code");
     let findings = lint_text(&focused, &readme);
     assert!(
         !findings.iter().any(|f| f.rule == "baseline"),
@@ -898,13 +912,9 @@ fn c9_baseline_matching_a_gate_suite_is_not_a_warning() {
     // the regression suite (TASK-001 shape): AC-001 is `cargo build`, the baseline is the
     // regression command
     let regression = mutate(
-        &mutate(
-            &text,
-            BASELINE_FENCE,
-            "```sh\ncargo test --package auth\n```",
-        ),
-        "Evidence: `cargo test -p auth expired_refresh_token`",
-        "Evidence: `cargo build -p auth --all-targets`",
+        &replace_baseline(&text, "cargo test --package auth"),
+        "Covers: R-001, R-003\nEvidence:\n```sh\ncargo test -p auth expired_refresh_token\n```",
+        "Covers: R-001, R-003\nEvidence:\n```sh\ncargo build -p auth --all-targets\n```",
     );
     let findings = lint_text(&regression, &readme);
     assert!(

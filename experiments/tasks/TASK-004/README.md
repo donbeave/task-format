@@ -93,7 +93,10 @@ Cucumber feature files and have no runtime step definitions.
 Type: scenario
 Class: delta
 Covers: R-001, R-002, R-003, R-004
-Evidence: `cargo test -p pgtui --test pg_connect_test`
+Evidence:
+```sh
+cargo test -p pgtui --test pg_connect_test
+```
 Expected: exit 0, `4 passed`
 
 ```gherkin
@@ -106,7 +109,10 @@ Then the four seed tables are returned in schema order through the decided query
 Type: scenario
 Class: failure
 Covers: R-003
-Evidence: `cargo test -p pgtui --test pg_connect_test`
+Evidence:
+```sh
+cargo test -p pgtui --test pg_connect_test
+```
 Expected: exit 0, `4 passed`
 
 ```gherkin
@@ -119,7 +125,10 @@ Then the corresponding decided error is returned without terminating the list fl
 Type: scenario
 Class: delta
 Covers: R-003
-Evidence: `cargo test -p pgtui --test pg_runtime_connect_test`
+Evidence:
+```sh
+cargo test -p pgtui --test pg_runtime_connect_test
+```
 Expected: exit 0, `1 passed`
 
 ```gherkin
@@ -132,7 +141,10 @@ Then runtime replies with Msg::Connected(Ok(tables)) containing the listed table
 Type: scenario
 Class: delta
 Covers: R-005
-Evidence: `cargo test -p pgtui --test app_browser_test`
+Evidence:
+```sh
+cargo test -p pgtui --test app_browser_test
+```
 Expected: exit 0, `6 passed`
 
 ```gherkin
@@ -145,7 +157,10 @@ Then success enters the browser, failure stays on the list, and sidebar cursors 
 Type: scenario
 Class: delta
 Covers: R-005
-Evidence: `cargo test -p pgtui --test screen_browser_test`
+Evidence:
+```sh
+cargo test -p pgtui --test screen_browser_test
+```
 Expected: exit 0, `2 passed`
 
 ```gherkin
@@ -158,7 +173,22 @@ Then schema.name rows, the selected marker, and the focused-pane marker appear a
 Type: invariant
 Class: regression
 Covers: R-001, R-002, R-003, R-004, R-005
-Evidence: `cargo test -p pgtui --test store_test --test app_connection_list_test --test screen_connection_list_test --test cli_test --test app_create_form_test --test runtime_create_test --test screen_create_form_test --test pg_connect_test --test pg_runtime_connect_test --test app_browser_test --test screen_browser_test --test skeleton_test -- --skip pgtui_stub_exits_2`
+Evidence:
+```sh
+cargo test -p pgtui \
+  --test store_test \
+  --test app_connection_list_test \
+  --test screen_connection_list_test \
+  --test cli_test \
+  --test app_create_form_test \
+  --test runtime_create_test \
+  --test screen_create_form_test \
+  --test pg_connect_test \
+  --test pg_runtime_connect_test \
+  --test app_browser_test \
+  --test screen_browser_test \
+  --test skeleton_test -- --skip pgtui_stub_exits_2
+```
 Expected: exit 0, 12 `test result: ok.` lines (one per target), no `FAILED`
 
 ```gherkin
@@ -167,7 +197,10 @@ The complete trusted suite for the task remains green.
 
 ### AC-007 — Completion gate passes
 Type: gate
-Evidence: `taskfmt verify`
+Evidence:
+```sh
+taskfmt verify
+```
 Expected: exit 0, last line `DONE`
 
 ## Fixed decisions

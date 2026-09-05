@@ -94,7 +94,10 @@ Cucumber feature files and have no runtime step definitions.
 Type: scenario
 Class: delta
 Covers: R-001
-Evidence: `cargo build --workspace --all-targets`
+Evidence:
+```sh
+cargo build --workspace --all-targets
+```
 Expected: exit 0
 
 ```gherkin
@@ -135,7 +138,13 @@ Then every D-001 dependency uses its exact pinned version
 Type: invariant
 Class: policy
 Covers: R-003
-Evidence: `grep -q '1.98.0' rust-toolchain.toml && grep -q 'edition = "2024"' rustfmt.toml && grep -q 'TESTCONTAINERS_COMMAND' .cargo/config.toml && grep -q 'target/' .gitignore`
+Evidence:
+```sh
+grep -q '1.98.0' rust-toolchain.toml &&
+grep -q 'edition = "2024"' rustfmt.toml &&
+grep -q 'TESTCONTAINERS_COMMAND' .cargo/config.toml &&
+grep -q 'target/' .gitignore
+```
 Expected: exit 0
 
 ```gherkin
@@ -146,7 +155,10 @@ The channel, rustfmt edition, container environment, and ignore list match D-001
 Type: scenario
 Class: delta
 Covers: R-005
-Evidence: `cargo test -p pgtui --test skeleton_test -- stub`
+Evidence:
+```sh
+cargo test -p pgtui --test skeleton_test -- stub
+```
 Expected: exit 0, `2 passed`
 
 ```gherkin
@@ -159,7 +171,10 @@ Then pgtui explains that it is not implemented on stderr and returns exit code 2
 Type: scenario
 Class: delta
 Covers: R-005
-Evidence: `cargo test -p pgtui --test skeleton_test -- stub`
+Evidence:
+```sh
+cargo test -p pgtui --test skeleton_test -- stub
+```
 Expected: exit 0, `2 passed`
 
 ```gherkin
@@ -172,7 +187,10 @@ Then gallery prints usage on stderr and returns exit code 2
 Type: scenario
 Class: invariant
 Covers: R-004
-Evidence: `cargo test -p pgtui --test skeleton_test -- trims pipeline`
+Evidence:
+```sh
+cargo test -p pgtui --test skeleton_test -- trims pipeline
+```
 Expected: exit 0, `2 passed`
 
 ```gherkin
@@ -183,7 +201,10 @@ Then all three representations behave as specified
 
 ### AC-007 — Completion gate passes
 Type: gate
-Evidence: `taskfmt verify`
+Evidence:
+```sh
+taskfmt verify
+```
 Expected: exit 0, last line `DONE`
 
 ## Fixed decisions
