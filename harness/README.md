@@ -30,91 +30,217 @@ The harness supports Claude and Codex agent profiles. Images are built from [`im
 
 Task-package Markdown, the launch prompt, and bundled task fixtures are executable inputs. Do not casually rewrite them while changing operator documentation.
 
-## Common commands
+## Install and first-time setup
 
-Preload the pinned prerequisite image, then build agent images when the local image cache is not ready:
+Run from the repository root. Docker must be running.
 
 ```sh
-taskfmt preload
-taskfmt build-images --agent all
+cargo install --path harness --locked
+taskfmt preload --auto
+taskfmt build-images --agent all --auto
 ```
 
-Run one task against an existing repository:
+`build-images --agent all` builds, in order:
+
+1. `harness-taskfmt:latest` — the Rust `taskfmt` binary;
+2. `harness-base:latest` — Debian Trixie, Node.js 24 LTS, Rust 1.98, Herdr 0.8.2, PostgreSQL client 18, and runtime tools;
+3. `harness-claude:latest` — Claude Code 2.1.261;
+4. `harness-codex:latest` — Codex CLI 0.153.4.
+
+Use `--agent claude` or `--agent codex` to rebuild one agent layer. Use `--no-cache` when
+refreshing moving base layers. `preload` uses the digest in
+`images/preload/postgres.digest` and saves the matching PostgreSQL 18 image for the inner Docker
+daemon.
+
+Image building and runtime selection are separate. Build both images once, then choose a profile
+per run.
+
+### Claude with GLM-5.3-Flash
+
+The `zai-flash` profile uses Claude Code through Z.ai's Anthropic-compatible API. Store only the
+Z.ai token in the referenced file:
+
+```sh
+mkdir -p ~/.config/taskfmt
+chmod 700 ~/.config/taskfmt
+$EDITOR ~/.config/taskfmt/zai-flash.token
+chmod 600 ~/.config/taskfmt/zai-flash.token
+```
+
+Run with `--agent zai-flash`, or omit `--agent` because it is the configured default:
+
+```sh
+taskfmt run --task TASK-001 --repo <repository-url> --agent zai-flash --wait
+```
+
+### Codex
+
+Use the `codex-default` profile and the image built by `--agent all`:
+
+```sh
+taskfmt run --task TASK-001 --repo <repository-url> --agent codex-default --wait
+```
+
+## Run one task
+
+Lint first, then dispatch to a fresh container:
 
 ```sh
 taskfmt lint TASK-001
-taskfmt run --task TASK-001 --repo <repository-url> --agent codex-default
-taskfmt status <run-id> --wait
-taskfmt gate <run-id>
-taskfmt promote <run-id>
+taskfmt run --task TASK-001 --repo <repository-url> --agent codex-default --wait
 ```
 
-Without `--repo`, `taskfmt run` can create a disposable private experiment repository. To run a selected series, use the complete loop:
+`--wait` waits for the agent, runs the host gate, and returns success only for a passing goal.
+Promotion remains explicit:
 
 ```sh
-taskfmt experiment --tasks 1-3 --repo <repository-url> --agent codex-default
+taskfmt promote <run-id> --auto
 ```
 
-Commands that change state or spend substantial resources ask for confirmation. Use `--auto` or `--yes` for unattended execution; a non-interactive shell requires one of them. Read-only commands do not prompt.
+To return immediately, omit `--wait`, then run:
 
-## Follow a run
+```sh
+taskfmt status <run-id> --wait
+taskfmt gate <run-id> --auto
+taskfmt promote <run-id> --auto
+```
+
+Without `--repo`, `run` creates a disposable private repository after confirmation. `--exp <id>`
+records the run inside an experiment state file.
+
+## Run experiments
+
+`experiment` performs repository setup, dispatch, host gating, and promotion for each selected task
+in order. It stops on the first failed or blocked task.
+
+Run a range against an existing repository:
+
+```sh
+taskfmt experiment \
+  --tasks 1-3 \
+  --repo <repository-url> \
+  --agent zai-flash \
+  --auto
+```
+
+Run every configured task in one command:
+
+```sh
+taskfmt experiment \
+  --tasks all \
+  --repo <repository-url> \
+  --agent zai-flash \
+  --auto
+```
+
+Omit `--repo` to create a disposable private repository. Valid selections include `all`, `1-3,5`,
+`TASK-002..TASK-004`, and `TASK-101`. Resume an interrupted experiment with its recorded ID:
+
+```sh
+taskfmt experiment --resume <experiment-id> --agent zai-flash --auto
+```
+
+Use `--selfcheck` to run the D13 gate selfcheck before each dispatch. It refuses to dispatch when
+the selfcheck fails or has no verdict.
+
+Mutating commands prompt for confirmation. `--auto` and `--yes` skip prompts; a non-interactive
+shell requires one of them. Read-only commands do not prompt.
+
+## Follow and inspect runs
 
 ```sh
 taskfmt ps
+taskfmt ps --json
 taskfmt status <run-id>
+taskfmt status <run-id> --wait
 taskfmt attach <run-id>
-taskfmt gate <run-id>
 ```
 
-`attach` reconnects to the agent TUI; detach with `ctrl+b q`, not `ctrl+c`. A `<run-id>` may also be the container name, run directory, or that run's `manifest.json` path. `taskfmt ps` works without a manifest and is the quickest way to find local runs.
+`<run-id>` may be the run ID, `harness-<run-id>` container name, run directory, or its
+`manifest.json`. `attach` reconnects to the live agent TUI; detach with `ctrl+b q`, never `ctrl+c`.
+Run records and evidence live under `experiments/runs/`.
 
-## Verification and safety
+## Task validation and gates
 
-`taskfmt lint` checks task-package structure before a run. `taskfmt progress-init` creates the agent's uncommitted progress file from the package README.
+Validate task packages before dispatch:
 
-`taskfmt verify` runs ordered checks declared by the package's `verify.toml`, evaluates their executable expected results, checks `writable_paths`, and checks progress unless disabled explicitly. `taskfmt gate` freezes and verifies one candidate tree; `taskfmt promote` refuses anything except its recorded passing result.
-
-Use `--selfcheck` with `run` or `experiment` to test a task gate before dispatch. `taskfmt selfcheck` requires the untouched base to fail relevant focused checks; with a reference solution, it also requires the gate to pass. Selfcheck is opt-in because it uses the task's host toolchain; dispatch refuses both a failing result and a no-verdict result.
-
-Secrets in agent profiles are references, not values. They are resolved only at dispatch, passed through a temporary mode-0600 environment file, then redacted from harness output and records.
-
-## Configuration
-
-Every command that needs repository layout, images, or profiles reads [`experiment.toml`](../experiment.toml). Selection order is:
-
-1. `--config <path>`
-2. `TASKFMT_CONFIG`
-3. Nearest `experiment.toml` found by walking upward from the current directory
-
-Paths in the manifest resolve relative to that manifest, so commands can run from any subdirectory. Set agent profile, model, effort, static environment, secret references, image names, task directory, run directory, and runtime limits there.
-
-## Useful commands
-
-```text
-taskfmt lint [--json] [TASKS...]     validate task packages (`--json` emits one report per line)
-taskfmt progress-init <TASK>         create initial progress file
-taskfmt verify [FLAGS]               run task completion gate
-taskfmt selfcheck <TASK> <WORKSPACE> prove gate distinguishes base from solution
-taskfmt run --task <TASK>             dispatch one containerized task
-taskfmt status <RUN> [--wait]         inspect or wait for a run
-taskfmt attach <RUN>                  reconnect to agent TUI
-taskfmt gate <RUN>                    gate one frozen candidate tree
-taskfmt promote <RUN>                 push the recorded passing tree
-taskfmt experiment [FLAGS]            run selected tasks in order
-taskfmt ps [--json]                  list local run containers
-taskfmt build-images [--agent ...]   build harness images
-taskfmt preload                       cache pinned prerequisite image
-taskfmt fingerprint [FLAGS]          inspect host, source, or image binary fingerprint
-taskfmt selftest                      test bundled harness corpus and gate behavior
+```sh
+taskfmt lint TASK-001
+taskfmt lint --json
+taskfmt progress-init TASK-001
 ```
 
-Run `taskfmt --help` or `taskfmt <command> --help` for command flags. `selfhost` is an advanced, separate command family; its subcommand help is the operator reference.
+Run a gate directly in a workspace with `taskfmt verify`:
 
-## After changing this crate
+```sh
+taskfmt verify \
+  --root <repository-root> \
+  --task-dir <task-directory> \
+  --progress <progress-file>
+```
 
-The host binary and image-baked binary must match. `taskfmt run` compares their content fingerprints and refuses dispatch when they differ. After changing harness Rust code, reinstall the binary and rebuild the affected images.
+The gate passes only when the declared checks pass and the final stdout line is `DONE`. It also
+checks expected results, writable paths, scope, and progress unless progress is disabled with
+`--no-progress` or `--progress ""`. Use `--fail-fast` to stop after the first failed check.
 
-Run the harness checks from repository root:
+Prove a task gate distinguishes the untouched base from a reference solution:
+
+```sh
+taskfmt selfcheck <task-directory> <base-workspace> \
+  --reference <reference-directory> \
+  --auto
+```
+
+The base workspace is not mutated; selfcheck uses a scratch copy under `TMPDIR`. It is optional
+because it runs focused checks with the host toolchain.
+
+## Configuration and secrets
+
+Commands resolve the manifest in this order:
+
+1. `--config <path>`;
+2. `TASKFMT_CONFIG`;
+3. the nearest `experiment.toml` found by walking upward from the current directory.
+
+Relative paths resolve from the manifest directory. The manifest controls task/run/fixture paths,
+image names, runtime limits, GitHub repository defaults, and agent profiles. In this repository the
+default profile is `zai-flash`; `codex-default` is also available.
+
+Profile secrets are references, not values. They resolve only at dispatch, pass through a temporary
+mode-0600 environment file, and are redacted from output and records.
+
+## Inspection and repository lifecycle
+
+Compare the host binary fingerprint with an image:
+
+```sh
+taskfmt fingerprint
+taskfmt fingerprint --image harness-claude:latest
+taskfmt fingerprint --image harness-codex:latest
+taskfmt fingerprint --path harness
+```
+
+Manage disposable GitHub repositories explicitly when needed:
+
+```sh
+taskfmt repo create --auto
+taskfmt repo delete --name <repository-name> --auto
+```
+
+`selfhost` is an advanced, separate command family. Its complete command reference is available
+from `taskfmt selfhost --help` and its subcommands' help.
+
+## Development and release checks
+
+After changing Rust code, the host binary and image-baked binary must match. Reinstall and rebuild
+all affected images before dispatch:
+
+```sh
+cargo install --path harness --locked
+taskfmt build-images --agent all --no-cache --auto
+```
+
+Run the Rust checks from repository root:
 
 ```sh
 cargo fmt --manifest-path harness/Cargo.toml --check
@@ -123,16 +249,16 @@ cargo test --manifest-path harness/Cargo.toml
 cargo run --manifest-path harness/Cargo.toml -- selftest
 ```
 
-Docker end-to-end coverage is a separate opt-in release gate. It reports `SKIP` when Docker or
-the base image is unavailable; a skip is never release success. Build the image first, then run:
+The Docker integration gate is opt-in:
 
 ```sh
-taskfmt build-images --agent codex
+taskfmt build-images --agent all --auto
 sh harness/tests/run_docker_itest.sh
 ```
 
-The script requires fresh proof written after both Docker bodies pass. It fails on `SKIP`, stale
-proof, or incomplete evidence.
+It reports `SKIP` when Docker or the base image is unavailable; `SKIP` is never release success.
+The script requires fresh proof after both Docker bodies pass and fails on stale or incomplete
+evidence.
 
 ## Repository layout
 
