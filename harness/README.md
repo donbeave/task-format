@@ -123,6 +123,17 @@ cargo test --manifest-path harness/Cargo.toml
 cargo run --manifest-path harness/Cargo.toml -- selftest
 ```
 
+Docker end-to-end coverage is a separate opt-in release gate. It reports `SKIP` when Docker or
+the base image is unavailable; a skip is never release success. Build the image first, then run:
+
+```sh
+taskfmt build-images --agent codex
+sh harness/tests/run_docker_itest.sh
+```
+
+The script requires fresh proof written after both Docker bodies pass. It fails on `SKIP`, stale
+proof, or incomplete evidence.
+
 ## Repository layout
 
 ```text

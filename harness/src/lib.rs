@@ -10,6 +10,7 @@ pub mod config;
 pub mod fingerprint;
 pub mod gate;
 pub mod interactive;
+pub mod itest;
 pub mod lint;
 pub mod ops;
 pub mod progress;

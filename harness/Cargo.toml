@@ -21,6 +21,13 @@ path = "src/main.rs"
 name = "fingerprint_cli"
 path = "checks/fingerprint_cli.rs"
 
+# Docker integration checks own their reporting. libtest cannot represent a runtime SKIP: a
+# returning test is reported PASS, which would let an unavailable Docker daemon look covered.
+[[test]]
+name = "docker_itest"
+path = "tests/docker_itest.rs"
+harness = false
+
 [dependencies]
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
