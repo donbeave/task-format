@@ -4,6 +4,20 @@
 
 > Can a structured task package make AI coding work more predictable, bounded, and independently verifiable?
 
+## Install locally
+
+From the repository root, install the `taskfmt` binary with Cargo:
+
+```sh
+cargo install --path harness --locked
+```
+
+Cargo installs the binary to `~/.cargo/bin`. Ensure that directory is on your `PATH`, then run:
+
+```sh
+taskfmt --help
+```
+
 ## Why this exists
 
 An AI coding agent turns prose into edits, checks, and a completion claim. If scope, decisions, or proof are unclear, it can drift into unrelated work or report success without solving the problem. Faster agents make this ambiguity more expensive, not less.
