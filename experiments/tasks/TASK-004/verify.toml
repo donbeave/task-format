@@ -2,7 +2,7 @@ schema = "verify/v2"
 task_id = "TASK-004"
 predecessor = { task_id = "TASK-003" }
 
-writable_paths = ["Cargo.toml", "Cargo.lock", "crates/pgtui/Cargo.toml", "crates/pgtui/src/lib.rs", "crates/pgtui/src/app.rs", "crates/pgtui/src/keys.rs", "crates/pgtui/src/runtime.rs", "crates/pgtui/src/db/mod.rs", "crates/pgtui/src/db/postgres.rs", "crates/pgtui/src/ui/mod.rs", "crates/pgtui/src/ui/browser.rs"]
+writable_paths = ["Cargo.toml", "Cargo.lock", "crates/pgtui/Cargo.toml", "crates/pgtui/src/lib.rs", "crates/pgtui/src/app.rs", "crates/pgtui/src/keys.rs", "crates/pgtui/src/runtime.rs", "crates/pgtui/src/db/mod.rs", "crates/pgtui/src/db/postgres.rs", "crates/pgtui/src/ui/mod.rs", "crates/pgtui/src/ui/browser.rs", "crates/pgtui/src/ui/status.rs"]
 forbidden_paths = ["crates/pgtui/src/render.rs", "crates/pgtui/src/fonts"]
 
 [[forbidden_patterns]]
