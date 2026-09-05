@@ -60,17 +60,22 @@ referenced by `experiment.toml` must be available.
 ### First-time setup
 
 Install the host binary, preload the pinned PostgreSQL prerequisite image, and build the agent
-image you plan to use:
+images:
 
 ```sh
 cargo install --path harness --locked
 taskfmt preload --auto
-taskfmt build-images --agent codex --auto
+taskfmt build-images --auto
 ```
 
-Use `--agent claude` for a Claude profile or `--agent all` to build both agent images. You do not
-need to run `docker build` directly. Re-run `build-images` after changing harness Rust code so the
-binary on the host and the binary inside the image match.
+`taskfmt build-images` defaults to `--agent all`, so it builds the shared taskfmt/base images plus
+both `harness-claude` and `harness-codex`. Use `--agent claude` or `--agent codex` only when you
+want to build one agent layer. You do not need to run `docker build` directly. Re-run
+`build-images` after changing harness Rust code so the binary on the host and the binary inside
+the image match.
+
+Image building and runtime selection are separate. Build both images once, then choose the agent
+profile for each run with `--agent`.
 
 ### Use Claude with GLM-5.3-Flash
 
