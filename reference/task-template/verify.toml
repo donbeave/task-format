@@ -37,7 +37,7 @@ acceptance = ["AC-004"]
 [[checks]]
 id = "CHK-005"
 phase = "gate"
-argv = ["taskfmt", "verify"]
+argv = ["<gate-command>"]
 expected = { exit = 0 }
 requirements = ["R-005"]
 acceptance = ["AC-005"]

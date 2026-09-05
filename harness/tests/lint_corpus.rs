@@ -7,6 +7,7 @@ use std::time::Duration;
 use taskfmt::lint::{self, Finding, Severity};
 use taskfmt::ops;
 use taskfmt::taskfile::TaskFile;
+use taskfmt::verifycfg::VerifyConfig;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -225,6 +226,19 @@ fn empty_verifier_is_fatal() {
         has(&findings, "config", "missing field `checks`")
             || has(&findings, "config", "checks empty"),
         "{findings:?}"
+    );
+}
+
+#[test]
+fn verifier_rejects_recursive_gate_invocation() {
+    let verify = example_verify().replace(
+        "argv = [\"git\", \"diff\", \"--check\"]",
+        "argv = [\"taskfmt\", \"verify\"]",
+    );
+    let error = VerifyConfig::parse(&verify).unwrap_err().to_string();
+    assert!(
+        error.contains("must not invoke `taskfmt verify`"),
+        "{error}"
     );
 }
 

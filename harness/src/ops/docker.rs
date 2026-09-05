@@ -11,6 +11,8 @@ use super::{Captured, capture, capture_with_timeout};
 
 /// Docker control-plane requests must fail rather than pinning a lifecycle poll forever.
 const CONTROL_TIMEOUT: Duration = Duration::from_millis(500);
+/// Image startup can take longer than a control-plane poll, but must still have a finite bound.
+const IMAGE_FINGERPRINT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Image builds can legitimately take a long time, but must still have a finite upper bound.
 const BUILD_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
@@ -417,14 +419,17 @@ impl ImageFingerprint for DockerImageFingerprint {
 /// existed and an image answering with anything but 64 lowercase hex digits are all errors naming
 /// `image`, never a value.
 pub fn image_fingerprint(image: &str) -> anyhow::Result<String> {
-    let out = capture_docker(Command::new("docker").args([
-        "run",
-        "--rm",
-        "--entrypoint",
-        "/usr/local/bin/taskfmt",
-        image,
-        "fingerprint",
-    ]))
+    let out = capture_with_timeout(
+        Command::new("docker").args([
+            "run",
+            "--rm",
+            "--entrypoint",
+            "/usr/local/bin/taskfmt",
+            image,
+            "fingerprint",
+        ]),
+        IMAGE_FINGERPRINT_TIMEOUT,
+    )
     .with_context(|| format!("cannot run docker to read the gate fingerprint of {image}"))?;
     if !out.ok() {
         anyhow::bail!(

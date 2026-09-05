@@ -171,6 +171,11 @@ impl VerifyConfig {
             if let Some(s) = &c.shell {
                 anyhow::ensure!(!s.trim().is_empty(), "{} shell empty", c.id)
             };
+            anyhow::ensure!(
+                !invokes_verify(c),
+                "{} must not invoke `taskfmt verify` from inside the completion gate",
+                c.id
+            );
             unique_ids("requirements", &c.requirements, "R-")?;
             unique_ids("acceptance", &c.acceptance, "AC-")?;
             validate_expected(&c.id, &c.expected)?;
@@ -181,6 +186,16 @@ impl VerifyConfig {
         anyhow::ensure!(gate == 1, "exactly one gate check required");
         Ok(())
     }
+}
+
+fn invokes_verify(check: &Check) -> bool {
+    let Some(argv) = &check.argv else {
+        return false;
+    };
+    argv.first()
+        .and_then(|program| Path::new(program).file_name())
+        .is_some_and(|program| program == "taskfmt")
+        && argv.get(1).is_some_and(|argument| argument == "verify")
 }
 
 fn line_column(text: &str, offset: usize) -> (usize, usize) {
