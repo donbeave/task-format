@@ -129,6 +129,7 @@ fn every_cli_subcommand_parses() {
     let global = ["--config", "experiment.toml", "--auto"];
     let cases: Vec<Vec<&str>> = vec![
         vec!["taskfmt", "lint"],
+        vec!["taskfmt", "lint", "--json", "TASK-101"],
         vec!["taskfmt", "lint", "TASK-101"],
         vec![
             "taskfmt",

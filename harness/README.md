@@ -89,7 +89,7 @@ Paths in the manifest resolve relative to that manifest, so commands can run fro
 ## Useful commands
 
 ```text
-taskfmt lint [TASKS...]              validate task packages
+taskfmt lint [--json] [TASKS...]     validate task packages (`--json` emits one report per line)
 taskfmt progress-init <TASK>         create initial progress file
 taskfmt verify [FLAGS]               run task completion gate
 taskfmt selfcheck <TASK> <WORKSPACE> prove gate distinguishes base from solution

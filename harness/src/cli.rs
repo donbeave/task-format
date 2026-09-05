@@ -52,6 +52,9 @@ pub enum AgentKindArg {
 pub enum Command {
     /// Lint task packages under the configured tasks dir.
     Lint {
+        /// Emit one stable JSON report per package (NDJSON).
+        #[arg(long)]
+        json: bool,
         /// Task IDs or directories. Empty = every task dir in tasks_dir.
         tasks: Vec<String>,
     },

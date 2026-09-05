@@ -6,7 +6,7 @@ use crate::redact;
 use crate::selection;
 
 /// Lint each named task (default: all). Exit 1 when any package has an ERROR.
-pub fn run(ctx: &Ctx, tasks: &[String]) -> anyhow::Result<i32> {
+pub fn run(ctx: &Ctx, json: bool, tasks: &[String]) -> anyhow::Result<i32> {
     let resolved = ctx.load()?;
     let tasks_dir = resolved.tasks_dir();
 
@@ -39,12 +39,19 @@ pub fn run(ctx: &Ctx, tasks: &[String]) -> anyhow::Result<i32> {
     let mut failed = 0usize;
     for target in &targets {
         let report = lint::lint_path(target);
-        redact::emit_lines(report.render().lines());
+        if json {
+            redact::emit(&report.render_json());
+        } else {
+            // A report may be empty on success.  Always label it so batched output remains
+            // attributable and shell users never confuse adjacent package summaries.
+            redact::emit(&format!("PACKAGE {}", report.target.display()));
+            redact::emit_lines(report.render().lines());
+        }
         if !report.passed() {
             failed += 1;
         }
     }
-    if failed > 0 {
+    if failed > 0 && !json {
         redact::emit(&format!(
             "{failed} of {} task package(s) failed lint",
             targets.len()

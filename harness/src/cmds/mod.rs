@@ -210,7 +210,7 @@ pub fn dispatch(cli: &Cli) -> anyhow::Result<i32> {
     let ctx = Ctx::from_cli(cli);
     use crate::cli::{Command, RepoCmd};
     match &cli.command {
-        Command::Lint { tasks } => lint::run(&ctx, tasks),
+        Command::Lint { json, tasks } => lint::run(&ctx, *json, tasks),
         Command::ProgressInit { task, out } => progress_init::run(&ctx, task, out.as_deref()),
         Command::Selftest => selftest::run(&ctx),
         Command::Fingerprint { path, image } => fingerprint::run(path.as_deref(), image.as_deref()),

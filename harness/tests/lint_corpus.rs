@@ -49,7 +49,7 @@ fn mutate(text: &str, from: &str, to: &str) -> String {
 #[test]
 fn corpus_and_example_lint_clean() {
     let root = repo_root();
-    let mut packages = vec![example()];
+    let mut packages = vec![example(), root.join("reference/task-template")];
     packages.extend((1..=7).map(|id| root.join(format!("experiments/tasks/TASK-{id:03}"))));
     for package in packages {
         let report = lint::lint_path(&package);
@@ -68,6 +68,46 @@ fn corpus_and_example_lint_clean() {
             report.render()
         );
     }
+}
+
+#[test]
+fn diagnostics_have_stable_locations_and_json_shape() {
+    let (text, readme) = example_text();
+    let broken = mutate(&text, "kind: bugfix", "kind: bugfix\nverify: obsolete");
+    let findings = lint::lint_text(&broken, &readme);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    let finding = &findings[0];
+    assert_eq!(finding.rule, "frontmatter");
+    assert_eq!(finding.severity, Severity::Error);
+    assert_eq!(finding.path, readme);
+    assert_eq!((finding.line, finding.column), (6, 1));
+
+    let report = lint::LintReport {
+        target: finding.path.clone(),
+        findings,
+    };
+    let json: serde_json::Value = serde_json::from_str(&report.render_json()).unwrap();
+    let item = &json["findings"][0];
+    assert_eq!(item["rule"], "frontmatter");
+    assert_eq!(item["severity"], "error");
+    assert_eq!(item["line"], 6);
+    assert_eq!(item["column"], 1);
+    let text = report.render();
+    assert!(text.contains("ERROR frontmatter "));
+    assert!(text.contains(":6:1:"));
+}
+
+#[test]
+fn diagnostics_attach_invalid_verifier_to_toml() {
+    let (text, _) = example_text();
+    let verify = example_verify().replace("schema = \"verify/v2\"", "schema = \"verify/v1\"");
+    let findings = lint_with_verify(&text, &verify);
+    let config = findings
+        .iter()
+        .find(|finding| finding.rule == "config")
+        .unwrap();
+    assert_eq!(config.path.file_name().unwrap(), "verify.toml");
+    assert_eq!((config.line, config.column), (1, 1));
 }
 
 #[test]

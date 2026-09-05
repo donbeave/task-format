@@ -76,7 +76,7 @@ These are design decisions and hypotheses, not claims that alternatives always f
 
 ## Findings and open evidence
 
-Research converged on five durable principles: bounded outcomes, settled decisions, protected inputs, independent gates, and inspectable fresh runs. `task/v4`, `taskfmt`, and seven ordered `pgtui` packages implement those ideas.
+Research converged on five durable principles: bounded outcomes, settled decisions, protected inputs, independent gates, and inspectable fresh runs. `task/v5`, `verify/v2`, `taskfmt`, and seven ordered `pgtui` packages implement those ideas.
 
 No completed ablation matrix yet proves that one wording or checklist style produces a quantitative improvement. Future claims require repeated control comparisons and their full run records.
 
@@ -88,7 +88,7 @@ No completed ablation matrix yet proves that one wording or checklist style prod
 | `experiments/tasks/` | Versioned task packages used as experiment inputs. |
 | `experiments/fixtures/` | Shared deterministic seed data. |
 | `experiments/runs/` | Generated run workspaces and evidence; Git-ignored. |
-| `reference/task-template/` | Canonical `task/v4` package template. |
+| `reference/task-template/` | Canonical `task/v5` + `verify/v2` package template. |
 | `experiment.toml` | Versioned paths, images, runtime, and agent profiles. |
 
 ## Authority and boundaries

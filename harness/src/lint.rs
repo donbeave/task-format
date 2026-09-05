@@ -3,22 +3,29 @@ use crate::acceptance;
 use crate::taskfile::{self, TaskFile};
 use crate::verifycfg::{self, VerifyConfig};
 use regex::Regex;
+use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 pub const SCHEMA: &str = "task/v5";
 type LeafRefs = (String, BTreeSet<String>, BTreeSet<String>, BTreeSet<String>);
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Severity {
     Error,
     Warn,
 }
-#[derive(Debug, Clone)]
+/// A machine-readable, source-addressable lint failure.  Rule names are part of the public CLI
+/// contract: do not rename one without a migration note.
+#[derive(Debug, Clone, Serialize)]
 pub struct Finding {
     pub severity: Severity,
     pub rule: &'static str,
+    pub path: PathBuf,
+    pub line: usize,
+    pub column: usize,
     pub message: String,
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct LintReport {
     pub target: PathBuf,
     pub findings: Vec<Finding>,
@@ -43,13 +50,16 @@ impl LintReport {
         let mut s = String::new();
         for x in &self.findings {
             s.push_str(&format!(
-                "{} {}: {}\n",
+                "{} {} {}:{}:{}: {}\n",
                 if x.severity == Severity::Error {
                     "ERROR"
                 } else {
                     "WARN "
                 },
                 x.rule,
+                x.path.display(),
+                x.line,
+                x.column,
                 x.message
             ));
         }
@@ -61,11 +71,37 @@ impl LintReport {
         ));
         s
     }
+
+    /// One stable JSON document per package.  The CLI deliberately emits one line per package so
+    /// callers can stream a batch without reconstructing an array.
+    pub fn render_json(&self) -> String {
+        serde_json::to_string(self).expect("lint report is serializable")
+    }
 }
 fn fail(out: &mut Vec<Finding>, rule: &'static str, msg: impl Into<String>) {
     out.push(Finding {
         severity: Severity::Error,
         rule,
+        path: PathBuf::new(),
+        line: 0,
+        column: 0,
+        message: msg.into(),
+    })
+}
+fn fail_at(
+    out: &mut Vec<Finding>,
+    rule: &'static str,
+    path: PathBuf,
+    line: usize,
+    column: usize,
+    msg: impl Into<String>,
+) {
+    out.push(Finding {
+        severity: Severity::Error,
+        rule,
+        path,
+        line,
+        column,
         message: msg.into(),
     })
 }
@@ -80,10 +116,13 @@ pub fn lint_path(target: &Path) -> LintReport {
         Ok(x) => x,
         Err(e) => {
             return LintReport {
-                target: readme,
+                target: readme.clone(),
                 findings: vec![Finding {
                     severity: Severity::Error,
                     rule: "readme",
+                    path: readme.clone(),
+                    line: 1,
+                    column: 1,
                     message: format!("cannot read: {e}"),
                 }],
             };
@@ -103,7 +142,15 @@ fn lint(text: &str, readme: &Path, dir: Option<&Path>) -> Vec<Finding> {
     let tf = match TaskFile::parse(text.into(), readme) {
         Ok(x) => x,
         Err(e) => {
-            fail(&mut out, "frontmatter", format!("{e:#}"));
+            let message = format!("{e:#}");
+            fail_at(
+                &mut out,
+                "frontmatter",
+                readme.to_path_buf(),
+                error_line(&message).unwrap_or(1),
+                1,
+                message,
+            );
             return out;
         }
     };
@@ -115,14 +162,83 @@ fn lint(text: &str, readme: &Path, dir: Option<&Path>) -> Vec<Finding> {
     if let Some(dir) = dir {
         match VerifyConfig::load(&dir.join(verifycfg::FILE_NAME)) {
             Ok(cfg) => graph(&mut out, &tf, &req, &ac, &leaves, &cfg),
-            Err(e) => fail(
-                &mut out,
-                "config",
-                format!("{} invalid: {e:#}", verifycfg::FILE_NAME),
-            ),
+            Err(e) => {
+                let message = format!("{} invalid: {e:#}", verifycfg::FILE_NAME);
+                fail_at(
+                    &mut out,
+                    "config",
+                    dir.join(verifycfg::FILE_NAME),
+                    error_line(&message).unwrap_or(1),
+                    1,
+                    message,
+                )
+            }
         }
     };
+    annotate_locations(&mut out, &tf);
     out
+}
+
+fn error_line(message: &str) -> Option<usize> {
+    Regex::new(r"\bline ([0-9]+)\b")
+        .unwrap()
+        .captures(message)
+        .and_then(|captures| captures[1].parse().ok())
+}
+
+/// Attach a precise Markdown location whenever the violated token exists.  Missing constructs
+/// point to their containing section (or document start): that is the only actionable location
+/// for an absence.  TOML parse failures are attached to verify.toml by `lint_path` callers.
+fn annotate_locations(findings: &mut [Finding], tf: &TaskFile) {
+    let lines: Vec<&str> = tf.text.lines().collect();
+    for finding in findings {
+        if !finding.path.as_os_str().is_empty() {
+            continue;
+        }
+        finding.path = tf.path.clone();
+        let needle = location_token(&finding.message, finding.rule);
+        let index = needle
+            .as_deref()
+            .and_then(|needle| lines.iter().position(|line| line.contains(needle)))
+            .or_else(|| section_line(&lines, finding.rule))
+            .unwrap_or(0);
+        finding.line = index + 1;
+        finding.column = needle
+            .as_deref()
+            .and_then(|needle| lines[index].find(needle))
+            .map_or(1, |column| column + 1);
+    }
+}
+
+fn location_token(message: &str, rule: &str) -> Option<String> {
+    if let Some(line) = Regex::new(r"\bline ([0-9]+)\b").unwrap().captures(message) {
+        // A line number is handled by `section_line` only for the uncommon parser diagnostics;
+        // do not look for the decimal text itself, which could select unrelated prose.
+        let _ = line;
+    }
+    Regex::new(r"\b(?:TASK|R|AC|CHK)-[0-9]+\b|\b[0-9]+(?:\.[0-9]+)+\b")
+        .unwrap()
+        .find(message)
+        .map(|m| m.as_str().to_string())
+        .or_else(|| match rule {
+            "frontmatter" => ["schema", "id", "title", "kind"]
+                .into_iter()
+                .find(|key| message.contains(key))
+                .map(str::to_string),
+            "heading" => Some("# ".to_string()),
+            _ => None,
+        })
+}
+
+fn section_line(lines: &[&str], rule: &str) -> Option<usize> {
+    let section = match rule {
+        "requirements" => "## Requirements",
+        "acceptance" => "## Acceptance criteria",
+        "checklist" => "<!-- checklist:start -->",
+        "sections" | "heading" | "frontmatter" | "config" | "graph" => return Some(0),
+        _ => return Some(0),
+    };
+    lines.iter().position(|line| line.trim_end() == section)
 }
 fn frontmatter(out: &mut Vec<Finding>, tf: &TaskFile) {
     if tf.frontmatter.schema != SCHEMA {

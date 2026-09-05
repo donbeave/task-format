@@ -258,7 +258,9 @@ impl CheckItem {
 /// Parse checklist lines. Tolerant: a malformed line yields `well_formed = false` so the linter and
 /// the gate can report it instead of silently skipping it.
 pub fn parse_checklist(lines: &[String]) -> Vec<CheckItem> {
-    let re = Regex::new(r"^( {4}){0,3}- \[([ x])\] \*\*([0-9]+(?:\.[0-9]+){0,3})\*\* (.*)$")
+    // Indentation is four-space units but hierarchy depth and dotted IDs are intentionally
+    // unbounded; neither a leaf count nor a single-child shape affects task correctness.
+    let re = Regex::new(r"^(?: {4})*- \[([ x])\] \*\*([0-9]+(?:\.[0-9]+)*)\*\* (.*)$")
         .expect("static regex");
     lines
         .iter()
@@ -272,14 +274,14 @@ pub fn parse_checklist(lines: &[String]) -> Vec<CheckItem> {
                     indent,
                     depth: indent / 4,
                     id: caps
-                        .get(3)
+                        .get(2)
                         .map(|m| m.as_str().to_string())
                         .unwrap_or_default(),
                     text: caps
-                        .get(4)
+                        .get(3)
                         .map(|m| m.as_str().to_string())
                         .unwrap_or_default(),
-                    checked: caps.get(2).map(|m| m.as_str() == "x").unwrap_or(false),
+                    checked: caps.get(1).map(|m| m.as_str() == "x").unwrap_or(false),
                     well_formed: true,
                 }
             } else {

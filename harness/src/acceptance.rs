@@ -249,10 +249,13 @@ pub fn validate_shape(d: &AcceptanceDocument) -> Vec<ParseError> {
         if matches!(ac.kind, AcceptanceType::Scenario | AcceptanceType::Outline) {
             let w = ac.steps.iter().filter(|s| s.keyword == "When").count();
             let t = ac.steps.iter().filter(|s| s.keyword == "Then").count();
-            if w != 1 || !(1..=3).contains(&t) {
+            if w != 1 || t == 0 {
                 out.push(ParseError {
                     line: 0,
-                    message: format!("{} scenario needs one When and 1-3 Then steps", ac.id),
+                    message: format!(
+                        "{} scenario needs one When and at least one Then step",
+                        ac.id
+                    ),
                 })
             }
         }
