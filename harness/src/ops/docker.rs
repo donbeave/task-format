@@ -364,7 +364,11 @@ pub fn is_running(container: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn is_stopped(container: &str) -> bool {
+/// Whether Docker positively reports that the named container exists and is stopped.
+///
+/// A failed inspect is deliberately `false`: callers that must prove quiescence need to
+/// distinguish a stopped container from an unanswered daemon.
+pub fn is_stopped(container: &str) -> bool {
     capture_docker(Command::new("docker").args(["inspect", "-f", "{{.State.Running}}", container]))
         .map(|out| out.ok() && out.stdout.trim() == "false")
         .unwrap_or(false)

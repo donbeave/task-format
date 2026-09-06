@@ -381,7 +381,7 @@ pub fn wait_and_gate(
     // snapshot.
     let _ = redact::write_json(&run_dir.join("out").join(STATUS_FILE), &status);
     herdr::snapshot_screen(manifest, run_dir);
-    quiesce(manifest);
+    quiesce(manifest)?;
 
     let workspace = run_dir.join("workspace");
     let before = workspace_fingerprint(&workspace);
@@ -424,9 +424,15 @@ pub fn wait_and_gate(
 /// it is now the rule for every path into the gate rather than a special case of one.
 ///
 /// The container is kept, never removed: `taskfmt attach` restarts a stopped one.
-pub(crate) fn quiesce(manifest: &Manifest) {
+pub(crate) fn quiesce(manifest: &Manifest) -> anyhow::Result<()> {
+    if docker::is_stopped(&manifest.container) {
+        return Ok(());
+    }
     if !docker::is_running(&manifest.container) {
-        return;
+        anyhow::bail!(
+            "cannot prove container {} is quiesced; Docker inspect did not report running or stopped",
+            manifest.container
+        );
     }
     if let Err(err) = herdr::prompt(manifest, "/goal clear") {
         redact::eemit(&format!("could not clear the goal before gating: {err:#}"));
@@ -436,11 +442,12 @@ pub(crate) fn quiesce(manifest: &Manifest) {
             "QUIESCED {} (stopped before gating; `taskfmt attach {}` restarts it)",
             manifest.container, manifest.run
         ));
+        Ok(())
     } else {
-        redact::eemit(&format!(
-            "WARNING: {} is still running — the gate may read a tree the agent can still write",
+        anyhow::bail!(
+            "cannot prove container {} stopped; refusing to gate a possibly active workspace",
             manifest.container
-        ));
+        );
     }
 }
 
@@ -762,10 +769,7 @@ fn print_summary(manifest: &Manifest, run_dir: &Path, prompt: &str) {
             manifest.session_id
         )
     } else {
-        format!(
-            "{}/agent-home/sessions/**/rollout-*.jsonl",
-            run_dir.display()
-        )
+        crate::cmds::status::CODEX_TRANSCRIPT_NA.to_string()
     };
     redact::emit_lines([
         format!("run:        {}", run_dir.display()),

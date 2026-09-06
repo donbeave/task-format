@@ -58,8 +58,10 @@ pub struct Fold {
 /// The `attempt` record's promotability, read exactly as `cmds::status::is_promotable` reads it
 /// (`harness/src/cmds/status.rs:425-431`): `GOAL_MET` carries an evaluator verdict by
 /// construction; `IDLE` and `GOAL_CLEARED_ERROR` do not, and need the completion evidence
-/// `Status::completion_evidence` names (`:54-57`) — a real verdict, or the agent's own
-/// `GOAL_RESULT` line. A record that carries neither field establishes neither.
+/// `Status::completion_evidence` names (`:54-57`) — a real verdict, or a run-owned, protocol-valid
+/// `GOAL_RESULT` line. Stored ledger data is untrusted, so the result is revalidated against the
+/// attempt's task instead of trusting string presence. A record that carries neither field
+/// establishes neither.
 fn promotable(attempt: &Record) -> bool {
     match attempt.str_field("status_state").unwrap_or_default() {
         crate::cmds::status::GOAL_MET => true,
@@ -67,9 +69,12 @@ fn promotable(attempt: &Record) -> bool {
             attempt
                 .u64_field("goal_verdicts")
                 .is_some_and(|count| count >= 1)
-                || attempt
-                    .str_field("goal_result_line")
-                    .is_some_and(|line| !line.trim().is_empty())
+                || attempt.str_field("goal_result_line").is_some_and(|line| {
+                    attempt
+                        .str_field("task")
+                        .and_then(|task| crate::ops::transcript::parse_goal_result(line, task))
+                        .is_some()
+                })
         }
         _ => false,
     }
@@ -583,6 +588,26 @@ mod tests {
         );
         let out = folded(&records, Reader::Phase1Lenient);
         assert_eq!(out.verified.len(), 1);
+
+        records[1].obj.insert(
+            "goal_result_line".into(),
+            json!("GOAL_RESULT task=TASK-000 status=<STATUS>"),
+        );
+        let out = folded(&records, Reader::Phase1Lenient);
+        assert!(
+            out.verified.is_empty(),
+            "a template placeholder must not establish completion"
+        );
+
+        records[1].obj.insert(
+            "goal_result_line".into(),
+            json!("GOAL_RESULT task=TASK-002 status=DONE"),
+        );
+        let out = folded(&records, Reader::Phase1Lenient);
+        assert!(
+            out.verified.is_empty(),
+            "a result for another task must not establish completion"
+        );
     }
 
     #[test]

@@ -145,13 +145,17 @@ pub fn strip_ansi(line: &str) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Last `GOAL_RESULT` line in the raw tui log, as rendered (see [`strip_ansi`]).
-pub fn goal_result_line(tui_log: &Path) -> Option<String> {
+/// Last valid, run-owned `GOAL_RESULT` line in the raw tui log, as rendered (see [`strip_ansi`]).
+///
+/// `tui.log` contains prompts, documentation, command output, and agent text. A line beginning
+/// with `GOAL_RESULT` is therefore only a candidate; it becomes evidence only when its task id
+/// matches this run and its status is one of the protocol values.
+pub fn goal_result_line(tui_log: &Path, task_id: &str) -> Option<String> {
     let text = std::fs::read_to_string(tui_log).ok()?;
     text.lines()
         .rev()
         .map(strip_ansi)
-        .find(|line| line.starts_with("GOAL_RESULT"))
+        .find(|line| parse_goal_result(line, task_id).is_some())
 }
 
 /// Last `GOAL_RESULT` line in the session transcript jsonl — the authoritative copy of the
@@ -161,12 +165,10 @@ pub fn goal_result_line(tui_log: &Path) -> Option<String> {
 /// until `kill_after` with the work done. The transcript records the assistant message itself
 /// and cannot truncate it.
 ///
-/// A row only counts when it is anchored to *this* run — it must carry `task=<task_id>` and a
-/// parseable `status=` token — because an assistant text block also quotes the line while
-/// planning ("next I print GOAL_RESULT ..."), and a mid-task quote is not completion evidence.
+/// A report only counts when its final non-empty assistant-text row is anchored to *this* run. A
+/// mid-task quote followed by more assistant text is not completion evidence.
 pub fn goal_result_transcript(transcript: &Path, task_id: &str) -> Option<String> {
     let text = std::fs::read_to_string(transcript).ok()?;
-    let anchor = format!("task={task_id}");
     let mut last: Option<String> = None;
     for line in text.lines() {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
@@ -181,6 +183,7 @@ pub fn goal_result_transcript(transcript: &Path, task_id: &str) -> Option<String
         else {
             continue;
         };
+        let mut final_text_row = None;
         for block in content {
             if block.get("type").and_then(serde_json::Value::as_str) != Some("text") {
                 continue;
@@ -190,13 +193,15 @@ pub fn goal_result_transcript(transcript: &Path, task_id: &str) -> Option<String
             };
             for row in text.lines() {
                 let row = row.trim();
-                if row.starts_with("GOAL_RESULT")
-                    && row.split_whitespace().any(|token| token == anchor)
-                    && report_status(row).is_some()
-                {
-                    last = Some(row.to_string());
+                if !row.is_empty() {
+                    final_text_row = Some(row);
                 }
             }
+        }
+        if let Some(row) = final_text_row {
+            last = parse_goal_result(row, task_id)
+                .is_some()
+                .then(|| row.to_string());
         }
     }
     last
@@ -237,6 +242,26 @@ pub enum ReportStatus {
     Incomplete,
 }
 
+/// Parse the canonical, run-owned final report marker.
+///
+/// This deliberately accepts the protocol's exact three-token record only. The marker is emitted
+/// in human-readable agent output, so accepting arbitrary fields or a placeholder would turn a
+/// quoted example from `/task/AGENTS.md` into completion evidence.
+pub fn parse_goal_result(line: &str, task_id: &str) -> Option<ReportStatus> {
+    let mut tokens = line.split_whitespace();
+    if tokens.next() != Some("GOAL_RESULT") {
+        return None;
+    }
+    if tokens.next().and_then(|token| token.strip_prefix("task=")) != Some(task_id) {
+        return None;
+    }
+    let status = tokens.next()?.strip_prefix("status=")?;
+    if tokens.next().is_some() {
+        return None;
+    }
+    parse_report_status(status)
+}
+
 impl ReportStatus {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -254,7 +279,11 @@ pub fn report_status(goal_result_line: &str) -> Option<ReportStatus> {
     let value = goal_result_line
         .split_whitespace()
         .find_map(|token| token.strip_prefix("status="))?;
-    match value.trim_end_matches([',', ';']) {
+    parse_report_status(value.trim_end_matches([',', ';']))
+}
+
+fn parse_report_status(value: &str) -> Option<ReportStatus> {
+    match value {
         "DONE" => Some(ReportStatus::Done),
         "BLOCKED" => Some(ReportStatus::Blocked),
         "NEEDS_REPLAN" => Some(ReportStatus::NeedsReplan),
@@ -314,6 +343,21 @@ pub fn recently_active(transcript: &Path, max_age: std::time::Duration) -> bool 
         return age < max;
     }
     false
+}
+
+/// True when a raw TUI capture was updated recently. Codex does not persist its rollout JSONL in
+/// the run directory when host auth is used, so the bound capture is the only durable activity
+/// signal available to rescue a false herdr `idle` classification. A future mtime is active by
+/// the same clock-skew rule as [`recently_active`].
+pub fn recently_updated(path: &Path, max_age: std::time::Duration) -> bool {
+    let Ok(modified) = std::fs::metadata(path).and_then(|meta| meta.modified()) else {
+        return false;
+    };
+    let age = match std::time::SystemTime::now().duration_since(modified) {
+        Ok(age) => age,
+        Err(_) => return true,
+    };
+    age < max_age
 }
 
 #[cfg(test)]
@@ -386,12 +430,12 @@ mod tests {
     }
 
     #[test]
-    fn goal_result_line_is_the_last_one_and_cr_is_stripped() {
+    fn goal_result_line_is_the_last_valid_one_and_cr_is_stripped() {
         let dir = tempfile::tempdir().unwrap();
         let log = dir.path().join("tui.log");
         std::fs::write(&log, "noise\r\nGOAL_RESULT task=TASK-101 status=BLOCKED\r\nmore noise\nGOAL_RESULT task=TASK-101 status=DONE\n").unwrap();
         assert_eq!(
-            goal_result_line(&log).unwrap(),
+            goal_result_line(&log, "TASK-101").unwrap(),
             "GOAL_RESULT task=TASK-101 status=DONE"
         );
         assert!(!goal_cleared_error(&log));
@@ -430,14 +474,38 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            goal_result_line(&log).unwrap(),
+            goal_result_line(&log, "TASK-002").unwrap(),
             "GOAL_RESULT task=TASK-002 status=DONE",
             "a rendered GOAL_RESULT row must be readable; before the strip, none ever was"
         );
         assert_eq!(
-            report_status(&goal_result_line(&log).unwrap()),
+            report_status(&goal_result_line(&log, "TASK-002").unwrap()),
             Some(ReportStatus::Done)
         );
+    }
+
+    #[test]
+    fn raw_goal_result_rejects_prompt_examples_and_other_tasks() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("tui.log");
+        std::fs::write(
+            &log,
+            "GOAL_RESULT task=TASK-000 status=<STATUS>\n\
+             GOAL_RESULT task=TASK-003 status=DONE\n\
+             GOAL_RESULT task=TASK-004 status=DONE extra=field\n",
+        )
+        .unwrap();
+        assert!(
+            goal_result_line(&log, "TASK-004").is_none(),
+            "placeholder, wrong-task, and non-canonical records are not evidence"
+        );
+
+        std::fs::write(&log, "GOAL_RESULT task=TASK-004 status=DONE\n").unwrap();
+        assert_eq!(
+            goal_result_line(&log, "TASK-004").as_deref(),
+            Some("GOAL_RESULT task=TASK-004 status=DONE")
+        );
+        assert!(goal_result_line(&log, "TASK-003").is_none());
     }
 
     #[test]
@@ -465,6 +533,19 @@ mod tests {
         )
         .unwrap();
         assert!(recently_active(&tr, Duration::from_secs(300)));
+    }
+
+    #[test]
+    fn recently_updated_accepts_a_fresh_capture_and_rejects_an_old_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("tui.log");
+        std::fs::write(&log, "screen").unwrap();
+        assert!(recently_updated(&log, Duration::from_secs(300)));
+        assert!(!recently_updated(&log, Duration::ZERO));
+        assert!(!recently_updated(
+            &dir.path().join("missing"),
+            Duration::from_secs(300)
+        ));
     }
 
     #[test]
@@ -499,12 +580,11 @@ mod tests {
         assert!(goal_result_transcript(&dir.path().join("t.jsonl"), "T-1").is_none());
         let dir = write_tmp(
             "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[\
-                {\"type\":\"text\",\"text\":\"planning mention\\nGOAL_RESULT task=T-1 status=DONE\"}]}}\n",
+                {\"type\":\"text\",\"text\":\"planning mention\\nGOAL_RESULT task=T-1 status=DONE\\nthen more work\"}]}}\n",
         );
-        assert_eq!(
-            goal_result_transcript(&dir.path().join("t.jsonl"), "T-1").as_deref(),
-            Some("GOAL_RESULT task=T-1 status=DONE"),
-            "the real final line, anchored to the run's task, counts"
+        assert!(
+            goal_result_transcript(&dir.path().join("t.jsonl"), "T-1").is_none(),
+            "a marker followed by more assistant text is not a final report"
         );
     }
 
@@ -561,5 +641,41 @@ mod tests {
         assert_eq!(report_status("GOAL_RESULT task=TASK-101"), None);
         assert_eq!(report_status(""), None);
         assert_eq!(ReportStatus::NeedsReplan.as_str(), "NEEDS_REPLAN");
+    }
+
+    #[test]
+    fn parse_goal_result_requires_the_exact_task_and_canonical_shape() {
+        for (line, expected) in [
+            (
+                "GOAL_RESULT task=TASK-101 status=DONE",
+                Some(ReportStatus::Done),
+            ),
+            (
+                "GOAL_RESULT task=TASK-101 status=BLOCKED",
+                Some(ReportStatus::Blocked),
+            ),
+            (
+                "GOAL_RESULT task=TASK-101 status=NEEDS_REPLAN",
+                Some(ReportStatus::NeedsReplan),
+            ),
+            (
+                "GOAL_RESULT task=TASK-101 status=INCOMPLETE",
+                Some(ReportStatus::Incomplete),
+            ),
+        ] {
+            assert_eq!(parse_goal_result(line, "TASK-101"), expected, "{line}");
+        }
+
+        for line in [
+            "GOAL_RESULT task=TASK-000 status=<STATUS>",
+            "GOAL_RESULT task=TASK-999 status=DONE",
+            "GOAL_RESULT status=DONE",
+            "GOAL_RESULT task=TASK-101",
+            "GOAL_RESULT task=TASK-101 status=MAYBE",
+            "GOAL_RESULT task=TASK-101 status=DONE extra=field",
+            "GOAL_RESULTING task=TASK-101 status=DONE",
+        ] {
+            assert_eq!(parse_goal_result(line, "TASK-101"), None, "{line}");
+        }
     }
 }

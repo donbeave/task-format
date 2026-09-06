@@ -17,10 +17,16 @@ pub fn run(ctx: &Ctx, run_id: &str) -> anyhow::Result<i32> {
     let (resolved, run_dir) = crate::cmds::load_run(ctx, run_id)?;
     let mut manifest = Manifest::load(&run_dir)?;
     let status = crate::cmds::status::check(&manifest, &run_dir)?;
+    if !status.terminal() {
+        anyhow::bail!(
+            "run {run_id} is not terminal (state={}, completion evidence absent); wait for the agent before gating",
+            status.state
+        );
+    }
     manifest.status_state = status.state.clone();
     // `gate` is also callable directly, not only through `run --wait`.  Remove the executor
     // writer before freezing the candidate in both paths.
-    crate::cmds::run::quiesce(&manifest);
+    crate::cmds::run::quiesce(&manifest)?;
     let passed = gate_run(&run_dir, &resolved, &mut manifest)?;
 
     redact::emit(&format!(

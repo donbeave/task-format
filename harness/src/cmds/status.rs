@@ -49,12 +49,11 @@ impl Status {
     }
 
     /// Evidence that the agent actually finished, as opposed to merely going quiet: the
-    /// transcript carries a real evaluator verdict, or the agent printed its final `GOAL_RESULT`
-    /// report. `goal_verdicts` is `None` for codex (the rollout jsonl is not parsed), which is
-    /// exactly why the second arm exists.
+    /// transcript carries a real evaluator verdict, or the parser validated the agent's final
+    /// `GOAL_RESULT` report. A non-empty string is not evidence; `report_status` is populated only
+    /// from a run-owned, protocol-valid result.
     pub fn completion_evidence(&self) -> bool {
-        self.goal_verdicts.is_some_and(|count| count >= 1)
-            || !self.goal_result_line.trim().is_empty()
+        self.goal_verdicts.is_some_and(|count| count >= 1) || self.report_status.is_some()
     }
 
     /// A status with only the state and the manifest-derived fields filled in.
@@ -229,9 +228,9 @@ pub fn check(manifest: &Manifest, run_dir: &Path) -> anyhow::Result<Status> {
     //    compaction (the 2026-08-31 TASK-002 run) — so the log is only a fallback.
     let result = if claude {
         transcript::goal_result_transcript(&tr, &manifest.task)
-            .or_else(|| transcript::goal_result_line(&manifest.tui_log()))
+            .or_else(|| transcript::goal_result_line(&manifest.tui_log(), &manifest.task))
     } else {
-        transcript::goal_result_line(&manifest.tui_log())
+        transcript::goal_result_line(&manifest.tui_log(), &manifest.task)
     }
     .unwrap_or_default();
 
@@ -291,7 +290,11 @@ pub fn check(manifest: &Manifest, run_dir: &Path) -> anyhow::Result<Status> {
         //    negligible) the agent has formally reported an end, so the quiet-window buys
         //    nothing: skip the downgrade and let the evidence classify terminal immediately.
         if matches!(state.as_str(), IDLE | BLOCKED) {
-            let active = transcript::recently_active(&tr, ACTIVE_WINDOW);
+            let active = if manifest.agent_kind == "codex" {
+                codex_recently_active(manifest)
+            } else {
+                transcript::recently_active(&tr, ACTIVE_WINDOW)
+            };
             state = settle_with_activity(&state, evidence, active).to_string();
         }
     }
@@ -338,6 +341,23 @@ fn downgrade_if_active(state: &str, transcript_active: bool) -> &str {
     } else {
         state
     }
+}
+
+/// Codex's native rollout files live in an isolated in-container home when host auth is used.
+/// Read the current pane first, then use the bound TUI capture's mtime as a conservative fallback.
+/// This is only activity evidence: it can turn a false `IDLE` into `RUNNING`, never into terminal.
+fn codex_recently_active(manifest: &Manifest) -> bool {
+    let screen_active = herdr::pane_visible(manifest)
+        .map(|screen| screen_shows_working(&screen))
+        .unwrap_or(false);
+    screen_active || transcript::recently_updated(&manifest.tui_log(), ACTIVE_WINDOW)
+}
+
+fn screen_shows_working(screen: &str) -> bool {
+    screen
+        .lines()
+        .map(transcript::strip_ansi)
+        .any(|line| line.contains("Working (") || line.contains("Waiting for background terminal"))
 }
 
 fn json_line(status: &Status) -> String {
@@ -534,14 +554,15 @@ mod tests {
     }
 
     fn status(state: &str, verdicts: Option<usize>, goal_result_line: &str) -> Status {
-        let evidence =
-            verdicts.is_some_and(|count| count >= 1) || !goal_result_line.trim().is_empty();
+        let report_status = transcript::parse_goal_result(goal_result_line, "TASK-002")
+            .map(|status| status.as_str().to_string());
+        let evidence = verdicts.is_some_and(|count| count >= 1) || report_status.is_some();
         Status {
             state: state.to_string(),
             herdr_status: "idle".into(),
             goal_reason: String::new(),
             goal_result_line: goal_result_line.to_string(),
-            report_status: None,
+            report_status,
             goal_verdicts: verdicts,
             terminal_reason: terminal_reason_for(state, evidence).map(str::to_string),
             transcript: String::new(),
@@ -656,8 +677,12 @@ mod tests {
         // claude: a real (non-sentinel) evaluator verdict
         assert!(status(IDLE, Some(1), "").completion_evidence());
         assert!(!status(IDLE, Some(0), "").completion_evidence());
-        // codex: no verdict count is available at all, so the agent's own report is the evidence
+        // codex: no verdict count is available at all, so a validated agent report is the evidence
         assert!(status(IDLE, None, "GOAL_RESULT task=TASK-002 status=DONE").completion_evidence());
+        assert!(
+            !status(IDLE, None, "GOAL_RESULT task=TASK-000 status=<STATUS>").completion_evidence()
+        );
+        assert!(!status(IDLE, None, "GOAL_RESULT task=TASK-003 status=DONE").completion_evidence());
         assert!(!status(IDLE, None, "   ").completion_evidence());
         assert!(!status(IDLE, None, "").completion_evidence());
     }
@@ -846,6 +871,19 @@ mod tests {
             CONTAINER_STOPPED
         );
         assert_eq!(downgrade_if_active(AGENT_EXITED, true), AGENT_EXITED);
+    }
+
+    #[test]
+    fn codex_working_screen_is_activity_not_completion() {
+        assert!(screen_shows_working("Working (2m 28s • esc to interrupt)"));
+        assert!(screen_shows_working(
+            "\u{1b}[31mWaiting for background terminal\u{1b}[0m"
+        ));
+        assert!(!screen_shows_working("Ask Codex to do anything"));
+        assert_eq!(settle_with_activity(IDLE, false, true), RUNNING);
+        assert!(
+            !status(IDLE, None, "GOAL_RESULT task=TASK-000 status=<STATUS>").completion_evidence()
+        );
     }
 
     #[test]
