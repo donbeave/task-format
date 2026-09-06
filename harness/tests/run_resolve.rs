@@ -253,6 +253,24 @@ fn every_run_command_routes_through_the_resolver() {
     }
 }
 
+#[test]
+fn attach_explains_a_run_that_failed_before_agent_launch() {
+    let fx = fixture_with(&[(
+        "20260828-000000-zai-flash-TASK-001",
+        "harness-20260828-000000-zai-flash-TASK-001",
+    )]);
+    let run_dir = fx.resolved.run_dir("20260828-000000-zai-flash-TASK-001");
+    let mut saved = Manifest::load(&run_dir).unwrap();
+    saved.pane.clear();
+    saved.save(&run_dir).unwrap();
+
+    let err = taskfmt::cmds::attach::run(&fx.ctx, &saved.run)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("no agent pane"), "{err}");
+    assert!(err.contains("prereqs.log"), "{err}");
+}
+
 /// The container-name form reaches the command body, not just the resolver.
 #[test]
 fn promote_accepts_the_container_name() {

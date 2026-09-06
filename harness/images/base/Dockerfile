@@ -3,8 +3,8 @@
 #   docker build -f images/base/Dockerfile --build-arg TARGETARCH=arm64 -t harness-base:latest .
 #   (build context = harness/; `taskfmt build-images` wires the order and the TARGETARCH arg)
 #
-# debian slim + tools + docker.io (inner daemon, DinD) + postgresql-client-18 (pgdg, matches the
-# postgres:18-alpine prereq server) + node 24 LTS (nodesource) + rustup (user `agent`, pinned
+# debian slim + tools + docker.io/docker-cli (inner daemon and client, DinD) + postgresql-client-18
+# (pgdg, matches the postgres:18-alpine prereq server) + node 24 LTS (nodesource) + rustup (user `agent`, pinned
 # toolchain + rustfmt/clippy) + herdr (static release binary) + the `taskfmt` binary.
 #
 # The container-side tooling is `taskfmt` only: container-entrypoint (PID 1: inner dockerd →
@@ -23,7 +23,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       git jq ripgrep iptables ipset iproute2 dnsutils gosu ca-certificates curl bsdutils \
       build-essential gnupg \
-      docker.io \
+      docker.io docker-cli \
  && rm -rf /var/lib/apt/lists/*
 
 # --- postgresql-client-18 from apt.postgresql.org (trixie-pgdg): matches the prereq server's

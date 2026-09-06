@@ -2,8 +2,8 @@
 //!
 //! Pipeline: fresh clone → trusted overlay + base commit → task snapshot (+ template top-up) →
 //! lint → gate selfcheck (opt-in `--selfcheck`; D13 nop + polarity, refuses on FAIL/NOVERDICT) →
-//! progress-init → agent-home preseed → `docker run -d --privileged` (no `--rm`) → prereq wait →
-//! herdr pane → agent idle → prompt injection → goal-acceptance check → manifest.
+//! progress-init → agent-home preseed → `docker run -d --privileged` (no `--rm`) → launch manifest →
+//! prereq wait → herdr pane → agent idle → prompt injection → goal-acceptance check → final manifest.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -113,7 +113,12 @@ pub fn require_image_fingerprint_match(
              the host is the stale side"
         )
     })?;
-    crate::cmds::fingerprint::compare(crate::HARNESS_FINGERPRINT, image, &image_value)
+    crate::cmds::fingerprint::compare(crate::HARNESS_FINGERPRINT, image, &image_value)?;
+    reader.image_prerequisites(image).with_context(|| {
+        format!(
+            "cannot verify runtime prerequisites in {image}; rebuild it with `taskfmt preload --auto` then `taskfmt build-images --agent all --auto`"
+        )
+    })
 }
 
 /// Dispatch one task: everything up to and including prompt injection.
@@ -284,6 +289,9 @@ pub fn dispatch_one(
     ));
     container::launch(&plan, &env_file)?;
     drop(env_file); // the 0600 env file is gone the moment the docker invocation returned
+    // Save launch identity before waiting for prerequisites. A parked prereq failure has no
+    // herdr pane, but status/attach still need the manifest to find the run and container.
+    manifest.save(&run_dir)?;
 
     // ---------- 11. prereq stage (inner dockerd + postgres + seeds) ----------
     let timeout = Duration::from_secs(cfg.runtime.prereq_timeout_s);

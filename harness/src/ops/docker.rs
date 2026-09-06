@@ -13,6 +13,8 @@ use super::{Captured, capture, capture_with_timeout};
 const CONTROL_TIMEOUT: Duration = Duration::from_millis(500);
 /// Image startup can take longer than a control-plane poll, but must still have a finite bound.
 const IMAGE_FINGERPRINT_TIMEOUT: Duration = Duration::from_secs(30);
+/// The same startup bound applies when checking image-baked runtime prerequisites.
+const IMAGE_PREREQUISITE_TIMEOUT: Duration = Duration::from_secs(30);
 /// Image builds can legitimately take a long time, but must still have a finite upper bound.
 const BUILD_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
@@ -396,6 +398,11 @@ pub fn stop(container: &str, grace_s: u64) -> bool {
 pub trait ImageFingerprint {
     /// The image's own `taskfmt` fingerprint, or an error naming `image`.
     fn image_fingerprint(&self, image: &str) -> anyhow::Result<String>;
+
+    /// Verify image-baked runtime prerequisites. Test doubles may use the safe default.
+    fn image_prerequisites(&self, _image: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 /// The production reader: it executes the binary the image carries.
@@ -404,6 +411,10 @@ pub struct DockerImageFingerprint;
 impl ImageFingerprint for DockerImageFingerprint {
     fn image_fingerprint(&self, image: &str) -> anyhow::Result<String> {
         image_fingerprint(image)
+    }
+
+    fn image_prerequisites(&self, image: &str) -> anyhow::Result<()> {
+        image_prerequisites(image)
     }
 }
 
@@ -446,6 +457,43 @@ pub fn image_fingerprint(image: &str) -> anyhow::Result<String> {
         );
     }
     Ok(value)
+}
+
+/// Verify the inner Docker client and postgres prerequisite tarball were baked into the agent image.
+///
+/// The tarball is gitignored and therefore intentionally outside the harness source fingerprint.
+/// A stale image can consequently have a matching taskfmt fingerprint while still being unable
+/// to boot its inner Docker daemon. Check the artifact before launching a persistent run.
+pub fn image_prerequisites(image: &str) -> anyhow::Result<()> {
+    let out = capture_with_timeout(
+        Command::new("docker").args([
+            "run",
+            "--rm",
+            "--entrypoint",
+            "/bin/sh",
+            image,
+            "-c",
+            "command -v docker >/dev/null 2>&1 || { echo 'inner docker client missing' >&2; exit 1; }; test -s /opt/preload/postgres.tar || { echo '/opt/preload/postgres.tar missing or empty' >&2; exit 1; }",
+        ]),
+        IMAGE_PREREQUISITE_TIMEOUT,
+    )
+    .with_context(|| format!("cannot inspect runtime prerequisites in {image}"))?;
+    if !out.ok() {
+        let detail = if out.stderr.trim().is_empty() {
+            out.stdout.trim()
+        } else {
+            out.stderr.trim()
+        };
+        let detail = if detail.is_empty() {
+            "unknown failure"
+        } else {
+            detail
+        };
+        anyhow::bail!(
+            "{image} failed its runtime prerequisite check: {detail}; run `taskfmt preload --auto` then `taskfmt build-images --agent all --auto`"
+        );
+    }
+    Ok(())
 }
 
 /// 64 lowercase hex digits and nothing else — the shape `taskfmt fingerprint` prints.

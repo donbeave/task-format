@@ -13,6 +13,13 @@ use crate::runstate::Manifest;
 pub fn run(ctx: &Ctx, run_id: &str) -> anyhow::Result<i32> {
     let (_, run_dir) = crate::cmds::load_run(ctx, run_id)?;
     let manifest = Manifest::load(&run_dir)?;
+    if manifest.pane.is_empty() {
+        anyhow::bail!(
+            "run {} has no agent pane; it failed before agent launch. Inspect with `docker exec -it {} bash` and the run's out/prereqs.log",
+            manifest.run,
+            manifest.container
+        );
+    }
     if !crate::ops::docker::is_running(&manifest.container) {
         redact::eemit(&format!(
             "container {} is stopped — starting it",

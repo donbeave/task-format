@@ -74,6 +74,10 @@ want to build one agent layer. You do not need to run `docker build` directly. R
 `build-images` after changing harness Rust code so the binary on the host and the binary inside
 the image match.
 
+Dispatch also checks that the image contains the preloaded PostgreSQL tarball before launching a
+persistent run. If a stale image is missing it, rebuild with `taskfmt preload --auto` followed by
+`taskfmt build-images --agent all --auto`.
+
 Image building and runtime selection are separate. Build both images once, then choose the agent
 profile for each run with `--agent`.
 
@@ -200,7 +204,9 @@ taskfmt experiment \
 ```
 
 Use `taskfmt ps`, `taskfmt status <run-id>`, or `taskfmt attach <run-id>` to inspect a live or
-completed run. Run records and evidence are stored under `experiments/runs/`.
+completed run. A prereq failure still writes the launch manifest, so `attach` can locate the
+parked container and points to `out/prereqs.log`. Run records and evidence are stored under
+`experiments/runs/`.
 
 See [harness/README.md](harness/README.md) for complete flags, safety rules, configuration, and
 development checks.

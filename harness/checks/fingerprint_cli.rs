@@ -51,6 +51,18 @@ impl ImageFingerprint for Unreadable {
     }
 }
 
+struct MissingPrerequisites;
+
+impl ImageFingerprint for MissingPrerequisites {
+    fn image_fingerprint(&self, _image: &str) -> anyhow::Result<String> {
+        Ok(taskfmt::HARNESS_FINGERPRINT.to_string())
+    }
+
+    fn image_prerequisites(&self, image: &str) -> anyhow::Result<()> {
+        anyhow::bail!("{image} is missing /opt/preload/postgres.tar")
+    }
+}
+
 /// The value that is never this binary's: 64 lowercase hex digits and not the host constant.
 fn other_than_host() -> String {
     let other = "9".repeat(64);
@@ -137,6 +149,16 @@ fn unreadable_image_value_is_refused() {
     assert!(err.contains("harness-claude:latest"), "{err}");
     assert!(err.contains("taskfmt build-images"), "{err}");
     assert!(err.contains("cargo install"), "{err}");
+}
+
+#[test]
+fn missing_image_prerequisites_are_refused() {
+    let err = require_image_fingerprint_match(&MissingPrerequisites, "harness-claude:latest")
+        .unwrap_err();
+    let message = format!("{err:#}");
+    assert!(message.contains("/opt/preload/postgres.tar"), "{message}");
+    assert!(message.contains("taskfmt preload"), "{message}");
+    assert!(message.contains("taskfmt build-images"), "{message}");
 }
 
 /// The whole point, driven for real: `run::run` against a reader whose value differs from this
