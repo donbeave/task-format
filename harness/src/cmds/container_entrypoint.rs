@@ -24,6 +24,7 @@ const PRELOAD_TAR: &str = "/opt/preload/postgres.tar";
 const CLAUDE_PLUGIN_SEED: &str = "/opt/claude-plugin-seed";
 const OUT: &str = "/out";
 const PARK: Duration = Duration::from_secs(86400);
+const CODEX_AUTH_STAGING: &str = "/tmp/taskfmt-host-codex-auth.json";
 
 pub fn run() -> anyhow::Result<i32> {
     let _flags = signals::install_terminate_flag();
@@ -52,7 +53,8 @@ pub fn run() -> anyhow::Result<i32> {
         .status();
 
     // codex image: seed $CODEX_HOME/config.toml from the baked copy (a fresh run mounts an empty
-    // dir) and write auth.json before the agent starts (OPENAI_API_KEY comes through --env-file).
+    // dir), import an explicitly mounted host auth snapshot, and write API-key auth before the
+    // agent starts (OPENAI_API_KEY comes through --env-file).
     let codex_home = std::env::var("CODEX_HOME").unwrap_or_default();
     if !codex_home.is_empty() {
         let _ = std::fs::create_dir_all(&codex_home);
@@ -65,6 +67,13 @@ pub fn run() -> anyhow::Result<i32> {
             );
         }
         let _ = chown_agent(&codex_home);
+        if Path::new(CODEX_AUTH_STAGING).is_file() {
+            let auth = Path::new(&codex_home).join("auth.json");
+            std::fs::copy(CODEX_AUTH_STAGING, &auth)
+                .with_context(|| format!("copying host Codex auth to {}", auth.display()))?;
+            set_private_agent_file(&auth)?;
+            let _ = Command::new("umount").arg(CODEX_AUTH_STAGING).status();
+        }
         // the key arrives through --env-file and is piped into codex-login's stdin: it never
         // appears in an argv, a log line, or an artifact
         let key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
@@ -133,6 +142,14 @@ pub fn run() -> anyhow::Result<i32> {
         .args(["agent", "taskfmt", "agent-launch"])
         .exec();
     Err(err).context("exec gosu agent taskfmt agent-launch")
+}
+
+fn set_private_agent_file(path: &Path) -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .with_context(|| format!("chmod 600 {}", path.display()))?;
+    chown_agent(&path.to_string_lossy())
 }
 
 /// `taskfmt prereqs` — the prereq stage on its own (also usable interactively inside the container).

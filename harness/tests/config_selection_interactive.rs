@@ -2,7 +2,7 @@
 
 use clap::Parser as _;
 use taskfmt::cli::Cli;
-use taskfmt::config::ExperimentConfig;
+use taskfmt::config::{AgentAuth, ExperimentConfig};
 
 const MANIFEST: &str = r#"
 schema = "experiment/v1"
@@ -58,6 +58,7 @@ fn manifest_matches_the_repo_root_file() {
     );
     let codex = cfg.profile("codex-default").unwrap();
     assert_eq!(codex.kind, "codex");
+    assert_eq!(codex.auth, AgentAuth::Host);
     // only references are committed, never values
     assert!(zai.env_secret.values().all(|v| v.starts_with("file://")));
     assert!(codex.env_secret.values().all(|v| v.starts_with("op://")));

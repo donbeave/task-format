@@ -283,7 +283,7 @@ pub fn dispatch_one(
         &profile,
         &agent_cmd,
         &manifest.base_sha,
-    );
+    )?;
     redact::emit(&format!(
         "== docker run {} (privileged, persistent, no --rm)",
         manifest.container

@@ -243,6 +243,18 @@ pub struct AgentDefault {
     pub profile: String,
 }
 
+/// How a profile obtains its agent credentials.
+///
+/// API-key credentials continue to use `env_secret`. `host` is deliberately opt-in: for Codex it
+/// mounts the operator's host `auth.json` read-only into the run container.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum AgentAuth {
+    #[default]
+    None,
+    Host,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentProfile {
     pub kind: String,
@@ -251,6 +263,8 @@ pub struct AgentProfile {
     #[serde(default = "default_effort")]
     pub effort: String,
     pub image: String,
+    #[serde(default)]
+    pub auth: AgentAuth,
     #[serde(default)]
     pub env_static: BTreeMap<String, String>,
     /// Secret **references**, resolved at dispatch time only — `file://NAME` (a 0600 file directly
@@ -294,6 +308,19 @@ impl ExperimentConfig {
                 bail!(
                     "experiment.toml: profile {name} has kind {:?}, want claude|codex",
                     profile.kind
+                );
+            }
+            if profile.auth == AgentAuth::Host && profile.kind != "codex" {
+                bail!(
+                    "experiment.toml: profile {name} uses auth=host, but host auth is supported only for codex profiles"
+                );
+            }
+            if profile.auth == AgentAuth::Host
+                && (profile.env_static.contains_key("OPENAI_API_KEY")
+                    || profile.env_secret.contains_key("OPENAI_API_KEY"))
+            {
+                bail!(
+                    "experiment.toml: profile {name} selects auth=host and OPENAI_API_KEY; choose one Codex authentication source"
                 );
             }
         }
@@ -520,6 +547,18 @@ ANTHROPIC_AUTH_TOKEN = "op://vault/item/section/field"
         assert_eq!(cfg.runtime.prereq_timeout_s, 180);
         assert_eq!(cfg.github.repo_prefix, "taskfmt-experiment");
         assert_eq!(cfg.profile("p").unwrap().effort, "high");
+        assert_eq!(cfg.profile("p").unwrap().auth, AgentAuth::None);
+    }
+
+    #[test]
+    fn host_auth_is_codex_only() {
+        let text = EXAMPLE.replace("kind = \"claude\"", "kind = \"codex\"\nauth = \"host\"");
+        let cfg = ExperimentConfig::parse(&text).unwrap();
+        assert_eq!(cfg.profile("zai-flash").unwrap().auth, AgentAuth::Host);
+
+        let invalid = EXAMPLE.replace("kind = \"claude\"", "kind = \"claude\"\nauth = \"host\"");
+        let err = ExperimentConfig::parse(&invalid).unwrap_err();
+        assert!(format!("{err:#}").contains("only for codex"), "{err:#}");
     }
 
     #[test]

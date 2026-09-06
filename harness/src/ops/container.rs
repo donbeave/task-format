@@ -4,9 +4,9 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use anyhow::Context;
+use anyhow::{Context, bail};
 
-use crate::config::{AgentProfile, ExperimentConfig, Resolved};
+use crate::config::{AgentAuth, AgentProfile, ExperimentConfig, Resolved};
 use crate::redact;
 use crate::runstate::Manifest;
 
@@ -34,6 +34,8 @@ pub const LABEL_LAUNCH_ID: &str = "taskfmt.launch_id";
 const LAUNCH_RECONCILE_TIMEOUT: Duration = Duration::from_secs(30);
 const LAUNCH_RECONCILE_POLL: Duration = Duration::from_millis(50);
 const LAUNCH_STOP_GRACE_S: u64 = 5;
+const CODEX_AUTH_STAGING: &str = "/tmp/taskfmt-host-codex-auth.json";
+const CODEX_HOST_AUTH_HOME: &str = "/tmp/taskfmt-codex-home";
 
 /// The labels that make one run's container self-describing: run id, run dir, the manifest that
 /// dispatched it, task, profile, and the experiment when there is one.
@@ -184,7 +186,8 @@ pub struct LaunchPlan {
 /// Build the launch plan for one run: mounts `/work /task:ro /progress /agent-home /out /seed:ro`,
 /// the static env from the profile plus `TASKFMT_BASE`, `AGENT_CMD`, `AGENT_KIND`, `HERDR_SESSION`,
 /// `CARGO_TARGET_DIR=/out/cargo-target`, and the `taskfmt.*` labels that let every later command
-/// find this run from the container alone.
+/// find this run from the container alone. `auth = "host"` adds the host Codex auth file as a
+/// read-only staging mount; the entrypoint copies it into the run Codex home with safe ownership.
 pub fn launch_plan(
     cfg: &ExperimentConfig,
     resolved: &Resolved,
@@ -192,7 +195,7 @@ pub fn launch_plan(
     profile: &AgentProfile,
     agent_cmd: &str,
     base_ref: &str,
-) -> LaunchPlan {
+) -> anyhow::Result<LaunchPlan> {
     let run_dir = PathBuf::from(&manifest.run_dir);
     let mut mounts = vec![
         docker::Mount::rw(&run_dir.join("workspace"), docker::WORK_MOUNT),
@@ -204,6 +207,10 @@ pub fn launch_plan(
     let seed_dir = run_dir.join("seed");
     if seed_dir.is_dir() {
         mounts.push(docker::Mount::ro(&seed_dir, "/seed"));
+    }
+    if profile.auth == AgentAuth::Host {
+        let auth_path = host_codex_auth_path()?;
+        mounts.push(docker::Mount::ro(&auth_path, CODEX_AUTH_STAGING));
     }
     let mut labels = run_labels(manifest, &resolved.manifest);
     labels.push((
@@ -234,7 +241,12 @@ pub fn launch_plan(
             ));
         }
         "codex" => {
-            env.push(("CODEX_HOME".to_string(), "/agent-home".to_string()));
+            let home = if profile.auth == AgentAuth::Host {
+                CODEX_HOST_AUTH_HOME
+            } else {
+                "/agent-home"
+            };
+            env.push(("CODEX_HOME".to_string(), home.to_string()));
         }
         _ => {}
     }
@@ -245,7 +257,7 @@ pub fn launch_plan(
         "/out/cargo-target".to_string(),
     ));
 
-    LaunchPlan {
+    Ok(LaunchPlan {
         container: manifest.container.clone(),
         image: profile.image.clone(),
         mounts,
@@ -254,7 +266,45 @@ pub fn launch_plan(
         memory: cfg.runtime.memory.clone(),
         cpus: cfg.runtime.cpus,
         pids_limit: cfg.runtime.pids_limit,
+    })
+}
+
+fn host_codex_auth_path() -> anyhow::Result<PathBuf> {
+    let codex_home = std::env::var_os("CODEX_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".codex")))
+        .context("cannot resolve host Codex auth: HOME and CODEX_HOME are unset")?;
+    host_codex_auth_path_from(&codex_home)
+}
+
+fn host_codex_auth_path_from(codex_home: &Path) -> anyhow::Result<PathBuf> {
+    let requested = codex_home.join("auth.json");
+    let path = std::fs::canonicalize(&requested).with_context(|| {
+        format!(
+            "host Codex auth is missing at {}; run `codex --login` on the host first",
+            requested.display()
+        )
+    })?;
+    let metadata = std::fs::metadata(&path)
+        .with_context(|| format!("reading host Codex auth metadata at {}", path.display()))?;
+    if !metadata.is_file() {
+        bail!("host Codex auth path is not a file: {}", path.display());
     }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = metadata.permissions().mode() & 0o777;
+        if mode & 0o400 == 0 || mode & 0o077 != 0 {
+            bail!(
+                "host Codex auth file {} is not private (mode {:o}); run `chmod 600 {}`",
+                path.display(),
+                mode,
+                path.display()
+            );
+        }
+    }
+    Ok(path)
 }
 
 /// Start the container. Persistent by hard rule: no `--rm`, so the operator can re-attach.
@@ -652,7 +702,7 @@ mod tests {
         let resolved = Resolved::new(dir.path(), cfg.clone());
         let profile = cfg.profile("p").unwrap().clone();
         let manifest = sample_manifest(&dir.path().join("runs/20260101-000000-p-TASK-001"));
-        let plan = launch_plan(&cfg, &resolved, &manifest, &profile, "claude", "base");
+        let plan = launch_plan(&cfg, &resolved, &manifest, &profile, "claude", "base").unwrap();
         let labels = plan.labels.iter().cloned().collect();
         let matching = docker::ContainerInfo {
             name: plan.container.clone(),
@@ -681,7 +731,7 @@ mod tests {
         let resolved = Resolved::new(dir.path(), cfg.clone());
         let profile = cfg.profile("p").unwrap().clone();
         let manifest = sample_manifest(&dir.path().join("runs/20260101-000000-p-TASK-001"));
-        let plan = launch_plan(&cfg, &resolved, &manifest, &profile, "claude", "base");
+        let plan = launch_plan(&cfg, &resolved, &manifest, &profile, "claude", "base").unwrap();
         let label = |key: &str| {
             plan.labels
                 .iter()
@@ -751,7 +801,8 @@ mod tests {
             &profile,
             "claude",
             &manifest.base_sha,
-        );
+        )
+        .unwrap();
         let base = plan
             .env
             .iter()
@@ -775,7 +826,7 @@ mod tests {
         let resolved = Resolved::new(dir.path(), cfg.clone());
         let profile = cfg.profile("p").unwrap().clone();
         let manifest = sample_manifest(&dir.path().join("runs/20260101-000000-p-TASK-001"));
-        let plan = launch_plan(&cfg, &resolved, &manifest, &profile, "codex", "base");
+        let plan = launch_plan(&cfg, &resolved, &manifest, &profile, "codex", "base").unwrap();
 
         let target_dir = plan
             .env
@@ -784,5 +835,32 @@ mod tests {
             .map(|(_, value)| value.as_str());
         assert_eq!(target_dir, Some("/out/cargo-target"));
         assert_ne!(target_dir, Some("/work/target"));
+    }
+
+    #[test]
+    fn host_codex_auth_path_requires_a_private_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let codex_home = dir.path().join(".codex");
+        std::fs::create_dir(&codex_home).unwrap();
+        let auth = codex_home.join("auth.json");
+        std::fs::write(&auth, "not a real credential").unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&auth, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        assert_eq!(
+            host_codex_auth_path_from(&codex_home).unwrap(),
+            std::fs::canonicalize(&auth).unwrap()
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&auth, std::fs::Permissions::from_mode(0o644)).unwrap();
+            let err = host_codex_auth_path_from(&codex_home).unwrap_err();
+            assert!(format!("{err:#}").contains("not private"), "{err:#}");
+        }
     }
 }

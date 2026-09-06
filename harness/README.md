@@ -75,6 +75,19 @@ taskfmt run --task TASK-001 --repo <repository-url> --agent zai-flash --wait
 
 ### Codex
 
+Authenticate Codex on the host first. The configured profile uses `auth = "host"`, so the harness
+binds the host's `CODEX_HOME/auth.json` (or `~/.codex/auth.json`) read-only to a staging path,
+then copies it into an isolated container-only `CODEX_HOME` with container-user ownership. The
+host file and run artifacts are not mutated, and no browser callback is needed inside Docker:
+
+```sh
+codex --login
+```
+
+The mount is explicit because it gives the fully privileged agent process access to the host
+Codex credential. Use API-key auth instead for untrusted tasks by removing `auth = "host"` and
+configuring `OPENAI_API_KEY` through `env_secret`.
+
 Use the `codex-default` profile and the image built by `--agent all`:
 
 ```sh
