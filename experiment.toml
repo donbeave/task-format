@@ -63,6 +63,6 @@ ANTHROPIC_AUTH_TOKEN = "file://zai-flash.token"
 
 [agents.profiles.codex-default]
 kind = "codex"
-model = ""
-effort = "high"
+model = "gpt-5.6-luna"
+effort = "max"
 image = "harness-codex:latest"
