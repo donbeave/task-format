@@ -2,7 +2,7 @@
 
 Launch the campaign with `taskfmt experiment --proof-corpus /path/to/pgtui-proof.git`; it runs the
 preflight before creating the runtime repository. The per-task agent prompt has one source at
-`harness/goal-prompt.md`, selected by `experiment.toml`; do not copy it into this plan. The prompt
+`harness/src/task-prompt.md`, embedded by the CLI; do not copy it into this plan. The prompt
 below is only the separate campaign-controller `/goal` prompt.
 
 ```text

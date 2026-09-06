@@ -84,8 +84,6 @@ pub struct Paths {
     pub seed_dir: String,
     #[serde(default = "default_template_dir")]
     pub template_dir: String,
-    #[serde(default = "default_goal_prompt")]
-    pub goal_prompt: String,
 }
 
 fn default_tasks_dir() -> String {
@@ -100,10 +98,6 @@ fn default_seed_dir() -> String {
 fn default_template_dir() -> String {
     "reference/task-template".to_string()
 }
-fn default_goal_prompt() -> String {
-    "harness/goal-prompt.md".to_string()
-}
-
 impl Default for Paths {
     fn default() -> Self {
         Self {
@@ -111,7 +105,6 @@ impl Default for Paths {
             runs_dir: default_runs_dir(),
             seed_dir: default_seed_dir(),
             template_dir: default_template_dir(),
-            goal_prompt: default_goal_prompt(),
         }
     }
 }
@@ -433,9 +426,6 @@ impl Resolved {
     pub fn template_dir(&self) -> PathBuf {
         self.join(&self.cfg.paths.template_dir)
     }
-    pub fn goal_prompt(&self) -> PathBuf {
-        self.join(&self.cfg.paths.goal_prompt)
-    }
     /// `runs_dir/<id>`
     pub fn run_dir(&self, run_id: &str) -> PathBuf {
         self.runs_dir().join(run_id)
@@ -474,7 +464,6 @@ tasks_dir = "experiments/tasks"
 runs_dir = "experiments/runs"
 seed_dir = "experiments/fixtures/seed"
 template_dir = "reference/task-template"
-goal_prompt = "harness/goal-prompt.md"
 [images]
 taskfmt = "harness-taskfmt:latest"
 base = "harness-base:latest"

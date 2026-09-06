@@ -273,6 +273,6 @@ harness/
   checks/              fingerprint command checks
   images/              taskfmt, base, Claude, and Codex image definitions
   testdata/            bundled lint and gate corpus; do not edit as documentation
-  goal-prompt.md       dispatched runtime input; do not edit as documentation
+  goal-prompt.md       runtime prompt documentation; task prompt is embedded from src/task-prompt.md
   Cargo.toml           crate manifest
 ```

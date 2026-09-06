@@ -15,7 +15,6 @@ tasks_dir = "experiments/tasks"
 runs_dir = "experiments/runs"
 seed_dir = "experiments/fixtures/seed"
 template_dir = "reference/task-template"
-goal_prompt = "harness/goal-prompt.md"
 
 [images]
 taskfmt = "harness-taskfmt:latest"

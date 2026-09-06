@@ -27,6 +27,7 @@ pub const SELFCHECK_LOG: &str = "selfcheck.log";
 const PREREQ_READY: &str = "/out/prereqs.ready";
 const PREREQ_FAILED: &str = "/out/prereqs.FAILED";
 const PANE_FILE: &str = "/out/pane-id";
+const EMBEDDED_GOAL_PROMPT: &str = include_str!("../task-prompt.md");
 
 pub struct RunOutcome {
     pub run_id: String,
@@ -233,7 +234,7 @@ pub fn dispatch_one(
     }
 
     // ---------- 8. prompt + session ----------
-    let prompt = build_prompt(&resolved.goal_prompt(), &profile.kind)?;
+    let prompt = build_prompt(&profile.kind)?;
     redact::write_scrubbed(&run_dir.join("prompt.txt"), prompt.as_bytes())?;
     let session_id = uuid::Uuid::new_v4().to_string();
 
@@ -607,13 +608,12 @@ pub fn top_up_snapshot(snapshot: &Path, template_dir: &Path) -> anyhow::Result<(
     Ok(())
 }
 
-/// The first ```` ```text ```` block of goal-prompt.md whose info-string words name `kind`
+/// The first ```` ```text ```` block of the embedded task-prompt.md whose info-string words name `kind`
 /// (`text claude`, `text codex`, or a shared `text claude codex`), collapsed to one line (one
 /// line avoids the `[Pasted text]` chip in the agent TUI).
-pub fn build_prompt(goal_prompt: &Path, kind: &str) -> anyhow::Result<String> {
-    let text = std::fs::read_to_string(goal_prompt)
-        .with_context(|| format!("cannot read {}", goal_prompt.display()))?;
-    build_prompt_from_str(&text, kind).with_context(|| format!("in {}", goal_prompt.display()))
+pub fn build_prompt(kind: &str) -> anyhow::Result<String> {
+    build_prompt_from_str(EMBEDDED_GOAL_PROMPT, kind)
+        .with_context(|| "in embedded src/task-prompt.md")
 }
 
 /// Pure part of [`build_prompt`]: select + collapse, error when no block names `kind`.
@@ -1033,10 +1033,9 @@ mod tests {
     }
 
     #[test]
-    fn real_goal_prompt_serves_claude_and_codex_under_the_cap() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("goal-prompt.md");
-        let claude = build_prompt(&path, "claude").unwrap();
-        let codex = build_prompt(&path, "codex").unwrap();
+    fn embedded_goal_prompt_serves_claude_and_codex_under_the_cap() {
+        let claude = build_prompt("claude").unwrap();
+        let codex = build_prompt("codex").unwrap();
         assert_eq!(claude, codex);
         assert!(claude.starts_with("/goal "));
         assert!(claude.contains("`@/task/README.md`"));
@@ -1049,7 +1048,7 @@ mod tests {
             "{}",
             claude.chars().count()
         );
-        assert!(build_prompt(&path, "ghost").is_err());
+        assert!(build_prompt("ghost").is_err());
     }
 
     /// `fail_prereqs` returns its failure instead of ending the process. The assertion is the

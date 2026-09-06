@@ -44,7 +44,6 @@ fn manifest_matches_the_repo_root_file() {
     let cfg = ExperimentConfig::parse(&on_disk).unwrap();
     assert_eq!(cfg.github.owner, "donbeave");
     assert_eq!(cfg.github.repo_prefix, "taskfmt-experiment");
-    assert_eq!(cfg.paths.goal_prompt, "harness/goal-prompt.md");
     assert_eq!(cfg.default_profile(), "zai-flash");
     let zai = cfg.profile("zai-flash").unwrap();
     assert_eq!(zai.kind, "claude");
