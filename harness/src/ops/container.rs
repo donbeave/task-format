@@ -175,7 +175,8 @@ pub struct LaunchPlan {
 
 /// Build the launch plan for one run: mounts `/work /task:ro /progress /agent-home /out /seed:ro`,
 /// the static env from the profile plus `TASKFMT_BASE`, `AGENT_CMD`, `AGENT_KIND`, `HERDR_SESSION`,
-/// and the `taskfmt.*` labels that let every later command find this run from the container alone.
+/// `CARGO_TARGET_DIR=/out/cargo-target`, and the `taskfmt.*` labels that let every later command
+/// find this run from the container alone.
 pub fn launch_plan(
     cfg: &ExperimentConfig,
     resolved: &Resolved,
@@ -225,6 +226,12 @@ pub fn launch_plan(
         }
         _ => {}
     }
+    // Keep build artifacts on the dedicated output mount. They must never land in /work, where
+    // host-side candidate capture can otherwise force-stage and promote them.
+    env.push((
+        "CARGO_TARGET_DIR".to_string(),
+        "/out/cargo-target".to_string(),
+    ));
 
     LaunchPlan {
         container: manifest.container.clone(),
@@ -637,5 +644,26 @@ mod tests {
             Some("baseline"),
             "the movable tag must not be the scope base"
         );
+    }
+
+    #[test]
+    fn launch_plan_routes_cargo_artifacts_to_the_out_mount() {
+        let cfg = ExperimentConfig::parse(
+            "schema = \"experiment/v1\"\n[agents.default]\nprofile = \"p\"\n[agents.profiles.p]\nkind = \"codex\"\nimage = \"i\"\n",
+        )
+        .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let resolved = Resolved::new(dir.path(), cfg.clone());
+        let profile = cfg.profile("p").unwrap().clone();
+        let manifest = sample_manifest(&dir.path().join("runs/20260101-000000-p-TASK-001"));
+        let plan = launch_plan(&cfg, &resolved, &manifest, &profile, "codex", "base");
+
+        let target_dir = plan
+            .env
+            .iter()
+            .find(|(key, _)| key == "CARGO_TARGET_DIR")
+            .map(|(_, value)| value.as_str());
+        assert_eq!(target_dir, Some("/out/cargo-target"));
+        assert_ne!(target_dir, Some("/work/target"));
     }
 }
