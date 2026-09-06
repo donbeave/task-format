@@ -2,6 +2,7 @@
 //! 0600 env-file that carries resolved secrets to `docker run` and nowhere else.
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 
@@ -26,6 +27,13 @@ pub const LABEL_TASK: &str = "taskfmt.task";
 pub const LABEL_PROFILE: &str = "taskfmt.profile";
 /// The experiment id, when the run belongs to one.
 pub const LABEL_EXP: &str = "taskfmt.exp";
+/// A per-launch nonce. It lets failed-launch cleanup distinguish this attempt from an older
+/// container that happens to have the same deterministic name.
+pub const LABEL_LAUNCH_ID: &str = "taskfmt.launch_id";
+
+const LAUNCH_RECONCILE_TIMEOUT: Duration = Duration::from_secs(30);
+const LAUNCH_RECONCILE_POLL: Duration = Duration::from_millis(50);
+const LAUNCH_STOP_GRACE_S: u64 = 5;
 
 /// The labels that make one run's container self-describing: run id, run dir, the manifest that
 /// dispatched it, task, profile, and the experiment when there is one.
@@ -197,7 +205,11 @@ pub fn launch_plan(
     if seed_dir.is_dir() {
         mounts.push(docker::Mount::ro(&seed_dir, "/seed"));
     }
-    let labels = run_labels(manifest, &resolved.manifest);
+    let mut labels = run_labels(manifest, &resolved.manifest);
+    labels.push((
+        LABEL_LAUNCH_ID.to_string(),
+        uuid::Uuid::new_v4().to_string(),
+    ));
 
     let mut env = vec![
         ("TASKFMT_BASE".to_string(), base_ref.to_string()),
@@ -258,7 +270,80 @@ pub fn launch(plan: &LaunchPlan, env_file: &SecretEnvFile) -> anyhow::Result<Str
         cpus: plan.cpus,
         pids_limit: plan.pids_limit,
     };
-    docker::run_detached(&spec)
+    match docker::run_detached(&spec) {
+        Ok(container_id) => Ok(container_id),
+        Err(launch_error) => {
+            let timeout = if launch_error_is_timeout(&launch_error) {
+                LAUNCH_RECONCILE_TIMEOUT
+            } else {
+                LAUNCH_FAILURE_RECONCILE_TIMEOUT
+            };
+            if let Err(reconcile_error) = reconcile_failed_launch(plan, timeout) {
+                return Err(launch_error.context(format!(
+                    "docker launch cleanup was not proven for {}: {reconcile_error:#}",
+                    plan.container
+                )));
+            }
+            Err(launch_error)
+        }
+    }
+}
+
+/// Reconcile the daemon-side effect after the Docker CLI timed out or otherwise failed.
+///
+/// `docker run` is a request to the daemon. Killing the CLI at the control timeout can therefore
+/// race with container creation: the CLI reports failure while the daemon creates the named
+/// container anyway. Poll by name long enough to observe that late creation, but only stop a
+/// container carrying this launch's full label set. A name collision with an unrelated container
+/// is left untouched and reported as an unreconciled failure.
+const LAUNCH_FAILURE_RECONCILE_TIMEOUT: Duration = Duration::from_secs(2);
+
+fn reconcile_failed_launch(plan: &LaunchPlan, timeout: Duration) -> anyhow::Result<()> {
+    let deadline = Instant::now() + timeout;
+    let mut observed = false;
+
+    loop {
+        if let Some(info) = docker::inspect_container(&plan.container) {
+            if !launch_identity_matches(&info, plan) {
+                anyhow::bail!(
+                    "container {} exists but does not carry this launch identity; left untouched",
+                    plan.container
+                );
+            }
+            observed = true;
+            if !info.is_running() {
+                return Ok(());
+            }
+            let _ = docker::stop(&plan.container, LAUNCH_STOP_GRACE_S);
+        } else if observed && docker::available() {
+            // The matching container disappeared while being stopped.
+            return Ok(());
+        }
+
+        if Instant::now() >= deadline {
+            if docker::inspect_container(&plan.container).is_none() && docker::available() {
+                // No container was created, or the matching one has already disappeared.
+                return Ok(());
+            }
+            anyhow::bail!(
+                "container {} may still exist or Docker did not answer during reconciliation",
+                plan.container
+            );
+        }
+        std::thread::sleep(LAUNCH_RECONCILE_POLL);
+    }
+}
+
+fn launch_error_is_timeout(error: &anyhow::Error) -> bool {
+    format!("{error:#}").contains("timed out")
+}
+
+fn launch_identity_matches(info: &docker::ContainerInfo, plan: &LaunchPlan) -> bool {
+    info.name == plan.container
+        && plan.labels.iter().all(|(key, value)| {
+            info.label(key)
+                .is_some_and(|actual| actual == value.as_str())
+        })
 }
 
 /// The agent command line for a claude profile.
@@ -558,6 +643,35 @@ mod tests {
     }
 
     #[test]
+    fn failed_launch_cleanup_requires_this_attempts_launch_identity() {
+        let cfg = ExperimentConfig::parse(
+            "schema = \"experiment/v1\"\n[agents.default]\nprofile = \"p\"\n[agents.profiles.p]\nkind = \"claude\"\nimage = \"i\"\n",
+        )
+        .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let resolved = Resolved::new(dir.path(), cfg.clone());
+        let profile = cfg.profile("p").unwrap().clone();
+        let manifest = sample_manifest(&dir.path().join("runs/20260101-000000-p-TASK-001"));
+        let plan = launch_plan(&cfg, &resolved, &manifest, &profile, "claude", "base");
+        let labels = plan.labels.iter().cloned().collect();
+        let matching = docker::ContainerInfo {
+            name: plan.container.clone(),
+            state: "running".into(),
+            work_mount: None,
+            labels,
+        };
+        assert!(launch_identity_matches(&matching, &plan));
+
+        let mut other_labels = matching.labels.clone();
+        other_labels.insert(LABEL_LAUNCH_ID.to_string(), "different-attempt".into());
+        let other = docker::ContainerInfo {
+            labels: other_labels,
+            ..matching
+        };
+        assert!(!launch_identity_matches(&other, &plan));
+    }
+
+    #[test]
     fn the_launch_plan_labels_the_container_with_its_run() {
         let cfg = ExperimentConfig::parse(
             "schema = \"experiment/v1\"\n[agents.default]\nprofile = \"p\"\n[agents.profiles.p]\nkind = \"claude\"\nimage = \"i\"\n",
@@ -575,6 +689,11 @@ mod tests {
                 .map(|(_, v)| v.clone())
         };
         assert_eq!(label(LABEL_RUN_ID), Some(manifest.run.clone()));
+        assert!(
+            label(LABEL_LAUNCH_ID)
+                .as_deref()
+                .is_some_and(|value| !value.is_empty())
+        );
         assert_eq!(
             label(LABEL_MANIFEST),
             Some(dir.path().join("experiment.toml").display().to_string()),

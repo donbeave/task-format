@@ -11,6 +11,8 @@ use super::{Captured, capture, capture_with_timeout};
 
 /// Docker control-plane requests must fail rather than pinning a lifecycle poll forever.
 const CONTROL_TIMEOUT: Duration = Duration::from_millis(500);
+/// `docker stop` may wait for the container's full SIGTERM grace period before returning.
+const STOP_TIMEOUT_MARGIN: Duration = Duration::from_secs(1);
 /// Image startup can take longer than a control-plane poll, but must still have a finite bound.
 const IMAGE_FINGERPRINT_TIMEOUT: Duration = Duration::from_secs(30);
 /// The same startup bound applies when checking image-baked runtime prerequisites.
@@ -360,6 +362,16 @@ pub fn is_running(container: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn is_stopped(container: &str) -> bool {
+    capture_docker(Command::new("docker").args(["inspect", "-f", "{{.State.Running}}", container]))
+        .map(|out| out.ok() && out.stdout.trim() == "false")
+        .unwrap_or(false)
+}
+
+fn stop_timeout(grace_s: u64) -> Duration {
+    Duration::from_secs(grace_s).saturating_add(STOP_TIMEOUT_MARGIN)
+}
+
 pub fn exists(container: &str) -> bool {
     capture_docker(Command::new("docker").args(["inspect", "-f", "{{.Id}}", container]))
         .map(|out| out.ok())
@@ -378,15 +390,11 @@ pub fn start(container: &str) -> anyhow::Result<()> {
 /// process left to write into the `/work` bind mount. `true` when the container is no longer
 /// running afterwards — including when it was already stopped.
 pub fn stop(container: &str, grace_s: u64) -> bool {
-    let stopped = capture_docker(Command::new("docker").args([
-        "stop",
-        "--time",
-        &grace_s.to_string(),
-        container,
-    ]))
-    .map(|out| out.ok())
-    .unwrap_or(false);
-    stopped || !is_running(container)
+    let _ = capture_with_timeout(
+        Command::new("docker").args(["stop", "--time", &grace_s.to_string(), container]),
+        stop_timeout(grace_s),
+    );
+    is_stopped(container)
 }
 
 /// How a caller learns the gate fingerprint baked into an image.
@@ -616,5 +624,11 @@ mod tests {
         };
         assert_eq!(spec.mounts[0].flag(), "/runs/r/workspace:/work");
         assert_eq!(spec.labels[0].1, "r");
+    }
+
+    #[test]
+    fn stop_timeout_includes_the_requested_grace_period() {
+        assert_eq!(stop_timeout(20), Duration::from_secs(21));
+        assert!(stop_timeout(20) > CONTROL_TIMEOUT);
     }
 }

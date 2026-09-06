@@ -288,11 +288,12 @@ pub fn dispatch_one(
         "== docker run {} (privileged, persistent, no --rm)",
         manifest.container
     ));
+    // Persist identity before the Docker side effect. The Docker CLI has a short control timeout;
+    // its daemon can create the named container after that CLI returns an error. This record makes
+    // such a container locatable even if launch reconciliation has to report a failure.
+    manifest.save(&run_dir)?;
     container::launch(&plan, &env_file)?;
     drop(env_file); // the 0600 env file is gone the moment the docker invocation returned
-    // Save launch identity before waiting for prerequisites. A parked prereq failure has no
-    // herdr pane, but status/attach still need the manifest to find the run and container.
-    manifest.save(&run_dir)?;
 
     // ---------- 11. prereq stage (inner dockerd + postgres + seeds) ----------
     let timeout = Duration::from_secs(cfg.runtime.prereq_timeout_s);
