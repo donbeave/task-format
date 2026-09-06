@@ -4,6 +4,9 @@ This directory contains the versioned inputs and generated records for the task-
 
 The executable harness lives in [`../harness/`](../harness/README.md). This directory contains no execution scripts.
 
+The per-task agent prompt is maintained once in [`harness/goal-prompt.md`](../harness/goal-prompt.md)
+and selected through `experiment.toml`; campaign notes must reference it instead of copying it.
+
 ## Contents
 
 | Path | Purpose | Lifecycle |

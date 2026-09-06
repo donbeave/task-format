@@ -9,16 +9,16 @@ Keep the `/goal` condition under 4,000 characters; the evaluator (Haiku Stop hoo
 ## Goal condition (shared: Claude Code `/goal`, Codex `/goal`)
 
 ```text claude codex
-/goal Implement the single task in /task/README.md following /task/AGENTS.md exactly.
-Done when: taskfmt verify has been run from /work after the last file change, exited 0, and
-printed DONE as its last line, with that full output shown in the transcript;
-/progress/progress.md has a valid terminal DONE event stream; and the final
-report ending in a GOAL_RESULT line has been printed. Nothing under /task/ may change
-and no file outside the writable_paths list in /task/verify.toml may change. Do not
-weaken, skip, or delete checks. If a
-precondition fails, stop with STATUS: BLOCKED; if the task needs a scope, decision,
-or checklist change, stop with STATUS: NEEDS_REPLAN. Stop after 40 turns; if stopping at the
-cap, leave STATE: IN_PROGRESS and print STATUS: INCOMPLETE.
+/goal Implement the single task described in `@/task/README.md`, following `@/task/AGENTS.md`
+exactly. Before editing, read both files fully. Work only in `/work`; nothing under `/task/` may
+change. Done when, after the last file change, `taskfmt verify` has been run from `/work`, exited
+`0`, and printed `DONE` as its last line, with the complete command and output shown in the
+transcript; `/progress/progress.md` has a valid terminal `DONE` event stream; and the final report
+ending in a `GOAL_RESULT` line has been printed. Do not change any file outside the `writable_paths`
+list in `/task/verify.toml`. Do not weaken, skip, delete, or bypass checks. If a precondition
+fails, stop with `STATUS: BLOCKED`; if the task needs a scope, decision, or checklist change, stop
+with `STATUS: NEEDS_REPLAN`. Stop after 40 turns; if stopping at the cap, leave `STATE: IN_PROGRESS`
+and print `STATUS: INCOMPLETE`.
 ```
 
 ## Claude Code (`/goal`)

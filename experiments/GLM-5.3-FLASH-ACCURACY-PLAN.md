@@ -1,8 +1,9 @@
 # GLM-5.3-Flash Task-Format Accuracy Campaign
 
 Launch the campaign with `taskfmt experiment --proof-corpus /path/to/pgtui-proof.git`; it runs the
-preflight before creating the runtime repository. Then paste this prompt into the campaign
-controller's `/goal`.
+preflight before creating the runtime repository. The per-task agent prompt has one source at
+`harness/goal-prompt.md`, selected by `experiment.toml`; do not copy it into this plan. The prompt
+below is only the separate campaign-controller `/goal` prompt.
 
 ```text
 /goal Run a controlled task-format accuracy campaign using profile zai-flash

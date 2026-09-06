@@ -44,10 +44,12 @@ fn manifest_matches_the_repo_root_file() {
     let cfg = ExperimentConfig::parse(&on_disk).unwrap();
     assert_eq!(cfg.github.owner, "donbeave");
     assert_eq!(cfg.github.repo_prefix, "taskfmt-experiment");
+    assert_eq!(cfg.paths.goal_prompt, "harness/goal-prompt.md");
     assert_eq!(cfg.default_profile(), "zai-flash");
     let zai = cfg.profile("zai-flash").unwrap();
     assert_eq!(zai.kind, "claude");
     assert_eq!(zai.model, "glm-5.3-flash");
+    assert_eq!(zai.effort, "max");
     // shape, not policy: the operator may retune effort without editing this test. No
     // validated set exists in `config.rs` (only `default_effort()`), so the list is literal.
     assert!(
