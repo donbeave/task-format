@@ -11,6 +11,8 @@ use super::{Captured, capture, capture_with_timeout};
 
 /// Docker control-plane requests must fail rather than pinning a lifecycle poll forever.
 const CONTROL_TIMEOUT: Duration = Duration::from_millis(500);
+/// Starting a container can wait on daemon work; give `docker run` its own bounded deadline.
+const LAUNCH_TIMEOUT: Duration = Duration::from_secs(30);
 /// `docker stop` may wait for the container's full SIGTERM grace period before returning.
 const STOP_TIMEOUT_MARGIN: Duration = Duration::from_secs(1);
 /// Image startup can take longer than a control-plane poll, but must still have a finite bound.
@@ -22,10 +24,6 @@ const BUILD_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
 fn capture_docker(cmd: &mut Command) -> std::io::Result<Captured> {
     capture_with_timeout(cmd, CONTROL_TIMEOUT)
-}
-
-fn check_docker(cmd: &mut Command, what: &str) -> anyhow::Result<Captured> {
-    check_docker_with_timeout(cmd, what, CONTROL_TIMEOUT)
 }
 
 fn check_docker_with_timeout(
@@ -185,7 +183,11 @@ pub fn run_detached(spec: &RunSpec) -> anyhow::Result<String> {
     ])
     .arg(spec.pids_limit.to_string())
     .arg(&spec.image);
-    let captured = check_docker(&mut cmd, &format!("docker run {}", spec.name))?;
+    let captured = check_docker_with_timeout(
+        &mut cmd,
+        &format!("docker run {}", spec.name),
+        LAUNCH_TIMEOUT,
+    )?;
     Ok(captured.stdout.trim().to_string())
 }
 
@@ -630,5 +632,11 @@ mod tests {
     fn stop_timeout_includes_the_requested_grace_period() {
         assert_eq!(stop_timeout(20), Duration::from_secs(21));
         assert!(stop_timeout(20) > CONTROL_TIMEOUT);
+    }
+
+    #[test]
+    fn launch_timeout_is_separate_from_control_timeout() {
+        assert_eq!(LAUNCH_TIMEOUT, Duration::from_secs(30));
+        assert!(LAUNCH_TIMEOUT > CONTROL_TIMEOUT);
     }
 }
