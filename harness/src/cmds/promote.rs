@@ -35,9 +35,12 @@ pub fn promote_run(_ctx: &Ctx, run_dir: &Path, _yes: bool) -> anyhow::Result<()>
     if manifest.result_sha.is_some() {
         bail!("promotion refused: run already has a result commit");
     }
+    let remote_parent = promotion_remote_parent(&manifest)?.to_string();
 
     // `commit-tree` consumes recorded object IDs directly. Moving local branches or a dirty
     // worktree cannot alter this commit; the remote lease rejects a concurrently changed main.
+    // `gate.parent` is the local scope/base parent used by verification, not the remote parent
+    // that promotion must append to.
     let commit = match manifest.pending_promotion_sha.clone() {
         Some(commit) => commit,
         None => {
@@ -45,7 +48,7 @@ pub fn promote_run(_ctx: &Ctx, run_dir: &Path, _yes: bool) -> anyhow::Result<()>
             let commit = crate::ops::git::commit_tree(
                 &workspace,
                 &gate.candidate_tree,
-                &gate.parent,
+                &remote_parent,
                 &message,
                 true,
             )?;
@@ -60,11 +63,36 @@ pub fn promote_run(_ctx: &Ctx, run_dir: &Path, _yes: bool) -> anyhow::Result<()>
         manifest.save(run_dir)?;
         return Ok(());
     }
-    crate::ops::git::push_main_with_lease(&workspace, "origin", &commit, &gate.parent)?;
+    crate::ops::git::push_main_with_lease(&workspace, "origin", &commit, &remote_parent)?;
     manifest.result_sha = Some(commit);
     manifest.pending_promotion_sha = None;
     manifest.save(run_dir)?;
     Ok(())
+}
+
+/// Return the immutable remote `main` predecessor recorded at dispatch. The gate parent is a
+/// different identity: it is the local workspace HEAD after trusted material was committed and is
+/// retained for scope verification and gate provenance.
+fn promotion_remote_parent(manifest: &Manifest) -> anyhow::Result<&str> {
+    let clone_sha = (!manifest.clone_sha.is_empty()).then_some(manifest.clone_sha.as_str());
+    let lifecycle_predecessor = manifest
+        .lifecycle_predecessor_sha
+        .as_deref()
+        .filter(|sha| !sha.is_empty());
+
+    match (clone_sha, lifecycle_predecessor) {
+        (Some(clone_sha), Some(lifecycle_predecessor)) => {
+            anyhow::ensure!(
+                clone_sha == lifecycle_predecessor,
+                "promotion refused: recorded clone SHA {clone_sha} differs from lifecycle predecessor {lifecycle_predecessor}"
+            );
+            Ok(clone_sha)
+        }
+        (Some(clone_sha), None) | (None, Some(clone_sha)) => Ok(clone_sha),
+        (None, None) => {
+            bail!("promotion refused: no recorded remote clone SHA or lifecycle predecessor")
+        }
+    }
 }
 
 /// The commit message a promoted run pushes into the experiment repo: `<TASK>: <README title>`, a
@@ -184,11 +212,15 @@ mod tests {
         crate::ops::git::init(&workspace).unwrap();
         std::fs::write(workspace.join("base.txt"), "base\n").unwrap();
         crate::ops::git::add_all(&workspace).unwrap();
-        let parent = crate::ops::git::commit(&workspace, "base", true, false).unwrap();
+        let clone_sha = crate::ops::git::commit(&workspace, "base", true, false).unwrap();
         crate::ops::git::remote_add(&workspace, "origin", &format!("file://{}", bare.display()))
             .unwrap();
         crate::ops::git::push_upstream(&workspace, "origin", "main").unwrap();
 
+        std::fs::write(workspace.join("trusted.txt"), "trusted\n").unwrap();
+        crate::ops::git::add_all(&workspace).unwrap();
+        let parent =
+            crate::ops::git::commit(&workspace, "planner trusted material", true, false).unwrap();
         std::fs::write(workspace.join("candidate.txt"), "gated\n").unwrap();
         crate::ops::git::add_all_including_ignored(&workspace).unwrap();
         let tree = crate::ops::git::write_tree(&workspace).unwrap();
@@ -201,6 +233,7 @@ mod tests {
 
         let (mut manifest, mut gate) = fixture();
         manifest.run_dir = run_dir.display().to_string();
+        manifest.clone_sha = clone_sha;
         gate.schema = "gate/v3".into();
         gate.candidate_tree = tree.clone();
         gate.parent = parent.clone();

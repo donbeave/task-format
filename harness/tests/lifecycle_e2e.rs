@@ -112,7 +112,7 @@ fn resolved(root: &Path) -> Resolved {
     Resolved::new(&root, config)
 }
 
-fn manifest(run_dir: &Path, repo_url: String, base_sha: String) -> Manifest {
+fn manifest(run_dir: &Path, repo_url: String, base_sha: String, clone_sha: String) -> Manifest {
     Manifest {
         run: "lifecycle-e2e-TASK-900".into(),
         run_dir: run_dir.display().to_string(),
@@ -123,8 +123,8 @@ fn manifest(run_dir: &Path, repo_url: String, base_sha: String) -> Manifest {
         effort: "low".into(),
         task: "TASK-900".into(),
         repo_url,
-        base_sha: base_sha.clone(),
-        clone_sha: base_sha,
+        base_sha,
+        clone_sha,
         lifecycle_predecessor_sha: None,
         session_id: "hermetic".into(),
         pane: "none".into(),
@@ -172,7 +172,6 @@ fn disposable_lifecycle_gate_promotes_the_recorded_tree_to_remote_main() {
     std::fs::write(workspace.join("base.txt"), "base\n").unwrap();
     git(&workspace, &["add", "base.txt"]);
     git(&workspace, &["commit", "-qm", "base"]);
-    let base = git(&workspace, &["rev-parse", "HEAD"]);
     git(
         &workspace,
         &[
@@ -183,6 +182,23 @@ fn disposable_lifecycle_gate_promotes_the_recorded_tree_to_remote_main() {
         ],
     );
     git(&workspace, &["push", "-qu", "origin", "main"]);
+    let clone_sha = git(&workspace, &["rev-parse", "HEAD"]);
+
+    // Trusted planner material advances only the local workspace. The remote still names the
+    // bootstrap commit, while the gate must retain this local commit as its scope/base parent.
+    std::fs::write(workspace.join("trusted.txt"), "trusted\n").unwrap();
+    git(&workspace, &["add", "trusted.txt"]);
+    git(
+        &workspace,
+        &["commit", "-qm", "planner: TASK-900 trusted material"],
+    );
+    let base = git(&workspace, &["rev-parse", "HEAD"]);
+    assert_ne!(base, clone_sha);
+    assert_eq!(
+        git(&remote, &["rev-parse", "refs/heads/main"]),
+        clone_sha,
+        "local trusted material must be ahead of remote before gating"
+    );
 
     // This is the executor's completed work.  It is deliberately staged only by production
     // `gate_run`, which freezes its complete tree before executing the verifier body.
@@ -192,6 +208,7 @@ fn disposable_lifecycle_gate_promotes_the_recorded_tree_to_remote_main() {
         &run_dir,
         format!("file://{}", remote.display()),
         base.clone(),
+        clone_sha.clone(),
     );
     run.save(&run_dir).unwrap();
 
@@ -239,6 +256,16 @@ fn disposable_lifecycle_gate_promotes_the_recorded_tree_to_remote_main() {
     assert_eq!(
         &remote_head, result,
         "remote main must name promoted commit"
+    );
+    assert_eq!(
+        git(&remote, &["rev-parse", &format!("{result}^")]),
+        clone_sha,
+        "promoted commit must append to the recorded remote clone SHA"
+    );
+    assert_eq!(
+        promoted.gate.as_ref().unwrap().parent,
+        base,
+        "gate parent remains the local scope/base parent"
     );
     assert_eq!(
         remote_tree,
