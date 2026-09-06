@@ -1038,8 +1038,10 @@ mod tests {
         let codex = build_prompt("codex").unwrap();
         assert_eq!(claude, codex);
         assert!(claude.starts_with("/goal "));
-        assert!(claude.contains("`@/task/README.md`"));
-        assert!(claude.contains("`@/task/AGENTS.md`"));
+        assert!(claude.contains("@/task/README.md"));
+        assert!(claude.contains("@/task/AGENTS.md"));
+        assert!(!claude.contains("`@/task/README.md`"));
+        assert!(!claude.contains("`@/task/AGENTS.md`"));
         assert!(claude.contains("`taskfmt verify`"));
         assert!(claude.contains("after the last file change"));
         assert!(claude.contains("STATUS: INCOMPLETE"));

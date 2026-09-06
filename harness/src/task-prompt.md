@@ -1,5 +1,5 @@
 ```text claude codex
-/goal Implement the single task described in `@/task/README.md`, following `@/task/AGENTS.md`
+/goal Implement the single task described in @/task/README.md, following @/task/AGENTS.md
 exactly. Before editing, read both files fully. Work only in `/work`; nothing under `/task/` may
 change. Done when, after the last file change, `taskfmt verify` has been run from `/work`, exited
 `0`, and printed `DONE` as its last line, with the complete command and output shown in the
