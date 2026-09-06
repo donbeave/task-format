@@ -2,7 +2,9 @@
 //! `repo_url` and must never create a repo, while a fresh experiment still mints one.
 
 use taskfmt::cmds::Ctx;
-use taskfmt::cmds::experiment::{require_recorded_predecessor, resolve_repo_url, resume_repo_url};
+use taskfmt::cmds::experiment::{
+    require_recorded_predecessor, resolve_proof_corpus, resolve_repo_url, resume_repo_url,
+};
 use taskfmt::config::{ExperimentConfig, Resolved};
 use taskfmt::interactive::Interaction;
 use taskfmt::ops::docker::ImageFingerprint;
@@ -370,6 +372,73 @@ fn run_without_exp_state_honours_the_repo_arg() {
     .to_string();
     assert!(err.contains(UNREACHABLE), "{err}");
     assert!(err.contains("cloning"), "{err}");
+    let repos = RepoRecord::load_all(&fx.resolved.runs_dir()).unwrap();
+    assert!(repos.is_empty(), "no repo was created: {repos:?}");
+}
+
+#[test]
+fn proof_corpus_is_canonicalized_and_pinned() {
+    let dir = tempfile::tempdir().unwrap();
+    let corpus = dir.path().join("proof-corpus");
+    std::fs::create_dir(&corpus).unwrap();
+
+    let resolved = resolve_proof_corpus(None, Some(&corpus)).unwrap();
+    assert_eq!(resolved, Some(std::fs::canonicalize(&corpus).unwrap()));
+
+    let mut recorded = ExperimentState::new("exp", REPO);
+    recorded.proof_corpus = resolved.as_ref().map(|path| path.display().to_string());
+    assert_eq!(
+        resolve_proof_corpus(Some(&recorded), None).unwrap(),
+        resolved
+    );
+}
+
+#[test]
+fn proof_corpus_resume_rejects_a_different_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let first = dir.path().join("proof-one");
+    let second = dir.path().join("proof-two");
+    std::fs::create_dir(&first).unwrap();
+    std::fs::create_dir(&second).unwrap();
+
+    let mut recorded = ExperimentState::new("exp", REPO);
+    recorded.proof_corpus = Some(std::fs::canonicalize(&first).unwrap().display().to_string());
+    let err = resolve_proof_corpus(Some(&recorded), Some(&second))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("does not match"), "{err}");
+}
+
+#[test]
+fn proof_corpus_cannot_be_added_after_task_history_exists() {
+    let dir = tempfile::tempdir().unwrap();
+    let corpus = dir.path().join("proof-corpus");
+    std::fs::create_dir(&corpus).unwrap();
+
+    let recorded = state(REPO, &[("TASK-001", "pass", true)]);
+    let err = resolve_proof_corpus(Some(&recorded), Some(&corpus))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("start a new experiment"), "{err}");
+}
+
+#[test]
+fn proof_corpus_preflight_runs_before_runtime_repo_creation() {
+    let fx = fixture(&[]);
+    let missing = fx._dir.path().join("missing-proof-corpus");
+    let err = taskfmt::cmds::experiment::run_with_proof_corpus(
+        &fx.ctx,
+        &[String::from("all")],
+        None,
+        None,
+        None,
+        None,
+        Some(&missing),
+        false,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("cannot resolve proof corpus"), "{err}");
     let repos = RepoRecord::load_all(&fx.resolved.runs_dir()).unwrap();
     assert!(repos.is_empty(), "no repo was created: {repos:?}");
 }

@@ -1,6 +1,8 @@
 # GLM-5.3-Flash Task-Format Accuracy Campaign
 
-Paste this prompt into the campaign controller's `/goal` after the proof corpus preflight passes.
+Launch the campaign with `taskfmt experiment --proof-corpus /path/to/pgtui-proof.git`; it runs the
+preflight before creating the runtime repository. Then paste this prompt into the campaign
+controller's `/goal`.
 
 ```text
 /goal Run a controlled task-format accuracy campaign using profile zai-flash

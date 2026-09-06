@@ -27,6 +27,10 @@ Run:
 bash experiments/corpus-preflight.sh /path/to/pgtui-proof.git
 ```
 
+For the full lifecycle runner, pass the same path with
+`taskfmt experiment --proof-corpus /path/to/pgtui-proof.git`. The runner performs this preflight
+before creating or mutating the runtime repository and pins the path in the experiment state.
+
 The command prints the resolved commit OIDs, derives a binary patch from each
 `baseline..reference`, runs the
 source-built `taskfmt selfcheck`, and fails closed on missing tags, wrong

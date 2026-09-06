@@ -133,8 +133,12 @@ taskfmt experiment \
   --auto
 ```
 
-Omit `--repo` to create a disposable private repository. Valid selections include `all`, `1-3,5`,
-`TASK-002..TASK-004`, and `TASK-101`. Resume an interrupted experiment with its recorded ID:
+Omit `--repo` to create a disposable private repository. Add
+`--proof-corpus /path/to/pgtui-proof.git` to preflight the immutable baseline/reference corpus
+before creating or mutating the runtime repository. The corpus path is recorded with the
+experiment; resume reuses it and rejects a different path. Valid selections include `all`,
+`1-3,5`, `TASK-002..TASK-004`, and `TASK-101`. Resume an interrupted experiment with its
+recorded ID:
 
 ```sh
 taskfmt experiment --resume <experiment-id> --tasks all --agent zai-flash --auto

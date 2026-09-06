@@ -186,9 +186,11 @@ taskfmt experiment \
   --auto
 ```
 
-Omit `--repo` to let `taskfmt` create a disposable private repository. This is one command, not
-parallel execution: tasks run in order, and the experiment stops at the first failed or blocked
-task. Resume the same experiment after fixing the cause:
+Omit `--repo` to let `taskfmt` create a disposable private repository. Add
+`--proof-corpus /path/to/pgtui-proof.git` for a controlled campaign; the corpus is preflighted
+before any runtime repository is created and pinned to the experiment state. This is one command,
+not parallel execution: tasks run in order, and the experiment stops at the first failed or
+blocked task. Resume the same experiment after fixing the cause:
 
 ```sh
 taskfmt experiment \

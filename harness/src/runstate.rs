@@ -234,6 +234,9 @@ pub struct ExperimentState {
     pub id: String,
     pub repo_url: String,
     pub started: String,
+    /// Canonical external proof corpus used to validate this experiment, when enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof_corpus: Option<String>,
     pub tasks: Vec<ExperimentTask>,
 }
 
@@ -243,6 +246,7 @@ impl ExperimentState {
             id: id.to_string(),
             repo_url: repo_url.to_string(),
             started: crate::config::timestamp_rfc3339(),
+            proof_corpus: None,
             tasks: Vec::new(),
         }
     }

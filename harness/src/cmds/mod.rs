@@ -293,17 +293,19 @@ pub fn dispatch(cli: &Cli) -> anyhow::Result<i32> {
         Command::Experiment {
             tasks,
             repo,
+            proof_corpus,
             agent,
             resume,
             kill_after,
             selfcheck,
-        } => experiment::run(
+        } => experiment::run_with_proof_corpus(
             &ctx,
             tasks,
             repo.as_deref(),
             agent.as_deref(),
             resume.as_deref(),
             *kill_after,
+            proof_corpus.as_deref(),
             *selfcheck,
         ),
         Command::Selfhost { cmd } => selfhost::run(&ctx, cmd),

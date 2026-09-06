@@ -1,6 +1,9 @@
 //! `taskfmt experiment --tasks all` — run a task batch against one repo, gate each, promote only
 //! on PASS. State lives in `runs_dir/<ID>/experiment.json`; stop on the first FAIL/BLOCKED.
 
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
 use anyhow::{Context, bail};
 
 use crate::cmds::Ctx;
@@ -62,6 +65,20 @@ pub fn run(
     kill_after: Option<u64>,
     selfcheck: bool,
 ) -> anyhow::Result<i32> {
+    run_with_proof_corpus(ctx, tasks, repo, agent, resume, kill_after, None, selfcheck)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn run_with_proof_corpus(
+    ctx: &Ctx,
+    tasks: &[String],
+    repo: Option<&str>,
+    agent: Option<&str>,
+    resume: Option<&str>,
+    kill_after: Option<u64>,
+    proof_corpus: Option<&Path>,
+    selfcheck: bool,
+) -> anyhow::Result<i32> {
     let resolved = ctx.load()?;
     let profile_name = agent
         .unwrap_or_else(|| resolved.cfg.default_profile())
@@ -86,10 +103,17 @@ pub fn run(
     };
     let state_file = resolved.experiment_file(&experiment_id);
     let existing = ExperimentState::load(&state_file)?;
+    let proof_corpus = resolve_proof_corpus(existing.as_ref(), proof_corpus)?;
+    if let Some(proof_corpus) = &proof_corpus {
+        run_proof_corpus_preflight(&resolved, proof_corpus)?;
+    }
     let repo_url = resolve_repo_url(existing.as_ref(), repo, |provided| {
         crate::cmds::repo::ensure_repo(ctx, &resolved, provided)
     })?;
     let mut state = existing.unwrap_or_else(|| ExperimentState::new(&experiment_id, &repo_url));
+    if state.proof_corpus.is_none() {
+        state.proof_corpus = proof_corpus.as_ref().map(|path| path.display().to_string());
+    }
     // Before anything is dispatched, and before the confirmation: `ensure_repo` above may already
     // have minted a live repository, and a failure between there and the first save would leave it
     // with nothing naming it and `--resume` nothing to resume.
@@ -269,6 +293,78 @@ pub fn run(
         state_file.display()
     ));
     Ok(if failed == 0 { 0 } else { 1 })
+}
+
+/// Resolve and pin the proof corpus before any runtime repository can be created.
+pub fn resolve_proof_corpus(
+    state: Option<&ExperimentState>,
+    requested: Option<&Path>,
+) -> anyhow::Result<Option<PathBuf>> {
+    let requested = requested.map(canonical_proof_corpus_path).transpose()?;
+    if requested.is_some()
+        && state.is_some_and(|state| state.proof_corpus.is_none() && !state.tasks.is_empty())
+    {
+        bail!(
+            "cannot add --proof-corpus to experiment with recorded task history; start a new experiment"
+        );
+    }
+    let recorded = state
+        .and_then(|state| state.proof_corpus.as_deref())
+        .map(PathBuf::from);
+
+    match (recorded, requested) {
+        (Some(recorded), Some(requested)) => {
+            let recorded = canonical_proof_corpus_path(&recorded)?;
+            anyhow::ensure!(
+                recorded == requested,
+                "--proof-corpus {} does not match experiment's recorded corpus {}",
+                requested.display(),
+                recorded.display()
+            );
+            Ok(Some(recorded))
+        }
+        (Some(recorded), None) => Ok(Some(recorded)),
+        (None, requested) => Ok(requested),
+    }
+}
+
+fn canonical_proof_corpus_path(path: &Path) -> anyhow::Result<PathBuf> {
+    std::fs::canonicalize(path)
+        .with_context(|| format!("cannot resolve proof corpus {}", path.display()))
+}
+
+fn run_proof_corpus_preflight(
+    resolved: &crate::config::Resolved,
+    proof_corpus: &Path,
+) -> anyhow::Result<()> {
+    let script = resolved.root.join("experiments/corpus-preflight.sh");
+    anyhow::ensure!(
+        script.is_file(),
+        "proof corpus preflight script is missing: {}",
+        script.display()
+    );
+
+    redact::emit(&format!(
+        "== proof corpus preflight {}",
+        proof_corpus.display()
+    ));
+    let mut command = Command::new("bash");
+    command
+        .arg(&script)
+        .arg(proof_corpus)
+        .current_dir(&resolved.root);
+    let output = crate::ops::capture(&mut command)
+        .with_context(|| format!("starting proof corpus preflight {}", script.display()))?;
+    redact::emit_lines(output.stdout.lines());
+    for line in output.stderr.lines() {
+        redact::eemit(line);
+    }
+    anyhow::ensure!(
+        output.ok(),
+        "proof corpus preflight failed for {}",
+        proof_corpus.display()
+    );
+    Ok(())
 }
 
 /// The repository an experiment run works against. Recorded state pins it (`resume_repo_url`);

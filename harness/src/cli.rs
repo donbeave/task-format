@@ -248,6 +248,9 @@ pub enum Command {
         /// Existing repo to run against. Absent: create a disposable one (after confirmation).
         #[arg(long)]
         repo: Option<String>,
+        /// External baseline/reference corpus to validate before creating or mutating the runtime repo.
+        #[arg(long, value_name = "PATH")]
+        proof_corpus: Option<PathBuf>,
         /// Agent profile name from experiment.toml. Default: agents.default.
         #[arg(long)]
         agent: Option<String>,
