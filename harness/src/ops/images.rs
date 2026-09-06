@@ -19,6 +19,8 @@ pub enum AgentFilter {
     All,
 }
 
+const TASKFMT_GIT_COMMIT_ARG: &str = "TASKFMT_GIT_COMMIT_SHA";
+
 /// Refuse to build an image that would be missing the baked postgres tarball.
 fn require_preload_tar(harness_dir: &Path) -> anyhow::Result<PathBuf> {
     let tar = harness_dir.join("images/preload/postgres.tar");
@@ -54,7 +56,10 @@ pub fn build_images(
         context: harness_dir.clone(),
         tag: cfg.images.taskfmt.clone(),
         target_arch: arch.clone(),
-        build_args: Vec::new(),
+        build_args: vec![(
+            TASKFMT_GIT_COMMIT_ARG.to_string(),
+            crate::GIT_COMMIT_SHA.to_string(),
+        )],
         no_cache,
     })?;
 

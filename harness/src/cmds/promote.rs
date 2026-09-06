@@ -97,7 +97,7 @@ pub fn commit_message(manifest: &Manifest, gate: &GateRecord, title: &str) -> St
         verdict = gate.verdict,
         tree = gate.candidate_tree,
         parent = gate.parent,
-        version = env!("CARGO_PKG_VERSION"),
+        version = crate::VERSION,
     )
 }
 
@@ -353,7 +353,7 @@ mod tests {
                 "Taskfmt-Profile: zai-flash effort=low",
                 "Taskfmt-Run: 20260830-101010-zai-flash-TASK-101",
                 "Taskfmt-Gate: pass tree=tree789000000000000000000000000000000000 parent=parent00000000000000000000000000000000000",
-                &format!("Taskfmt-Version: {}", env!("CARGO_PKG_VERSION")),
+                &format!("Taskfmt-Version: {}", crate::VERSION),
             ]
         );
     }

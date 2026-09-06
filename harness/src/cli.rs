@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[derive(Parser, Debug)]
 #[command(
     name = "taskfmt",
-    version,
+    version = crate::VERSION,
     about = "task-format harness: task lint, progress init, completion gate, container dispatch",
     after_help = "Read-only commands never prompt. Mutating commands (run, experiment, repo, promote, \
                   preload, build-images) need --auto or --yes when stdin is not a terminal."
@@ -33,6 +33,25 @@ pub struct Cli {
 
     #[command(subcommand)]
     pub command: Command,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn version_contains_package_version_and_commit_sha() {
+        assert_eq!(Cli::command().get_version(), Some(crate::VERSION));
+        assert_eq!(
+            crate::VERSION,
+            format!(
+                "{} (git {})",
+                env!("CARGO_PKG_VERSION"),
+                crate::GIT_COMMIT_SHA
+            )
+        );
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
