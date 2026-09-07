@@ -10,6 +10,7 @@ pub mod gate;
 pub mod lint;
 pub mod preload;
 pub mod progress_init;
+pub mod project;
 pub mod promote;
 pub mod ps;
 pub mod repo;
@@ -212,6 +213,8 @@ pub fn dispatch(cli: &Cli) -> anyhow::Result<i32> {
     let ctx = Ctx::from_cli(cli);
     use crate::cli::{Command, RepoCmd};
     match &cli.command {
+        Command::Project { cmd } => project::project(&ctx, cmd),
+        Command::Group { cmd } => project::group(&ctx, cmd),
         Command::Lint { json, tasks } => lint::run(&ctx, *json, tasks),
         Command::ProgressInit { task, out } => progress_init::run(&ctx, task, out.as_deref()),
         Command::Selftest => selftest::run(&ctx),

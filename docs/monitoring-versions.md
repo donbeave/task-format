@@ -114,6 +114,7 @@ from the matching release record. All listed minimums fit Rust 1.98.1.
 | [signal-hook](https://crates.io/crates/signal-hook/0.4.4) | 0.4.4 | — |
 | [walkdir](https://crates.io/crates/walkdir/2.5.0) | 2.5.0 | — |
 | [http-body-util](https://crates.io/crates/http-body-util/0.1.5) | 0.1.5 | — |
+| [reqwest](https://crates.io/crates/reqwest/0.13.4) | 0.13.4 | 1.85 |
 
 This table records researched candidates, not a mandate to add unused crates.
 Cargo resolution and the complete Rust checks establish compatibility of the
@@ -158,8 +159,9 @@ its shadcn component source and `components.json` selects `base-nova`.
 `harness/Cargo.lock` resolves every direct crate to the version in the Rust
 table: anyhow, axum, chrono, clap, regex, serde,
 serde_json, sha2, signal-hook, tempfile, toml, tokio, uuid, walkdir,
-http-body-util, and tower. Both build-time and runtime SHA-256 use sha2
-0.11.0. Researched candidates fs2, thiserror, and tower-http were not added.
+http-body-util, tower, and reqwest. Both build-time and runtime SHA-256 use sha2
+0.11.0. Researched candidates fs2 and thiserror were not added. Tower HTTP is
+a transitive dependency of reqwest, not a direct application dependency.
 Unused ammonia and pulldown-cmark were removed from the manifest and lockfile;
 Markdown rendering uses the frontend's react-markdown with raw HTML skipped.
 The unused `cn` package was also removed from the frontend lockfile.
@@ -170,6 +172,25 @@ including hidden files, excluding read-only `extra/` references, generated
 dependency/build directories, and `.git`, found no npm, pnpm, or Yarn
 lockfiles. This audit proves dependency identity and declared compatibility;
 the full application verification gates separately establish runtime behavior.
+
+### Local CLI HTTP adapter
+
+The project/group CLI uses reqwest **0.13.4**, with
+`default-features = false` and only `blocking` and `json` enabled. The
+[official release metadata](https://crates.io/api/v1/crates/reqwest/0.13.4)
+declares Rust 1.85 and a compatible Tokio 1 dependency. The manifest and
+`Cargo.lock` resolve 0.13.4; `cargo +1.98.1 tree -e features -i reqwest
+--locked` confirmed exactly the two selected features.
+
+This configuration provides HTTP/1 and typed JSON without enabling reqwest's
+default TLS, HTTP/2, charset, or system-proxy features. It intentionally cannot
+serve as a general HTTPS client. The adapter calls `no_proxy()` and disables
+redirects with `redirect::Policy::none()`; both are documented on the
+[official blocking client builder](https://docs.rs/reqwest/0.13.4/reqwest/blocking/struct.ClientBuilder.html).
+Together with loopback URL validation, these keep CLI requests directed to the
+local monitor. The [blocking API](https://docs.rs/reqwest/0.13.4/reqwest/blocking/index.html)
+must run outside an asynchronous runtime; synchronous CLI dispatch owns these
+requests. API failures are decoded from their typed JSON bodies.
 
 The [sha2 0.11 API](https://docs.rs/sha2/0.11.0/sha2/) retains the
 `Sha256::new`, `update`, and `finalize` interface used by the existing harness.

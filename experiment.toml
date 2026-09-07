@@ -11,6 +11,7 @@ owner = "donbeave"
 repo_prefix = "taskfmt-experiment"
 
 [paths]
+projects_dir = "projects"
 tasks_dir = "experiments/tasks"
 runs_dir = "experiments/runs"
 seed_dir = "experiments/fixtures/seed"

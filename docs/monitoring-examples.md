@@ -1,6 +1,6 @@
 # Monitoring example catalog
 
-`tasks/` contains the four original representative projects (Jackin, ChainArgos, Parallax, and Velnor) plus [Demo](monitoring-demo.md), which demonstrates live folder discovery of all seven experimental tasks. Their names are display metadata, not claims about those products. All executable task contracts concern the existing pgtui experiment. Nothing in `experiments/tasks/` was changed.
+`projects/` contains the four original representative projects (Jackin, ChainArgos, Parallax, and Velnor) plus [Demo](monitoring-demo.md), which demonstrates live folder discovery of all seven experimental tasks. Their names are display metadata, not claims about those products. All executable task contracts concern the existing pgtui experiment. Nothing in `experiments/tasks/` was changed.
 
 ## Provenance and contents
 
@@ -36,7 +36,7 @@ Do not mark these packages done to decorate the dashboard. Only successful autho
 Lint the packages with the existing CLI, passing package directories:
 
 ```sh
-rtk cargo run --manifest-path harness/Cargo.toml --bin taskfmt -- lint tasks/jackin/new-design/001 tasks/jackin/new-design/002 tasks/jackin/new-design/003 tasks/jackin/new-design/004 tasks/jackin/new-design/005 tasks/jackin/new-design/006 tasks/jackin/new-design/007 tasks/chainargos/bootstrap/001 tasks/parallax/bootstrap/001 tasks/velnor/bootstrap/001
+rtk cargo run --manifest-path harness/Cargo.toml --bin taskfmt -- lint projects/jackin/new-design/001 projects/jackin/new-design/002 projects/jackin/new-design/003 projects/jackin/new-design/004 projects/jackin/new-design/005 projects/jackin/new-design/006 projects/jackin/new-design/007 projects/chainargos/bootstrap/001 projects/parallax/bootstrap/001 projects/velnor/bootstrap/001
 ```
 
 Lint validates contracts and verification manifests. It does not execute the pgtui implementation checks and does not establish done status.

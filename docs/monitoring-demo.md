@@ -2,7 +2,7 @@
 
 ## Provenance
 
-`tasks/demo/pgtui/001` through `007` are complete copies of
+`projects/demo/pgtui/001` through `007` are complete copies of
 `experiments/tasks/TASK-001` through `TASK-007`. Original README, verifier, and
 trusted files are preserved byte for byte. New `task.toml` sidecars give each
 package its canonical monitor identity and retain the original sequential
@@ -17,7 +17,7 @@ The supplied root contains project directories. Projects and groups come from
 directory names and README content, not a registration list or creation API.
 
 ```text
-tasks/                         # supplied root
+projects/                      # supplied root
   demo/                        # project code
     README.md                  # project name and description
     pgtui/                     # group code
@@ -32,8 +32,8 @@ tasks/                         # supplied root
       007/
 ```
 
-For this repository, start `task-monitor --tasks-root tasks`. To supply another
-root, use `task-monitor --tasks-root /absolute/path/to/projects --runs-root
+For this repository, start `task-monitor --projects-root projects`. To supply another
+root, use `task-monitor --projects-root /absolute/path/to/projects --runs-root
 /absolute/path/to/separate-run-state`. Each root must contain the same hierarchy.
 Use a separate run root when changing catalogs because run evidence is bound to
 its original catalog. See [metadata schema](monitoring.md#metadata-schema).
@@ -44,7 +44,9 @@ every three seconds, so new folders appear without restarting the backend.
 ## Verified against the running application
 
 On 2026-09-07, the seven packages were added while the backend was already running
-against `tasks/`. No backend restart, API creation call, or hardcoded project entry
+against the former `tasks/` catalog path (subsequently renamed to `projects/`).
+This is historical discovery evidence, not a claim that durable run bindings
+survive a directory rename. No backend restart, API creation call, or hardcoded project entry
 was used. The API discovered a fifth project, `demo`, with one group and seven tasks.
 
 Real Chrome checks against the production frontend confirmed:
@@ -62,3 +64,20 @@ original experimental packages, excluding only the added metadata sidecars.
 
 This test proves folder discovery and display. No coding agent was launched;
 the tasks remain pending and no execution success or done status is claimed.
+
+## Recorded root migration
+
+After the discovery check, the catalog was moved from `tasks/` to `projects/`.
+The backend was stopped first. The operator verified that the old run root held
+only its lock and `catalog-root` binding, with no execution records or artifacts,
+then archived that entire empty run-state directory at
+`/tmp/task-monitor-root-migration.3MJ5Pv/run-state`. Startup with `projects/`
+creates a fresh binding; no existing execution evidence was rebound or erased.
+
+That temporary archive is local migration evidence, not a committed artifact or
+a durable backup guarantee. To roll back this specific empty-state migration,
+stop the backend, preserve any newly created run state separately, restore the
+catalog's former path, and restore the archived matching run root. If new runs
+have occurred, preserve their complete catalog/run-root pair rather than
+overwriting it. General evidence-bearing relocation remains subject to
+[the migration rules](monitoring.md#catalog-root-migration-and-rollback).

@@ -8,8 +8,9 @@ use taskfmt::server::{AppState, ServerConfig, adapter::AdapterConfig, router};
 #[derive(Parser)]
 #[command(about="Local filesystem task progress monitor",version=taskfmt::VERSION)]
 struct Args {
-    #[arg(long, default_value = "tasks")]
-    tasks_root: PathBuf,
+    /// Directory containing project/group/task packages.
+    #[arg(long, visible_alias = "tasks-root", default_value = "projects")]
+    projects_root: PathBuf,
     #[arg(long, default_value = ".monitor-runs")]
     runs_root: PathBuf,
     #[arg(long, default_value = "127.0.0.1:3001")]
@@ -51,7 +52,7 @@ async fn main() -> anyhow::Result<()> {
         _ => None,
     };
     let state = AppState::open(ServerConfig {
-        tasks_root: args.tasks_root,
+        tasks_root: args.projects_root,
         runs_root: args.runs_root,
         adapter,
         concurrency: args.concurrency,
@@ -82,4 +83,34 @@ async fn main() -> anyhow::Result<()> {
         .await?;
     state.shutdown().await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn project_root_default_and_legacy_alias_remain_compatible() {
+        assert_eq!(
+            Args::try_parse_from(["task-monitor"])
+                .unwrap()
+                .projects_root,
+            PathBuf::from("projects")
+        );
+        for flag in ["--projects-root", "--tasks-root"] {
+            let args =
+                Args::try_parse_from(["task-monitor", flag, "/tmp/custom-projects"]).unwrap();
+            assert_eq!(args.projects_root, PathBuf::from("/tmp/custom-projects"));
+        }
+        assert!(
+            Args::try_parse_from([
+                "task-monitor",
+                "--projects-root",
+                "one",
+                "--tasks-root",
+                "two"
+            ])
+            .is_err()
+        );
+    }
 }

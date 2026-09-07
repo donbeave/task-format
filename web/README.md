@@ -5,13 +5,18 @@ Requires Bun **1.4.2**. Bun owns installation and every frontend command.
 From this directory:
 
 1. `bun install --frozen-lockfile`
-2. Start the Rust backend on `127.0.0.1:3001`, with allowed origin `http://127.0.0.1:5173` (see `../docs/monitoring.md`).
+2. From the repository root, start `harness/target/debug/task-monitor --projects-root projects --origin http://127.0.0.1:5173`. It listens on `127.0.0.1:3001` (see `../docs/monitoring.md`).
 3. `bun run dev`, then open `http://127.0.0.1:5173`.
 
 Vite uses a strict port and proxies `/api` to the local Rust backend. Execution
 uses validated backend IDs and the required `X-Task-Monitor: 1` header. No browser
 command or filesystem path enters the execution API. Data refreshes every three
 seconds. Failed refreshes retain clearly marked prior data and disable execution.
+The supplied `projects/` root contains project/group/task directories. New
+directories appear on refresh; browser routes such as `/tasks/my` retain their
+names independently of the filesystem root. Existing run roots are bound to
+their catalog path; follow the migration section in `../docs/monitoring.md`
+before relocating a catalog with durable run evidence.
 
 Production: `bun run build`, then `bun run preview` serves the generated Start SPA
 at the same local port, including nested-route fallback and API proxy. Stop the dev

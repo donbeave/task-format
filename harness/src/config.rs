@@ -76,6 +76,9 @@ impl Default for Github {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Paths {
+    /// Filesystem project/group/task catalog, independent of legacy experiment packages.
+    #[serde(default = "default_projects_dir")]
+    pub projects_dir: String,
     #[serde(default = "default_tasks_dir")]
     pub tasks_dir: String,
     #[serde(default = "default_runs_dir")]
@@ -86,6 +89,9 @@ pub struct Paths {
     pub template_dir: String,
 }
 
+fn default_projects_dir() -> String {
+    "projects".to_string()
+}
 fn default_tasks_dir() -> String {
     "experiments/tasks".to_string()
 }
@@ -101,6 +107,7 @@ fn default_template_dir() -> String {
 impl Default for Paths {
     fn default() -> Self {
         Self {
+            projects_dir: default_projects_dir(),
             tasks_dir: default_tasks_dir(),
             runs_dir: default_runs_dir(),
             seed_dir: default_seed_dir(),
@@ -444,6 +451,9 @@ impl Resolved {
     pub fn tasks_dir(&self) -> PathBuf {
         self.join(&self.cfg.paths.tasks_dir)
     }
+    pub fn projects_dir(&self) -> PathBuf {
+        self.join(&self.cfg.paths.projects_dir)
+    }
     pub fn runs_dir(&self) -> PathBuf {
         self.join(&self.cfg.paths.runs_dir)
     }
@@ -544,6 +554,7 @@ ANTHROPIC_AUTH_TOKEN = "op://vault/item/section/field"
         )
         .unwrap();
         assert_eq!(cfg.paths.tasks_dir, "experiments/tasks");
+        assert_eq!(cfg.paths.projects_dir, "projects");
         assert_eq!(cfg.runtime.prereq_timeout_s, 180);
         assert_eq!(cfg.github.repo_prefix, "taskfmt-experiment");
         assert_eq!(cfg.profile("p").unwrap().effort, "high");

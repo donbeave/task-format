@@ -23,7 +23,8 @@ The `task-monitor` executable binds locally and accepts roots and execution
 configuration from the operator, never from browser requests.
 `web/` contains the Bun-managed TanStack Start application.
 
-The filesystem is the database. Project and group README files provide names and
+The filesystem is the database, rooted at `projects/` by default and selected
+with `--projects-root`. Project and group README files provide names and
 descriptions. Task README and verification files remain immutable contracts.
 The versioned `task.toml` sidecar holds mutable lifecycle status and canonical
 dependency references. Run artifacts remain separate from task contracts.

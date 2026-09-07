@@ -9,5 +9,5 @@ web/.tanstack/
 web/dist/
 web/coverage/
 .monitor-runs/
-tasks/.monitor.lock
+projects/.monitor.lock
 .firecrawl/

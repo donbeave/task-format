@@ -1,17 +1,20 @@
 # task-format
 
-`task-format` is a research harness for one practical question:
-
-> Can a structured task package make AI coding work more predictable, bounded, and independently verifiable?
-
-It also provides a local filesystem-backed progress monitor for projects, groups,
-and dependency-linked tasks. The Rust API and Bun/TanStack Start browser reuse
-taskfmt's task contracts, progress, and authoritative verification lifecycle.
+`task-format` manages filesystem-backed projects, groups, and dependency-linked
+tasks through the Rust `taskfmt` CLI and a local browser monitor. The `projects/`
+directory is the catalog: project and group README files describe ownership;
+task packages retain their immutable contracts, verification, and trusted inputs.
+The Rust API and Bun/TanStack Start browser share taskfmt's authoritative
+verification lifecycle. Progress never substitutes for a passing host gate.
 See [monitoring setup and schemas](docs/monitoring.md),
 [example projects](docs/monitoring-examples.md), and
 [installed toolchain versions](docs/monitoring-versions.md).
 The [folder discovery demo](docs/monitoring-demo.md) shows all seven existing
-experimental tasks discovered from `tasks/demo/pgtui/` by the running application.
+experimental tasks discovered from `projects/demo/pgtui/` by the running application.
+
+The underlying research harness asks whether structured task packages make AI
+coding work more predictable, bounded, and independently verifiable. Its original
+flat experiment corpus and taskfmt workflows remain supported.
 
 ## Install locally
 
@@ -27,6 +30,36 @@ Cargo installs the binary to `~/.cargo/bin`. Ensure that directory is on your `P
 taskfmt --help
 ```
 
+## Projects and groups
+
+The default catalog is `projects/`. Inspect and validate it without starting the
+browser or execution service:
+
+```sh
+taskfmt project list
+taskfmt project show demo
+taskfmt project lint demo
+taskfmt group list demo
+taskfmt group show demo/pgtui
+taskfmt group lint demo/pgtui
+```
+
+Read commands accept `--projects-root /absolute/path/to/projects` and `--json`.
+Without an explicit root, they resolve `paths.projects_dir` from the experiment
+configuration. Start the local monitor using [the setup guide](docs/monitoring.md)
+to browse live progress or execute dependency-ordered scopes:
+
+```sh
+taskfmt project run demo --monitor-url http://127.0.0.1:3001 --wait
+taskfmt group run demo/pgtui --monitor-url http://127.0.0.1:3001 --wait
+```
+
+These are alternative scope examples, not consecutive runs: executable tasks
+must start pending. Run commands retain execution consent and use the monitor's
+configured repository and agent. `--wait` follows the returned execution to its
+terminal result; it does not promote candidate code. Filesystem reads show
+persisted metadata; the monitor supplies live progress and verified evidence.
+
 ## Why this exists
 
 An AI coding agent turns prose into edits, checks, and a completion claim. If scope, decisions, or proof are unclear, it can drift into unrelated work or report success without solving the problem. Faster agents make this ambiguity more expensive, not less.
@@ -35,7 +68,8 @@ This project treats task writing as an engineering variable. It gives an agent o
 
 ## What this project is—and is not
 
-It is a versioned task format, a Rust harness, and an experiment corpus for testing task-package design.
+It is a filesystem project/task system, a versioned task format, a Rust execution
+harness, and an experiment corpus for testing task-package design.
 
 It is not a model leaderboard, a universal prompting recipe, or proof that the current format is optimal. The current `TASK-001`–`TASK-007` series validates the harness and package lifecycle; it is not yet a measured format comparison.
 
@@ -259,7 +293,7 @@ No completed ablation matrix yet proves that one wording or checklist style prod
 | `experiments/runs/` | Generated run workspaces and evidence; Git-ignored. |
 | `reference/task-template/` | Canonical `task/v5` + `verify/v2` package template. |
 | `experiment.toml` | Versioned paths, images, runtime, and agent profiles. |
-| `tasks/` | Hierarchical example projects, groups, and task packages. |
+| `projects/` | Primary filesystem catalog: projects, groups, and task packages. |
 | `web/` | Bun-managed TanStack Start progress-monitoring frontend. |
 | `docs/monitoring.md` | Monitor setup, metadata, dependency, and lifecycle reference. |
 

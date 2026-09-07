@@ -6,7 +6,7 @@ It does not edit task contracts, create tasks, or replace taskfmt's verification
 ## Layout and identifiers
 
 ```text
-tasks/
+projects/
   jackin/
     README.md
     new-design/
@@ -106,7 +106,7 @@ POST /api/run/project/{project}
 
 Run actions require `X-Task-Monitor: 1` and an allowed browser origin.
 The browser sends validated identifiers only. Repository, executable, profile,
-configuration, task root, and run root are operator settings.
+configuration, projects root, and run root are operator settings.
 Markdown rendering does not allow unsafe HTML.
 Polling refreshes progress and eligibility without WebSockets.
 Dependency readiness is distinct from execution eligibility: a ready task can
@@ -133,9 +133,36 @@ harness/target/debug/task-monitor --origin http://127.0.0.1:5173
 
 Open `http://127.0.0.1:5173`. The frontend proxies `/api` to
 `http://127.0.0.1:3001`; the server listens only on loopback.
-Defaults are `--tasks-root tasks`, `--runs-root .monitor-runs`, and
+Defaults are `--projects-root projects`, `--runs-root .monitor-runs`, and
 `--concurrency 2`. Concurrency accepts 1–32.
 Keep generated run state and lock files outside version control.
+
+## Catalog-root migration and rollback
+
+The primary catalog directory is now `projects/`; legacy experiment packages
+remain under `experiments/tasks/`, and browser `/tasks/my` and task-detail URLs
+are unchanged. A custom catalog is selected with
+`--projects-root /absolute/path/to/projects`.
+
+Run roots store a durable `catalog-root` binding to the canonical catalog path.
+Renaming `tasks/` to `projects/` does not migrate that binding or the run evidence.
+Never delete `.monitor-runs`, edit its binding manually, or reset verified
+metadata just to make a relocated catalog start.
+
+1. Stop the monitor gracefully and confirm its executors have stopped. Preserve
+   the catalog and its entire run root together, including metadata and evidence.
+2. If the old catalog has execution evidence, continue using its original path
+   with `--projects-root /absolute/path/to/tasks --runs-root /absolute/path/to/.monitor-runs`.
+   A binding-aware relocation procedure is not provided. Keep this pair together
+   until such a migration is available.
+3. For an untouched pending/draft example catalog, move it to `projects/` and
+   select a new, separate run root if `.monitor-runs` was already bound to the
+   old path. Preserve the old run root; do not repoint or erase it.
+4. To roll back, stop the new monitor, restore the preserved catalog at its
+   original canonical path, and restart with its matching preserved run root.
+   Do not combine one catalog's metadata with another catalog's run evidence.
+
+## Execution configuration
 
 To enable execution, start the backend with operator-owned settings:
 
@@ -151,6 +178,44 @@ harness/target/debug/task-monitor \
 Build all binaries together: `task-monitor-supervisor` must remain beside
 `task-monitor`. Its pipe and filesystem lease couple executor lifetime to the
 backend and allow restart recovery without trusting reusable process IDs.
+
+## Project and group CLI
+
+Project/group commands are first-class `taskfmt` subcommands. Read operations
+scan the filesystem and validate the catalog; no monitor process is required:
+
+```sh
+taskfmt project list --projects-root projects --json
+taskfmt project show demo --projects-root projects
+taskfmt project lint demo --projects-root projects
+taskfmt group list demo --projects-root projects
+taskfmt group show demo/pgtui --projects-root projects
+taskfmt group lint demo/pgtui --projects-root projects
+```
+
+Read operations accept `--json`. If `--projects-root` is omitted, the root comes
+from `paths.projects_dir` in the resolved experiment configuration. An explicit
+root does not require an experiment configuration. Reads describe persisted
+filesystem metadata, not live execution progress or a new verification verdict.
+
+Run operations submit a validated canonical scope to the configured monitor:
+
+```sh
+taskfmt project run demo --monitor-url http://127.0.0.1:3001 --wait
+taskfmt group run demo/pgtui --monitor-url http://127.0.0.1:3001 --wait
+```
+
+Choose one scope; these are alternative examples. The monitor URL defaults to
+`http://127.0.0.1:3001`. Its configured projects root, repository, agent, and
+execution settings determine what runs; a CLI read-root override does not
+reconfigure the server. The commands retain the harness consent protocol;
+global `--auto` or `--yes` may be used when explicitly choosing unattended
+execution. `--json` supports machine-readable output.
+
+Without `--wait`, the command returns after the server accepts the execution.
+With `--wait`, it polls the exact returned execution ID, exits zero for `done`,
+and exits nonzero for other terminal outcomes. It does not mark tasks done,
+skip dependency checks, promote, or push code itself.
 
 ## Execution prerequisites
 

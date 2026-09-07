@@ -110,6 +110,7 @@ impl AdapterConfig {
         self.validate()?;
         let resolved = ExperimentConfig::load_resolved(&self.experiment_config)?;
         let mut cfg = resolved.cfg.clone();
+        cfg.paths.projects_dir = resolved.projects_dir().to_string_lossy().into_owned();
         cfg.paths.tasks_dir = resolved.tasks_dir().to_string_lossy().into_owned();
         cfg.paths.seed_dir = resolved.seed_dir().to_string_lossy().into_owned();
         cfg.paths.template_dir = resolved.template_dir().to_string_lossy().into_owned();

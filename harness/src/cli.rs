@@ -9,9 +9,9 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[command(
     name = "taskfmt",
     version = crate::VERSION,
-    about = "task-format harness: task lint, progress init, completion gate, container dispatch",
-    after_help = "Read-only commands never prompt. Mutating commands (run, experiment, repo, promote, \
-                  preload, build-images) need --auto or --yes when stdin is not a terminal."
+    about = "Filesystem projects, groups, task contracts, and verified task execution",
+    after_help = "Read-only commands never prompt. Mutating commands (project run, group run, run, \
+                  experiment, repo, promote, preload, build-images) need --auto or --yes when stdin is not a terminal."
 )]
 pub struct Cli {
     /// Path to the experiment manifest. Default: $TASKFMT_CONFIG, else the nearest
@@ -69,6 +69,16 @@ pub enum AgentKindArg {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
+    /// Inspect filesystem projects or run them through the local monitor.
+    Project {
+        #[command(subcommand)]
+        cmd: ProjectCmd,
+    },
+    /// Inspect project groups or run them through the local monitor.
+    Group {
+        #[command(subcommand)]
+        cmd: GroupCmd,
+    },
     /// Lint task packages under the configured tasks dir.
     Lint {
         /// Emit one stable JSON report per package (NDJSON).
@@ -300,6 +310,84 @@ pub enum Command {
 
     /// Agent supervisor (as user `agent`): herdr server + one /work workspace + the agent pane.
     AgentLaunch,
+}
+
+#[derive(clap::Args, Debug)]
+pub struct CatalogOptions {
+    /// Project catalog root. Default: paths.projects_dir in the experiment manifest.
+    #[arg(long)]
+    pub projects_root: Option<PathBuf>,
+    /// Emit one versioned JSON document; reads contain persisted metadata, not live run proof.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(clap::Args, Debug)]
+pub struct MonitorRunOptions {
+    /// Existing local monitor. Its operator configuration owns the repository and agent.
+    #[arg(long, default_value = "http://127.0.0.1:3001")]
+    pub monitor_url: String,
+    /// Wait for this execution's terminal journal entry. Does not promote task output.
+    #[arg(long)]
+    pub wait: bool,
+    /// Emit one versioned JSON result or typed error document.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ProjectCmd {
+    /// List projects from persisted filesystem metadata.
+    List {
+        #[command(flatten)]
+        options: CatalogOptions,
+    },
+    /// Show a project, its groups and persisted task statuses.
+    Show {
+        project: String,
+        #[command(flatten)]
+        options: CatalogOptions,
+    },
+    /// Validate the catalog and lint every task contract in one project.
+    Lint {
+        project: String,
+        #[command(flatten)]
+        options: CatalogOptions,
+    },
+    /// Request dependency-aware execution from the running monitor.
+    Run {
+        project: String,
+        #[command(flatten)]
+        options: MonitorRunOptions,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum GroupCmd {
+    /// List one project's groups from persisted filesystem metadata.
+    List {
+        project: String,
+        #[command(flatten)]
+        options: CatalogOptions,
+    },
+    /// Show PROJECT/GROUP and its persisted task statuses.
+    Show {
+        group: String,
+        #[command(flatten)]
+        options: CatalogOptions,
+    },
+    /// Validate the catalog and lint task contracts in PROJECT/GROUP.
+    Lint {
+        group: String,
+        #[command(flatten)]
+        options: CatalogOptions,
+    },
+    /// Request dependency-aware execution of PROJECT/GROUP from the running monitor.
+    Run {
+        group: String,
+        #[command(flatten)]
+        options: MonitorRunOptions,
+    },
 }
 
 #[derive(Subcommand, Debug)]
