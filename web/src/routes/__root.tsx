@@ -1,4 +1,10 @@
-import { createRootRoute, HeadContent, Scripts } from "@tanstack/react-router";
+import {
+  createRootRoute,
+  HeadContent,
+  Outlet,
+  Scripts,
+  useRouterState,
+} from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { Shell } from "../components/shell";
 import { CatalogProvider } from "../lib/catalog-context";
@@ -18,11 +24,7 @@ export const Route = createRootRoute({
       },
     ],
   }),
-  component: () => (
-    <CatalogProvider>
-      <Shell />
-    </CatalogProvider>
-  ),
+  component: RootContent,
   shellComponent: Document,
   errorComponent: ({ error, reset }) => (
     <main className="content">
@@ -38,6 +40,19 @@ export const Route = createRootRoute({
     </main>
   ),
 });
+function RootContent() {
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  });
+  // Design owns synthetic state and stays usable when the backend is offline.
+  if (pathname === "/design" || pathname.startsWith("/design/"))
+    return <Outlet />;
+  return (
+    <CatalogProvider>
+      <Shell />
+    </CatalogProvider>
+  );
+}
 function Document({ children }: { children: ReactNode }) {
   return (
     <html lang="en">

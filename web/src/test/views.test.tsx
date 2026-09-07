@@ -64,15 +64,17 @@ describe("actual nested routes", () => {
   it("dashboard displays filesystem project and aggregate counts", async () => {
     await open("/");
     expect(
-      screen.getByRole("heading", { level: 1, name: "Projects" }),
+      screen.getByRole("heading", { level: 1, name: "Project overview" }),
     ).toBeVisible();
     expect(screen.getByText("5 tasks across 1 project")).toBeVisible();
     expect(
-      screen.getByRole("link", { name: /Jackin.*group/s }),
+      screen.getByRole("link", { name: /Jackin.*Project description/s }),
     ).toHaveAttribute("href", "/projects/jackin");
   });
   it("project renders README and navigable group", async () => {
     await open("/projects/jackin");
+    expect(screen.getByText("Project description.")).not.toBeVisible();
+    fireEvent.click(screen.getByText("Project brief"));
     expect(screen.getByText("Project description.")).toBeVisible();
     expect(
       screen.getByRole("link", { name: /Design 5 tasks/ }),
@@ -81,6 +83,8 @@ describe("actual nested routes", () => {
   });
   it("group renders all semantic Kanban columns and blocked cards", async () => {
     await open("/projects/jackin/groups/design");
+    expect(screen.getByText("Group description.")).not.toBeVisible();
+    fireEvent.click(screen.getByText("Group brief"));
     expect(screen.getByText("Group description.")).toBeVisible();
     for (const name of [
       "Draft tasks",
@@ -112,7 +116,13 @@ describe("actual nested routes", () => {
   });
   it("My tasks shows ready root and parallel branches without drafts", async () => {
     await open("/tasks/my");
-    expect(screen.getByRole("heading", { name: "What’s next" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "My tasks" })).toBeVisible();
+    expect(
+      screen.getByRole("table", { name: "Tasks whose dependencies are ready" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("region", { name: "Ready tasks table" }),
+    ).toHaveAttribute("tabindex", "0");
     expect(screen.getByText("Stage 3")).toBeVisible();
     expect(screen.getByText("2 parallel branches")).toBeVisible();
     expect(screen.queryByText("Task 005")).toBeNull();

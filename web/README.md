@@ -30,6 +30,8 @@ Verification: `bun run typecheck`, `bun run lint`, `bun run test`, `bun run buil
 Exact runtime pins: React/React DOM 19.2.8; TanStack Start 1.168.50; TanStack
 Router 1.170.33; Base UI 1.8.0; react-markdown 10.1.0; remark-gfm 4.0.1;
 Zod 4.5.4; class-variance-authority 0.7.1; clsx 2.1.1; tailwind-merge 3.6.0.
+Visual assets: Lucide React 1.24.0 (matching the Verve reference) and self-hosted
+Inter Variable 5.2.8. Fonts require no third-party request at runtime.
 
 Exact tooling pins: Tailwind CSS and its Vite plugin 4.3.3; TypeScript 7.0.2;
 Vite 8.2.2; React Vite plugin 6.1.1; Vitest 5.0.0; Biome 2.5.12;
@@ -47,3 +49,18 @@ only places the backend's topologically ordered tasks into dependency stages.
 Markdown keeps all textual contract content, shifts headings beneath the page
 title, drops raw HTML and unsafe links, and renders images as text to avoid
 unsolicited remote requests. No task editing or drag-and-drop status mutation.
+
+## Verve redesign preview
+
+The shell and all five screens use the `extra/verve-v1.1.0` visual basis:
+63px icon rail, 200px inner navigation, 50px header, neutral light/dark tokens,
+compact Inter typography, inset frames, and status accents. Sidebar collapse,
+theme controls, refresh, navigation, and README disclosures are functional.
+Backend contracts and task execution behavior are unchanged.
+
+With `bun run dev`, visit `/design` to review the same screen components with
+synthetic default, empty, loading, and error states. Design routes do not poll
+the backend or execute tasks; production builds disable them unless explicitly
+built with `VITE_DESIGN_ROUTES=1`. The design skill keeps approval separate from
+implementation: `src/design/MANIFEST.md` records draft status and the review
+matrix. No visual approval or screenshot baseline is inferred from passing tests.

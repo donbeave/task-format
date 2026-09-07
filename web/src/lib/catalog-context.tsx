@@ -20,6 +20,25 @@ type State =
 const Context = createContext<{ state: State; refresh: () => void } | null>(
   null,
 );
+// Presentation-only injection for deterministic design routes; no poll or writes.
+export function CatalogSnapshotProvider({
+  catalog,
+  children,
+}: {
+  readonly catalog: Catalog;
+  readonly children: ReactNode;
+}) {
+  return (
+    <Context
+      value={{
+        state: { status: "ready", catalog, refreshError: null },
+        refresh: () => undefined,
+      }}
+    >
+      {children}
+    </Context>
+  );
+}
 export function CatalogProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<State>({ status: "loading" });
   const [revision, setRevision] = useState(0);

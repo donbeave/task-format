@@ -14,10 +14,12 @@
   },
   "dependencies": {
     "@base-ui/react": "1.8.0",
+    "@fontsource-variable/inter": "5.2.8",
     "@tanstack/react-router": "1.170.33",
     "@tanstack/react-start": "1.168.50",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
+    "lucide-react": "1.24.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "react-markdown": "10.1.0",

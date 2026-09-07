@@ -1,3 +1,4 @@
+import { FolderKanban, Inbox } from "lucide-react";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -66,7 +67,7 @@ export function ProgressMeter({
   label?: string;
 }) {
   return (
-    <div>
+    <div className="progress-meter">
       <div className="progress-label">
         <span>{label}</span>
         <span>{Math.round(value)}%</span>
@@ -84,6 +85,7 @@ export function Badge({
 }) {
   return (
     <span className={`badge ${status} ${blocked ? "blocked" : ""}`}>
+      <span className="status-dot" aria-hidden="true" />
       {blocked ? "Blocked" : labels[status]}
     </span>
   );
@@ -93,8 +95,9 @@ export function Counts({ summary }: { summary: Summary }) {
     <div className="counts">
       {(["draft", "pending", "in_progress", "blocked", "done"] as const).map(
         (key) => (
-          <span key={key}>
-            {summary[key]}{" "}
+          <span key={key} className={`count-item ${key}`}>
+            <span className="status-dot" aria-hidden="true" />
+            <strong>{summary[key]}</strong>{" "}
             {key === "blocked" ? "blocked" : labels[key].toLowerCase()}
           </span>
         ),
@@ -113,17 +116,37 @@ export function Stats({
     <div className="stats">
       {projects !== undefined && (
         <div className="stat">
-          <span className="muted">Projects</span>
-          <strong>{projects}</strong>
+          <div className="stat-head">
+            <span>Projects</span>
+            <FolderKanban
+              className="stat-symbol"
+              size={16}
+              aria-hidden="true"
+            />
+          </div>
+          <strong className="stat-value">{projects}</strong>
+          <span className="stat-caption">In your workspace</span>
         </div>
       )}
       {(["draft", "pending", "in_progress", "blocked", "done"] as const).map(
         (key) => (
-          <div className="stat" key={key}>
-            <span className="muted">
-              {key === "blocked" ? "Blocked" : labels[key]}
+          <div className={`stat ${key}`} key={key}>
+            <div className="stat-head">
+              <span>{key === "blocked" ? "Blocked" : labels[key]}</span>
+              <span className="status-dot" aria-hidden="true" />
+            </div>
+            <strong className="stat-value">{summary[key]}</strong>
+            <span className="stat-caption">
+              {key === "draft"
+                ? "Not yet scheduled"
+                : key === "pending"
+                  ? "Waiting to start"
+                  : key === "in_progress"
+                    ? "Currently executing"
+                    : key === "blocked"
+                      ? "Dependencies unresolved"
+                      : "Verified complete"}
             </span>
-            <strong>{summary[key]}</strong>
           </div>
         ),
       )}
@@ -213,14 +236,14 @@ export function TaskCard({
   const blocked = task.metadata.status === "pending" && !task.readiness.allowed;
   return (
     <article className={`task-card ${blocked ? "blocked" : ""}`}>
-      <a href={taskHref(task)}>
+      <a className="task-card-body" href={taskHref(task)}>
         <div className="panel-head">
           <span className="task-id">{task.id}</span>
           <Badge status={task.metadata.status} blocked={blocked} />
         </div>
         <h3>{task.title}</h3>
         <ProgressMeter value={task.progress.percentage} />
-        <p className="muted">
+        <p className="task-readiness muted">
           {task.metadata.status === "pending"
             ? task.readiness.allowed
               ? "Ready now"
@@ -235,7 +258,7 @@ export function TaskCard({
           <p className="muted">Current: {task.progress.current_leaf}</p>
         )}
       </a>
-      {children}
+      {children && <div className="task-card-footer">{children}</div>}
     </article>
   );
 }
@@ -252,7 +275,7 @@ export function PageHeading({
 }) {
   return (
     <header className="page-heading">
-      <div>
+      <div className="heading-copy">
         <p className="eyebrow">{eyebrow}</p>
         <h1>{title}</h1>
         {description && <p className="lead">{description}</p>}
@@ -262,5 +285,10 @@ export function PageHeading({
   );
 }
 export function Empty({ children }: { children: ReactNode }) {
-  return <div className="empty">{children}</div>;
+  return (
+    <div className="empty">
+      <Inbox className="empty-icon" size={24} aria-hidden="true" />
+      <div>{children}</div>
+    </div>
+  );
 }

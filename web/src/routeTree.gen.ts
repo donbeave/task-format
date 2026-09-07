@@ -10,8 +10,11 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as DesignRouteImport } from './routes/design'
+import { Route as DesignIndexRouteImport } from './routes/design.index'
 import { Route as ProjectsProjectCodeRouteImport } from './routes/projects.$projectCode'
 import { Route as TasksMyRouteImport } from './routes/tasks.my'
+import { Route as DesignScreenStateRouteImport } from './routes/design.$screen.$state'
 import { Route as ProjectsProjectCodeGroupsGroupCodeRouteImport } from './routes/projects.$projectCode_.groups.$groupCode'
 import { Route as ProjectsProjectCodeGroupsGroupCodeTasksTaskNumberRouteImport } from './routes/projects.$projectCode_.groups.$groupCode_.tasks.$taskNumber'
 
@@ -19,6 +22,16 @@ const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
+} as any)
+const DesignRoute = DesignRouteImport.update({
+  id: '/design',
+  path: '/design',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DesignIndexRoute = DesignIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => DesignRoute,
 } as any)
 const ProjectsProjectCodeRoute = ProjectsProjectCodeRouteImport.update({
   id: '/projects/$projectCode',
@@ -29,6 +42,11 @@ const TasksMyRoute = TasksMyRouteImport.update({
   id: '/tasks/my',
   path: '/tasks/my',
   getParentRoute: () => rootRouteImport,
+} as any)
+const DesignScreenStateRoute = DesignScreenStateRouteImport.update({
+  id: '/$screen/$state',
+  path: '/$screen/$state',
+  getParentRoute: () => DesignRoute,
 } as any)
 const ProjectsProjectCodeGroupsGroupCodeRoute =
   ProjectsProjectCodeGroupsGroupCodeRouteImport.update({
@@ -45,8 +63,11 @@ const ProjectsProjectCodeGroupsGroupCodeTasksTaskNumberRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/design': typeof DesignRouteWithChildren
   '/projects/$projectCode': typeof ProjectsProjectCodeRoute
   '/tasks/my': typeof TasksMyRoute
+  '/design/': typeof DesignIndexRoute
+  '/design/$screen/$state': typeof DesignScreenStateRoute
   '/projects/$projectCode/groups/$groupCode': typeof ProjectsProjectCodeGroupsGroupCodeRoute
   '/projects/$projectCode/groups/$groupCode/tasks/$taskNumber': typeof ProjectsProjectCodeGroupsGroupCodeTasksTaskNumberRoute
 }
@@ -54,14 +75,19 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/projects/$projectCode': typeof ProjectsProjectCodeRoute
   '/tasks/my': typeof TasksMyRoute
+  '/design': typeof DesignIndexRoute
+  '/design/$screen/$state': typeof DesignScreenStateRoute
   '/projects/$projectCode/groups/$groupCode': typeof ProjectsProjectCodeGroupsGroupCodeRoute
   '/projects/$projectCode/groups/$groupCode/tasks/$taskNumber': typeof ProjectsProjectCodeGroupsGroupCodeTasksTaskNumberRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/design': typeof DesignRouteWithChildren
   '/projects/$projectCode': typeof ProjectsProjectCodeRoute
   '/tasks/my': typeof TasksMyRoute
+  '/design/': typeof DesignIndexRoute
+  '/design/$screen/$state': typeof DesignScreenStateRoute
   '/projects/$projectCode_/groups/$groupCode': typeof ProjectsProjectCodeGroupsGroupCodeRoute
   '/projects/$projectCode_/groups/$groupCode_/tasks/$taskNumber': typeof ProjectsProjectCodeGroupsGroupCodeTasksTaskNumberRoute
 }
@@ -69,8 +95,11 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/design'
     | '/projects/$projectCode'
     | '/tasks/my'
+    | '/design/'
+    | '/design/$screen/$state'
     | '/projects/$projectCode/groups/$groupCode'
     | '/projects/$projectCode/groups/$groupCode/tasks/$taskNumber'
   fileRoutesByTo: FileRoutesByTo
@@ -78,19 +107,25 @@ export interface FileRouteTypes {
     | '/'
     | '/projects/$projectCode'
     | '/tasks/my'
+    | '/design'
+    | '/design/$screen/$state'
     | '/projects/$projectCode/groups/$groupCode'
     | '/projects/$projectCode/groups/$groupCode/tasks/$taskNumber'
   id:
     | '__root__'
     | '/'
+    | '/design'
     | '/projects/$projectCode'
     | '/tasks/my'
+    | '/design/'
+    | '/design/$screen/$state'
     | '/projects/$projectCode_/groups/$groupCode'
     | '/projects/$projectCode_/groups/$groupCode_/tasks/$taskNumber'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  DesignRoute: typeof DesignRouteWithChildren
   ProjectsProjectCodeRoute: typeof ProjectsProjectCodeRoute
   TasksMyRoute: typeof TasksMyRoute
   ProjectsProjectCodeGroupsGroupCodeRoute: typeof ProjectsProjectCodeGroupsGroupCodeRoute
@@ -106,6 +141,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/design': {
+      id: '/design'
+      path: '/design'
+      fullPath: '/design'
+      preLoaderRoute: typeof DesignRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/design/': {
+      id: '/design/'
+      path: '/'
+      fullPath: '/design/'
+      preLoaderRoute: typeof DesignIndexRouteImport
+      parentRoute: typeof DesignRoute
+    }
     '/projects/$projectCode': {
       id: '/projects/$projectCode'
       path: '/projects/$projectCode'
@@ -119,6 +168,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/tasks/my'
       preLoaderRoute: typeof TasksMyRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/design/$screen/$state': {
+      id: '/design/$screen/$state'
+      path: '/$screen/$state'
+      fullPath: '/design/$screen/$state'
+      preLoaderRoute: typeof DesignScreenStateRouteImport
+      parentRoute: typeof DesignRoute
     }
     '/projects/$projectCode_/groups/$groupCode': {
       id: '/projects/$projectCode_/groups/$groupCode'
@@ -137,8 +193,22 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface DesignRouteChildren {
+  DesignIndexRoute: typeof DesignIndexRoute
+  DesignScreenStateRoute: typeof DesignScreenStateRoute
+}
+
+const DesignRouteChildren: DesignRouteChildren = {
+  DesignIndexRoute: DesignIndexRoute,
+  DesignScreenStateRoute: DesignScreenStateRoute,
+}
+
+const DesignRouteWithChildren =
+  DesignRoute._addFileChildren(DesignRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  DesignRoute: DesignRouteWithChildren,
   ProjectsProjectCodeRoute: ProjectsProjectCodeRoute,
   TasksMyRoute: TasksMyRoute,
   ProjectsProjectCodeGroupsGroupCodeRoute:
