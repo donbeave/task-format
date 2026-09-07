@@ -146,13 +146,10 @@ pub fn dispatch_one(
     // run record does not describe.
     require_image_fingerprint_match(image_fingerprint, &profile.image)?;
 
-    let task_dir = crate::cmds::resolve_task_arg(&resolved.tasks_dir(), task_id)?;
-    if !task_dir.join("README.md").is_file() {
-        bail!("{} has no README.md", task_dir.display());
-    }
+    let location = crate::cmds::source::TaskLocation::resolve(&resolved.tasks_dir(), task_id)?;
 
     // ---------- run dir ----------
-    let run_id = run_dir_name(&timestamp_compact(), profile_name, task_id);
+    let run_id = run_dir_name(&timestamp_compact(), profile_name, &location.run_key);
     let run_dir = resolved.runs_dir().join(&run_id);
     for dir in [
         "workspace",
@@ -179,6 +176,10 @@ pub fn dispatch_one(
         );
     }
 
+    let source = location.load_contract()?;
+    let task_dir = &source.package_dir;
+    let task_id = source.contract_id.as_str();
+
     // ---------- 2. trusted overlay + the trusted base commit (pushed with the task's chain) ----------
     let trusted = task_dir.join("trusted");
     if trusted.is_dir() {
@@ -199,11 +200,11 @@ pub fn dispatch_one(
 
     // ---------- 3. task snapshot, topped up from the template ----------
     let snapshot = run_dir.join("task-snapshot");
-    crate::ops::copy_tree(&task_dir, &snapshot)?;
+    crate::ops::copy_tree(task_dir, &snapshot)?;
     top_up_snapshot(&snapshot, &resolved.template_dir())?;
 
     // ---------- 4. lint (aborts dispatch) ----------
-    let report = crate::lint::lint_path(&task_dir);
+    let report = crate::lint::lint_path(task_dir);
     crate::ops::write_file(&run_dir.join("lint.log"), &report.render())?;
     if !report.passed() {
         redact::emit_lines(report.render().lines());
@@ -218,7 +219,7 @@ pub fn dispatch_one(
 
     // ---------- 6. progress ----------
     crate::cmds::progress_init::generate_and_write(
-        &task_dir,
+        task_dir,
         Some(&run_dir.join("progress/progress.md")),
     )?;
 

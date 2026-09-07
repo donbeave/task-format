@@ -3,3 +3,11 @@ experiments/runs/
 progress.md
 harness/images/preload/*.tar
 harness/target/
+web/node_modules/
+web/.output/
+web/.tanstack/
+web/dist/
+web/coverage/
+.monitor-runs/
+tasks/.monitor.lock
+.firecrawl/

@@ -4,6 +4,13 @@
 
 > Can a structured task package make AI coding work more predictable, bounded, and independently verifiable?
 
+It also provides a local filesystem-backed progress monitor for projects, groups,
+and dependency-linked tasks. The Rust API and Bun/TanStack Start browser reuse
+taskfmt's task contracts, progress, and authoritative verification lifecycle.
+See [monitoring setup and schemas](docs/monitoring.md),
+[example projects](docs/monitoring-examples.md), and
+[installed toolchain versions](docs/monitoring-versions.md).
+
 ## Install locally
 
 From the repository root, install the `taskfmt` binary with Cargo:
@@ -87,7 +94,7 @@ The current image toolchain is:
 | --- | --- |
 | Claude Code | `2.1.261` |
 | Codex CLI | `0.153.4` |
-| Rust | `1.98.0` |
+| Rust | `1.98.1` |
 | Node.js LTS | `24.20.0` |
 | Herdr | `0.8.2` |
 | PostgreSQL | `18.6` |
@@ -250,6 +257,9 @@ No completed ablation matrix yet proves that one wording or checklist style prod
 | `experiments/runs/` | Generated run workspaces and evidence; Git-ignored. |
 | `reference/task-template/` | Canonical `task/v5` + `verify/v2` package template. |
 | `experiment.toml` | Versioned paths, images, runtime, and agent profiles. |
+| `tasks/` | Hierarchical example projects, groups, and task packages. |
+| `web/` | Bun-managed TanStack Start progress-monitoring frontend. |
+| `docs/monitoring.md` | Monitor setup, metadata, dependency, and lifecycle reference. |
 
 ## Authority and boundaries
 

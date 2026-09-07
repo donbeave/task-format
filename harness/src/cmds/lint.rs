@@ -19,7 +19,7 @@ pub fn run(ctx: &Ctx, json: bool, tasks: &[String]) -> anyhow::Result<i32> {
         let mut tokens: Vec<String> = Vec::new();
         for task in tasks {
             let candidate = std::path::Path::new(task);
-            if candidate.is_dir() || candidate.is_file() {
+            if candidate.is_dir() || candidate.is_file() || tasks_dir.join(candidate).is_dir() {
                 as_paths.push(resolve_task_arg(&tasks_dir, task)?);
             } else {
                 tokens.push(task.clone());

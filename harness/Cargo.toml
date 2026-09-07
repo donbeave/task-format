@@ -2,7 +2,8 @@
 name = "taskfmt"
 version = "0.2.0"
 edition = "2024"
-rust-version = "1.88"
+default-run = "taskfmt"
+rust-version = "1.98"
 description = "task-format harness: task lint, progress init, completion gate, container dispatch"
 license = "Apache-2.0"
 
@@ -30,22 +31,28 @@ harness = false
 
 [dependencies]
 anyhow = "1"
+axum = "0.8.9"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 clap = { version = "4.5", features = ["derive"] }
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
-signal-hook = "0.3"
+sha2 = "0.11"
+signal-hook = "0.4.4"
 tempfile = "3"
-toml = "0.9"
+toml = "1.1.5"
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "process", "time", "fs", "io-std", "io-util"] }
 uuid = { version = "1", features = ["v4"] }
 walkdir = "2"
+
+[dev-dependencies]
+http-body-util = "0.1"
+tower = { version = "0.5.3", features = ["util"] }
 
 # The build script hashes the crate's sources with the same `sha2` the library uses; the digest is
 # neither hand-rolled nor shelled out to a host `sha256sum`.
 [build-dependencies]
-sha2 = "0.10"
+sha2 = "0.11"
 
 [profile.release]
 strip = true

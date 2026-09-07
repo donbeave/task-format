@@ -7,6 +7,10 @@
 # the same glibc the base image uses, hence the trixie-pinned rust image and trixie-slim export.
 FROM rust:1.98-trixie AS build
 
+# The official patch-specific Docker tag is not published yet; select the exact
+# stable toolchain through rustup independently of the distro image tag.
+RUN rustup toolchain install 1.98.1 --profile minimal && rustup default 1.98.1
+
 ARG TASKFMT_GIT_COMMIT_SHA=unknown
 ENV TASKFMT_GIT_COMMIT_SHA=${TASKFMT_GIT_COMMIT_SHA}
 
@@ -19,7 +23,7 @@ COPY Cargo.toml Cargo.lock build.rs ./
 COPY src/fingerprint.rs ./src/fingerprint.rs
 RUN echo "pub fn placeholder() {}" > src/lib.rs \
  && echo "fn main() {}" > src/main.rs \
- && cargo build --release --locked \
+ && cargo build --release --bin taskfmt --locked \
  && rm -rf src
 
 COPY src ./src

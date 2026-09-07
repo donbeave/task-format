@@ -1,0 +1,3 @@
+schema = "task-meta/v1"
+status = "pending"
+dependencies = []

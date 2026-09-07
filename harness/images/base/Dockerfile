@@ -14,7 +14,7 @@ FROM debian:trixie-slim
 
 ARG TARGETARCH
 ARG HERDR_VERSION=0.8.2
-ARG RUST_TOOLCHAIN=1.98.0
+ARG RUST_TOOLCHAIN=1.98.1
 ARG NODE_MAJOR=24
 
 # --- apt: base tools, firewall stack, inner docker. build-essential: rustc cannot link without

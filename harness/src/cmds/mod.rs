@@ -17,6 +17,7 @@ pub mod run;
 pub mod selfcheck;
 pub mod selfhost;
 pub mod selftest;
+pub mod source;
 pub mod status;
 pub mod study;
 pub mod verify;
@@ -424,6 +425,22 @@ pub fn all_task_dirs(tasks_dir: &std::path::Path) -> anyhow::Result<Vec<PathBuf>
         .map(|entry| entry.path())
         .filter(|path| path.is_dir() && path.join("README.md").is_file())
         .collect();
+    // Flat experiment contracts and hierarchical project descriptions both have README files.
+    // Delegate hierarchical ownership and validation to the same catalog as the web backend.
+    let flat = dirs.iter().any(|path| {
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| crate::selection::task_number(name).is_some())
+            || path.join("verify.toml").is_file()
+            || crate::taskfile::TaskFile::load(&path.join("README.md")).is_ok()
+    });
+    if !flat {
+        return Ok(crate::monitor::Catalog::load(tasks_dir)?
+            .tasks
+            .into_values()
+            .map(|task| task.path)
+            .collect());
+    }
     dirs.sort();
     Ok(dirs)
 }
