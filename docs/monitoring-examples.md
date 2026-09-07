@@ -1,6 +1,6 @@
 # Monitoring example catalog
 
-`tasks/` contains four representative projects: Jackin, ChainArgos, Parallax, and Velnor. Their names are display metadata, not claims about those products. All executable task contracts concern the existing pgtui experiment. Nothing in `experiments/tasks/` was changed.
+`tasks/` contains the four original representative projects (Jackin, ChainArgos, Parallax, and Velnor) plus [Demo](monitoring-demo.md), which demonstrates live folder discovery of all seven experimental tasks. Their names are display metadata, not claims about those products. All executable task contracts concern the existing pgtui experiment. Nothing in `experiments/tasks/` was changed.
 
 ## Provenance and contents
 
@@ -21,7 +21,7 @@ Each task preserves its original `README.md`, `verify.toml`, and complete `trust
 
 Jackin intentionally retains the original sequential preconditions. Independent pending roots in ChainArgos and Parallax demonstrate parallel readiness without pretending that later pgtui slices can run before their baselines exist. Scheduler tests cover branching and joining within a project separately.
 
-The initial catalog has four projects, four groups, ten tasks, one draft, nine pending (six blocked), zero in progress, zero done, and zero percent checklist progress. Its ready tasks are `jackin/new-design/001`, `chainargos/bootstrap/001`, and `parallax/bootstrap/001`. Blocked is a computed subset of pending, not an extra persisted status.
+The original four-project catalog has four groups, ten tasks, one draft, nine pending (six blocked), zero in progress, zero done, and zero percent checklist progress. Its ready tasks are `jackin/new-design/001`, `chainargos/bootstrap/001`, and `parallax/bootstrap/001`. Adding Demo produces five projects, five groups, seventeen tasks, one draft, sixteen pending (twelve blocked), and a fourth ready task, `demo/pgtui/001`. Blocked is a computed subset of pending, not an extra persisted status.
 
 ## Running the fixtures
 

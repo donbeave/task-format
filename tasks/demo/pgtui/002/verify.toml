@@ -1,0 +1,60 @@
+schema = "verify/v2"
+task_id = "TASK-002"
+writable_paths = ["Cargo.toml", "Cargo.lock", "crates"]
+forbidden_paths = ["crates/pgtui/src/render.rs", "crates/pgtui/src/fonts", "crates/pgtui/tests"]
+
+[[forbidden_patterns]]
+regex = 'todo!\(|unimplemented!\(|dbg!\(|tokio_postgres'
+paths = ["crates"]
+
+[[checks]]
+id = "CHK-001"
+phase = "focused"
+argv = ["cargo", "test", "-p", "pgtui", "--test", "store_test"]
+requirements = ["R-001"]
+acceptance = ["AC-001"]
+
+[[checks]]
+id = "CHK-002"
+phase = "focused"
+argv = ["cargo", "test", "-p", "pgtui", "--test", "app_connection_list_test"]
+requirements = ["R-002", "R-003"]
+acceptance = ["AC-002"]
+
+[[checks]]
+id = "CHK-003"
+phase = "focused"
+argv = ["cargo", "test", "-p", "pgtui", "--test", "screen_connection_list_test"]
+requirements = ["R-004"]
+acceptance = ["AC-003"]
+
+[[checks]]
+id = "CHK-004"
+phase = "focused"
+argv = ["cargo", "test", "-p", "pgtui", "--test", "cli_test"]
+requirements = ["R-005"]
+acceptance = ["AC-004"]
+
+[[checks]]
+id = "CHK-005"
+phase = "regression"
+argv = ["cargo", "test", "-p", "pgtui", "--test", "store_test", "--test", "app_connection_list_test", "--test", "screen_connection_list_test", "--test", "cli_test", "--test", "skeleton_test", "--", "--skip", "pgtui_stub_exits_2"]
+requirements = ["R-001", "R-002", "R-003", "R-004", "R-005"]
+acceptance = ["AC-005"]
+
+[[checks]]
+id = "CHK-006"
+phase = "lint"
+argv = ["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"]
+requirements = ["R-006", "R-007"]
+acceptance = ["AC-006"]
+
+[[checks]]
+id = "CHK-007"
+phase = "gate"
+argv = ["git", "diff", "--check"]
+requirements = ["R-006", "R-007"]
+acceptance = ["AC-007"]
+
+[predecessor]
+task_id = "TASK-001"

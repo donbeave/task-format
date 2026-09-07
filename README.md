@@ -10,6 +10,8 @@ taskfmt's task contracts, progress, and authoritative verification lifecycle.
 See [monitoring setup and schemas](docs/monitoring.md),
 [example projects](docs/monitoring-examples.md), and
 [installed toolchain versions](docs/monitoring-versions.md).
+The [folder discovery demo](docs/monitoring-demo.md) shows all seven existing
+experimental tasks discovered from `tasks/demo/pgtui/` by the running application.
 
 ## Install locally
 
