@@ -38,6 +38,9 @@ Task-package Markdown, the launch prompt, and bundled task fixtures are executab
 
 ## Install and first-time setup
 
+See **[docs/getting-started.md](../docs/getting-started.md)** for install options (`cargo install`,
+`cargo build`, or `cargo run`), local verification without Docker, and a map of bundled examples.
+
 Run from the repository root. Docker must be running.
 
 ```sh
@@ -200,7 +203,6 @@ taskfmt-host lint --json
 
 In-container progress (agents): `taskfmt init` (once), `taskfmt status`, then `taskfmt verify`.
 The runtime entrypoint calls `taskfmt init` when `/progress/progress.md` is missing.
-```
 
 Re-run the host gate for a dispatched run:
 
@@ -323,10 +325,10 @@ taskfmt-host build-images --agent all --no-cache --auto
 Run the Rust checks from repository root:
 
 ```sh
-cargo fmt --manifest-path harness/Cargo.toml --check
-cargo clippy --manifest-path harness/Cargo.toml --all-targets -- -D warnings
-cargo test --manifest-path harness/Cargo.toml
-cargo run --manifest-path harness/Cargo.toml --bin taskfmt-host -- selftest
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo run --bin taskfmt-host -- selftest
 ```
 
 The Docker integration gate is opt-in:
@@ -343,11 +345,15 @@ evidence.
 ## Repository layout
 
 ```text
+crates/
+  taskfmt-core/        shared library (lint, verify, progress, config)
+  taskfmt/             in-container validation binary
+  taskfmt-runtime/     in-container boot binary
+  taskfmt-host/        host operator binary
 harness/
-  src/                 taskfmt implementation
   tests/               integration and behavior tests
   images/              taskfmt, base, Claude, Codex, and Cursor image definitions
   testdata/            bundled lint and gate corpus; do not edit as documentation
-  goal-prompt.md       runtime prompt documentation; task prompt is embedded from src/task-prompt.md
-  Cargo.toml           crate manifest
+  src/                 test re-exports and embedded task prompt
+  Cargo.toml           harness integration-test crate
 ```

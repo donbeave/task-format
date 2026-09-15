@@ -18,26 +18,30 @@ The underlying research harness asks whether structured task packages make AI
 coding work more predictable, bounded, and independently verifiable. Its original
 flat experiment corpus and taskfmt workflows remain supported.
 
-## Install locally
+## Getting started
 
-From the repository root, install both harness binaries with Cargo:
+**[docs/getting-started.md](docs/getting-started.md)** is the step-by-step guide: install the
+three binaries, verify the repo with bundled examples (`selftest`, `harness/testdata/example`,
+`experiments/tasks/TASK-001`), run the test suite, and dispatch your first task in Docker.
+
+Quick install from the repository root:
 
 ```sh
 cargo install --path crates/taskfmt-host --locked --bin taskfmt-host
 cargo install --path crates/taskfmt --locked --bin taskfmt
 cargo install --path crates/taskfmt-runtime --locked --bin taskfmt-runtime
+taskfmt-host selftest    # no Docker — proves lint, progress, and gate logic
+taskfmt-host lint TASK-001
 ```
 
-Cargo installs the binaries to `~/.cargo/bin`. Ensure that directory is on your
-`PATH`, then run:
+Cargo installs to `~/.cargo/bin`. Put that directory on your `PATH`, then run
+`taskfmt-host --help`.
 
-```sh
-taskfmt-host --help
-```
-
-`taskfmt-host` is the host operator CLI (`lint`, `run`, `experiment`, `gate`,
-`promote`, …). `taskfmt` is the in-container validation binary (`init`, `status`, `lint`, `verify`).
-`taskfmt-runtime` handles container boot (`container-entrypoint`, `prereqs`, `agent-launch`).
+| Binary | Role |
+| --- | --- |
+| `taskfmt-host` | Host operator CLI (`lint`, `run`, `experiment`, `gate`, `promote`, …) |
+| `taskfmt` | In-container validation (`init`, `status`, `lint`, `verify`) |
+| `taskfmt-runtime` | Container boot (`container-entrypoint`, `prereqs`, `agent-launch`) |
 
 ## Projects and groups
 
@@ -276,7 +280,9 @@ No completed ablation matrix yet proves that one wording or checklist style prod
 
 | Path | Role |
 | --- | --- |
-| `harness/` | Rust `taskfmt-host`, `taskfmt`, and `taskfmt-runtime` binaries; see [`docs/crate-split.md`](docs/crate-split.md). |
+| `docs/getting-started.md` | Install binaries, local verification, and example walkthrough. |
+| `crates/` | Rust workspace: `taskfmt-host`, `taskfmt`, `taskfmt-runtime`, and shared `taskfmt-core`. |
+| `harness/` | Docker images, integration tests, and bundled fixtures; see [`docs/crate-split.md`](docs/crate-split.md). |
 | `experiments/tasks/` | Versioned task packages used as experiment inputs. |
 | `experiments/fixtures/` | Shared deterministic seed data. |
 | `experiments/runs/` | Generated run workspaces and evidence; Git-ignored. |
