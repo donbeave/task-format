@@ -60,8 +60,18 @@ fn manifest_matches_the_repo_root_file() {
     assert_eq!(codex.kind, "codex");
     assert_eq!(codex.auth, AgentAuth::Host);
     // only references are committed, never values
-    assert!(zai.env_secret.values().all(|v| v.starts_with("file://")));
-    assert!(codex.env_secret.values().all(|v| v.starts_with("op://")));
+    assert!(zai
+        .env_secret
+        .values()
+        .all(|v| v.starts_with("file://") || v.starts_with("op://")));
+    let codex_zai = cfg.profile("codex-zai").unwrap();
+    assert_eq!(codex_zai.env_secret["ZAI_API_KEY"], "op://ChainArgos/Z.ai/Test");
+    let codex_kimi = cfg.profile("codex-kimi").unwrap();
+    assert_eq!(
+        codex_kimi.env_secret["KIMI_API_KEY"],
+        "op://ChainArgos/Kimi/Test"
+    );
+    assert!(codex.env_secret.is_empty());
 }
 
 #[test]

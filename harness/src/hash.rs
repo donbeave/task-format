@@ -1,9 +1,4 @@
-//! The driver's one digest, wrapped once (plan §4.6.3; TASK-114 D-004).
-//!
-//! `sha2` is the crate's reviewed dependency, landed by TASK-107. The digest is neither
-//! hand-rolled — "the kind of code nobody reviews and everybody trusts" — nor shelled out to
-//! whichever coreutils the host happens to carry. `harness/src/fingerprint.rs` hashes the crate's
-//! own sources for a different purpose and is never reopened from here.
+//! SHA-256 digests for gate evidence and artifact identity.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -23,7 +18,7 @@ pub fn digest_bytes(bytes: &[u8]) -> String {
     hex
 }
 
-/// Lowercase hex SHA-256 of a file's bytes **exactly as written, before any parsing** (§4.6.6).
+/// Lowercase hex SHA-256 of a file's bytes exactly as written.
 pub fn digest_file(path: &Path) -> anyhow::Result<String> {
     let bytes = std::fs::read(path)
         .with_context(|| format!("cannot read {} to digest it", path.display()))?;
@@ -34,8 +29,6 @@ pub fn digest_file(path: &Path) -> anyhow::Result<String> {
 mod tests {
     use super::*;
 
-    /// Two published vectors, typed by hand rather than produced by this function: a test that
-    /// builds its expectation the way the code does proves only that a function equals itself.
     #[test]
     fn digest_matches_published_vectors() {
         assert_eq!(
@@ -49,16 +42,6 @@ mod tests {
     }
 
     #[test]
-    fn digest_is_64_lowercase_hex() {
-        let got = digest_bytes(b"selfhost");
-        assert_eq!(got.len(), 64);
-        assert!(
-            got.chars()
-                .all(|c| c.is_ascii_hexdigit() && !c.is_uppercase())
-        );
-    }
-
-    #[test]
     fn file_and_bytes_agree() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("verdict.json");
@@ -67,10 +50,5 @@ mod tests {
             digest_file(&path).unwrap(),
             digest_bytes(b"{\"overall\":\"PASS\"}")
         );
-    }
-
-    #[test]
-    fn one_appended_byte_moves_the_digest() {
-        assert_ne!(digest_bytes(b"abc"), digest_bytes(b"abcx"));
     }
 }

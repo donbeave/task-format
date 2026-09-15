@@ -65,8 +65,8 @@ pub fn gate_run(
     crate::ops::git::add_all_including_ignored(&workspace)?;
     let parent = crate::ops::git::head(&workspace)?;
     let candidate_tree = crate::ops::git::write_tree(&workspace)?;
-    let task_sha256 = crate::selfhost::hash::digest_file(&snapshot.join("README.md"))?;
-    let verifier_sha256 = crate::selfhost::hash::digest_file(&snapshot.join("verify.toml"))?;
+    let task_sha256 = crate::hash::digest_file(&snapshot.join("README.md"))?;
+    let verifier_sha256 = crate::hash::digest_file(&snapshot.join("verify.toml"))?;
 
     // Verify a detached materialization of the recorded tree, never the executor's mutable
     // workspace. The synthetic checkout retains the recorded parent so scope checks see the same
@@ -105,7 +105,7 @@ pub fn gate_run(
         redact::write_scrubbed(&gate_log, prior.as_bytes())
             .with_context(|| format!("writing {}", gate_log.display()))?;
     }
-    let evidence_sha256 = crate::selfhost::hash::digest_file(&gate_log)?;
+    let evidence_sha256 = crate::hash::digest_file(&gate_log)?;
     manifest.gate = Some(GateRecord {
         schema: "gate/v3".to_string(),
         verdict: if immutable && output.is_pass() {
@@ -143,7 +143,7 @@ pub fn gate_run(
 fn write_matcher_evidence(path: &Path, output: &gate::GateOutput) -> anyhow::Result<String> {
     let bytes = gate::evidence_json(&output.checks)?;
     redact::write_scrubbed(path, &bytes).with_context(|| format!("writing {}", path.display()))?;
-    crate::selfhost::hash::digest_file(path)
+    crate::hash::digest_file(path)
 }
 
 #[cfg(test)]
@@ -224,7 +224,7 @@ mod tests {
         assert_eq!(first_digest, second_digest);
         assert_eq!(
             first_digest,
-            crate::selfhost::hash::digest_file(&path).unwrap()
+            crate::hash::digest_file(&path).unwrap()
         );
         assert!(
             std::str::from_utf8(&first)
@@ -248,7 +248,7 @@ mod tests {
         assert_eq!(first_digest, second_digest);
         assert_eq!(
             first_digest,
-            crate::selfhost::hash::digest_file(&first_path).unwrap()
+            crate::hash::digest_file(&first_path).unwrap()
         );
         let value: serde_json::Value = serde_json::from_slice(&first).unwrap();
         assert_eq!(value["schema"], "gate-evidence/v1");

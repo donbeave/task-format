@@ -8,6 +8,7 @@ impl From<crate::cli::AgentFilter> for AgentFilter {
         match value {
             crate::cli::AgentFilter::Claude => AgentFilter::Claude,
             crate::cli::AgentFilter::Codex => AgentFilter::Codex,
+            crate::cli::AgentFilter::Cursor => AgentFilter::Cursor,
             crate::cli::AgentFilter::All => AgentFilter::All,
         }
     }

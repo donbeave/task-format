@@ -9,9 +9,9 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[command(
     name = "taskfmt",
     version = crate::VERSION,
-    about = "Filesystem projects, groups, task contracts, and verified task execution",
-    after_help = "Read-only commands never prompt. Mutating commands (project run, group run, run, \
-                  experiment, repo, promote, preload, build-images) need --auto or --yes when stdin is not a terminal."
+    about = "Task contracts, verified execution, and container dispatch",
+    after_help = "Read-only commands never prompt. Mutating commands (run, experiment, repo, \
+                  promote, preload, build-images) need --auto or --yes when stdin is not a terminal."
 )]
 pub struct Cli {
     /// Path to the experiment manifest. Default: $TASKFMT_CONFIG, else the nearest
@@ -58,6 +58,7 @@ mod tests {
 pub enum AgentFilter {
     Claude,
     Codex,
+    Cursor,
     All,
 }
 
@@ -65,20 +66,11 @@ pub enum AgentFilter {
 pub enum AgentKindArg {
     Claude,
     Codex,
+    Cursor,
 }
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Inspect filesystem projects or run them through the local monitor.
-    Project {
-        #[command(subcommand)]
-        cmd: ProjectCmd,
-    },
-    /// Inspect project groups or run them through the local monitor.
-    Group {
-        #[command(subcommand)]
-        cmd: GroupCmd,
-    },
     /// Lint task packages under the configured tasks dir.
     Lint {
         /// Emit one stable JSON report per package (NDJSON).
@@ -155,22 +147,6 @@ pub enum Command {
         /// Retain the scratch copy (its path is printed).
         #[arg(long)]
         keep: bool,
-    },
-
-    /// Run a non-promoting, immutable-base format study and write one observation per assignment.
-    Study {
-        /// study/v1 TOML schema.
-        #[arg(long)]
-        config: PathBuf,
-        /// Git repository containing the candidate tree.
-        #[arg(long)]
-        root: PathBuf,
-        /// Trusted task package containing verify.toml.
-        #[arg(long)]
-        task_dir: PathBuf,
-        /// NDJSON observation record output.
-        #[arg(long)]
-        out: PathBuf,
     },
 
     /// Build the harness container images.
@@ -295,14 +271,7 @@ pub enum Command {
         selfcheck: bool,
     },
 
-    /// The self-host driver (plan section 4.6). Every subcommand and every flag lives under
-    /// `harness/src/selfhost/`; this variant is landed once and never edited again (section 8.1).
-    Selfhost {
-        #[command(subcommand)]
-        cmd: crate::selfhost::cli::SelfhostCmd,
-    },
-
-    /// Container PID 1 (root): inner dockerd, codex seeding, prereqs, then the agent.
+    /// Container PID 1 (root): inner dockerd, agent seeding, prereqs, then the agent.
     ContainerEntrypoint,
 
     /// Container runtime prerequisites (root): inner postgres + seed restore.
@@ -310,84 +279,6 @@ pub enum Command {
 
     /// Agent supervisor (as user `agent`): herdr server + one /work workspace + the agent pane.
     AgentLaunch,
-}
-
-#[derive(clap::Args, Debug)]
-pub struct CatalogOptions {
-    /// Project catalog root. Default: paths.projects_dir in the experiment manifest.
-    #[arg(long)]
-    pub projects_root: Option<PathBuf>,
-    /// Emit one versioned JSON document; reads contain persisted metadata, not live run proof.
-    #[arg(long)]
-    pub json: bool,
-}
-
-#[derive(clap::Args, Debug)]
-pub struct MonitorRunOptions {
-    /// Existing local monitor. Its operator configuration owns the repository and agent.
-    #[arg(long, default_value = "http://127.0.0.1:3001")]
-    pub monitor_url: String,
-    /// Wait for this execution's terminal journal entry. Does not promote task output.
-    #[arg(long)]
-    pub wait: bool,
-    /// Emit one versioned JSON result or typed error document.
-    #[arg(long)]
-    pub json: bool,
-}
-
-#[derive(Subcommand, Debug)]
-pub enum ProjectCmd {
-    /// List projects from persisted filesystem metadata.
-    List {
-        #[command(flatten)]
-        options: CatalogOptions,
-    },
-    /// Show a project, its groups and persisted task statuses.
-    Show {
-        project: String,
-        #[command(flatten)]
-        options: CatalogOptions,
-    },
-    /// Validate the catalog and lint every task contract in one project.
-    Lint {
-        project: String,
-        #[command(flatten)]
-        options: CatalogOptions,
-    },
-    /// Request dependency-aware execution from the running monitor.
-    Run {
-        project: String,
-        #[command(flatten)]
-        options: MonitorRunOptions,
-    },
-}
-
-#[derive(Subcommand, Debug)]
-pub enum GroupCmd {
-    /// List one project's groups from persisted filesystem metadata.
-    List {
-        project: String,
-        #[command(flatten)]
-        options: CatalogOptions,
-    },
-    /// Show PROJECT/GROUP and its persisted task statuses.
-    Show {
-        group: String,
-        #[command(flatten)]
-        options: CatalogOptions,
-    },
-    /// Validate the catalog and lint task contracts in PROJECT/GROUP.
-    Lint {
-        group: String,
-        #[command(flatten)]
-        options: CatalogOptions,
-    },
-    /// Request dependency-aware execution of PROJECT/GROUP from the running monitor.
-    Run {
-        group: String,
-        #[command(flatten)]
-        options: MonitorRunOptions,
-    },
 }
 
 #[derive(Subcommand, Debug)]

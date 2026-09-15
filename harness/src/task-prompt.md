@@ -1,4 +1,4 @@
-```text claude codex
+```text claude codex cursor
 /goal Implement the single task described in `/task/README.md`, following `/task/AGENTS.md`
 exactly. Before editing, read both files fully. Work only in `/work`; nothing under `/task/` may
 change. Done when, after the last file change, `taskfmt verify` has been run from `/work`, exited

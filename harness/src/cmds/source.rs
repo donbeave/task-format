@@ -145,30 +145,15 @@ mod tests {
     }
 
     #[test]
-    fn cli_discovery_uses_hierarchical_catalog_validation() {
+    fn all_task_dirs_lists_only_top_level_packages() {
         let root = tempfile::tempdir().unwrap();
-        let directory = package(root.path(), "project/group/001");
-        for (path, text) in [
-            ("project/README.md", "# Project\n"),
-            ("project/group/README.md", "# Group\n"),
-        ] {
-            std::fs::write(root.path().join(path), text).unwrap();
-        }
-        let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/example");
-        for file in ["README.md", "verify.toml"] {
-            std::fs::copy(example.join(file), directory.join(file)).unwrap();
-        }
-        let metadata = directory.join("task.toml");
-        std::fs::write(
-            &metadata,
-            "schema = \"task-meta/v1\"\nstatus = \"pending\"\ndependencies = []\n",
-        )
-        .unwrap();
+        package(root.path(), "TASK-001");
+        package(root.path(), "nested/group/001");
+        let dirs = super::super::all_task_dirs(root.path()).unwrap();
+        assert_eq!(dirs.len(), 1);
         assert_eq!(
-            super::super::all_task_dirs(root.path()).unwrap(),
-            vec![directory.canonicalize().unwrap()]
+            dirs[0].file_name().unwrap().to_string_lossy(),
+            "TASK-001"
         );
-        std::fs::write(metadata, "schema = \"task-meta/v1\"\nstatus = \"pending\"\ndependencies = [\"project/group/999\"]\n").unwrap();
-        assert!(super::super::all_task_dirs(root.path()).is_err());
     }
 }

@@ -241,12 +241,14 @@ pub fn dispatch_one(
 
     // ---------- 9. agent home ----------
     let agent_home = run_dir.join("agent-home");
-    container::preseed_agent_home(&agent_home, &profile.kind)?;
+    container::preseed_agent_home(&agent_home, &profile)?;
 
     // ---------- 10. container: named, persistent, detached, no -t (herdr server needs no TTY) ----------
     let agent_cmd = match profile.kind.as_str() {
         "claude" => container::claude_agent_cmd(&session_id, &model, &effort),
-        _ => container::codex_agent_cmd(&model, &effort),
+        "codex" => container::codex_agent_cmd(&model, &effort),
+        "cursor" => container::cursor_agent_cmd(&model, &effort),
+        other => bail!("unsupported agent kind: {other}"),
     };
     let mut manifest = Manifest {
         run: run_id.clone(),
@@ -275,6 +277,7 @@ pub fn dispatch_one(
 
     let secrets = crate::ops::op::resolve_all(&profile.env_secret)?;
     let env_file = SecretEnvFile::create(&secrets)?;
+    let mut cursor_auth_staging = None;
     // The recorded base SHA, not the movable `baseline` tag: the in-container `taskfmt verify` and the
     // host gate then share one immovable scope base (the tag stays for humans).
     let plan = container::launch_plan(
@@ -284,6 +287,7 @@ pub fn dispatch_one(
         &profile,
         &agent_cmd,
         &manifest.base_sha,
+        &mut cursor_auth_staging,
     )?;
     redact::emit(&format!(
         "== docker run {} (privileged, persistent, no --rm)",
@@ -303,6 +307,7 @@ pub fn dispatch_one(
         cfg.runtime.prereq_timeout_s
     ));
     wait_prereqs(&manifest, &run_dir, timeout)?;
+    drop(cursor_auth_staging);
 
     // ---------- 12. herdr pane ----------
     manifest.pane = wait_pane(&manifest, Duration::from_secs(50))?;

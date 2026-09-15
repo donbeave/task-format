@@ -18,7 +18,7 @@ For each task, `taskfmt`:
 6. Stops the executor, stages one complete candidate tree, and runs the host gate against that tree.
 7. Records gate evidence, tree, and expected parent; `promote` creates and pushes only that recorded tree with an expected-parent lease.
 
-The harness supports Claude and Codex agent profiles. Images are built from [`images/`](images/); profile, runtime, repository, and path settings belong in [`experiment.toml`](../experiment.toml).
+The harness supports Claude, Codex, and Cursor agent profiles. Images are built from [`images/`](images/); profile, runtime, repository, and path settings belong in [`experiment.toml`](../experiment.toml).
 
 ## Safety model
 
@@ -45,9 +45,10 @@ taskfmt build-images --agent all --auto
 1. `harness-taskfmt:latest` — the Rust `taskfmt` binary;
 2. `harness-base:latest` — Debian Trixie, Node.js 24 LTS, Rust 1.98, Herdr 0.8.2, PostgreSQL client 18, and runtime tools;
 3. `harness-claude:latest` — Claude Code 2.1.261;
-4. `harness-codex:latest` — Codex CLI 0.153.4.
+4. `harness-codex:latest` — Codex CLI 0.153.4;
+5. `harness-cursor:latest` — Cursor Agent CLI 2026.09.10-fd3934a.
 
-Use `--agent claude` or `--agent codex` to rebuild one agent layer. Use `--no-cache` when
+Use `--agent claude`, `--agent codex`, or `--agent cursor` to rebuild one agent layer. Use `--no-cache` when
 refreshing moving base layers. `preload` uses the digest in
 `images/preload/postgres.digest` and saves the matching PostgreSQL 18 image for the inner Docker
 daemon.
@@ -57,8 +58,8 @@ per run.
 
 ### Claude with GLM-5.3-Flash
 
-The `zai-flash` profile uses Claude Code through Z.ai's Anthropic-compatible API. Store only the
-Z.ai token in the referenced file:
+The `zai-flash` profile uses Claude Code through Z.ai's Anthropic-compatible API. The API key
+is referenced from 1Password (`op://ChainArgos/Z.ai/Test`) or a local file:
 
 ```sh
 mkdir -p ~/.config/taskfmt
@@ -66,6 +67,9 @@ chmod 700 ~/.config/taskfmt
 $EDITOR ~/.config/taskfmt/zai-flash.token
 chmod 600 ~/.config/taskfmt/zai-flash.token
 ```
+
+In `experiment.toml`, set `ANTHROPIC_AUTH_TOKEN = "op://ChainArgos/Z.ai/Test"` or
+`"file://zai-flash.token"`.
 
 Run with `--agent zai-flash`, or omit `--agent` because it is the configured default:
 
@@ -234,6 +238,7 @@ Compare the host binary fingerprint with an image:
 taskfmt fingerprint
 taskfmt fingerprint --image harness-claude:latest
 taskfmt fingerprint --image harness-codex:latest
+taskfmt fingerprint --image harness-cursor:latest
 taskfmt fingerprint --path harness
 ```
 
@@ -244,8 +249,34 @@ taskfmt repo create --auto
 taskfmt repo delete --name <repository-name> --auto
 ```
 
-`selfhost` is an advanced, separate command family. Its complete command reference is available
-from `taskfmt selfhost --help` and its subcommands' help.
+### Cursor
+
+Cursor uses the same login as your host `agent` CLI. Run `agent login` on the host first.
+On macOS the harness reads your Keychain session at dispatch time; on Linux it mounts
+`~/.config/cursor/auth.json` (or `~/.cursor/auth.json`).
+
+```sh
+taskfmt run --task TASK-001 --repo <repository-url> --agent cursor-default --wait
+```
+
+The `cursor-default` profile sets `auth = "host"`. Do not combine that with
+`CURSOR_API_KEY` in `env_secret`.
+
+### Codex via Z.ai
+
+Use the `codex-zai` profile to run Codex against Z.ai with the ChainArgos API key from 1Password:
+
+```sh
+taskfmt run --task TASK-001 --repo <repository-url> --agent codex-zai --wait
+```
+
+### Codex via Kimi
+
+Use the `codex-kimi` profile to run Codex against Kimi K3 with the ChainArgos API key from 1Password:
+
+```sh
+taskfmt run --task TASK-001 --repo <repository-url> --agent codex-kimi --wait
+```
 
 ## Development and release checks
 
@@ -284,7 +315,7 @@ harness/
   src/                 taskfmt implementation
   tests/               integration and behavior tests
   checks/              fingerprint command checks
-  images/              taskfmt, base, Claude, and Codex image definitions
+  images/              taskfmt, base, Claude, Codex, and Cursor image definitions
   testdata/            bundled lint and gate corpus; do not edit as documentation
   goal-prompt.md       runtime prompt documentation; task prompt is embedded from src/task-prompt.md
   Cargo.toml           crate manifest

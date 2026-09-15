@@ -10,17 +10,14 @@ pub mod gate;
 pub mod lint;
 pub mod preload;
 pub mod progress_init;
-pub mod project;
 pub mod promote;
 pub mod ps;
 pub mod repo;
 pub mod run;
 pub mod selfcheck;
-pub mod selfhost;
 pub mod selftest;
 pub mod source;
 pub mod status;
-pub mod study;
 pub mod verify;
 
 use std::path::{Path, PathBuf};
@@ -213,8 +210,6 @@ pub fn dispatch(cli: &Cli) -> anyhow::Result<i32> {
     let ctx = Ctx::from_cli(cli);
     use crate::cli::{Command, RepoCmd};
     match &cli.command {
-        Command::Project { cmd } => project::project(&ctx, cmd),
-        Command::Group { cmd } => project::group(&ctx, cmd),
         Command::Lint { json, tasks } => lint::run(&ctx, *json, tasks),
         Command::ProgressInit { task, out } => progress_init::run(&ctx, task, out.as_deref()),
         Command::Selftest => selftest::run(&ctx),
@@ -246,12 +241,6 @@ pub fn dispatch(cli: &Cli) -> anyhow::Result<i32> {
             reference,
             keep,
         } => selfcheck::run(task, workspace, base.clone(), reference.as_deref(), *keep),
-        Command::Study {
-            config,
-            root,
-            task_dir,
-            out,
-        } => study::run(config, root, task_dir, out),
         Command::BuildImages { agent, no_cache } => {
             build_images::run(&ctx, (*agent).into(), *no_cache)
         }
@@ -312,7 +301,6 @@ pub fn dispatch(cli: &Cli) -> anyhow::Result<i32> {
             proof_corpus.as_deref(),
             *selfcheck,
         ),
-        Command::Selfhost { cmd } => selfhost::run(&ctx, cmd),
         Command::ContainerEntrypoint => container_entrypoint::run(),
         Command::Prereqs => container_entrypoint::prereqs_only(),
         Command::AgentLaunch => agent_launch::run(),
@@ -428,22 +416,6 @@ pub fn all_task_dirs(tasks_dir: &std::path::Path) -> anyhow::Result<Vec<PathBuf>
         .map(|entry| entry.path())
         .filter(|path| path.is_dir() && path.join("README.md").is_file())
         .collect();
-    // Flat experiment contracts and hierarchical project descriptions both have README files.
-    // Delegate hierarchical ownership and validation to the same catalog as the web backend.
-    let flat = dirs.iter().any(|path| {
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| crate::selection::task_number(name).is_some())
-            || path.join("verify.toml").is_file()
-            || crate::taskfile::TaskFile::load(&path.join("README.md")).is_ok()
-    });
-    if !flat {
-        return Ok(crate::monitor::Catalog::load(tasks_dir)?
-            .tasks
-            .into_values()
-            .map(|task| task.path)
-            .collect());
-    }
     dirs.sort();
     Ok(dirs)
 }

@@ -1,0 +1,6 @@
+{
+  "approvalMode": "force",
+  "sandbox": {
+    "mode": "disabled"
+  }
+}

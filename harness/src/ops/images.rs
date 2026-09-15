@@ -1,7 +1,7 @@
 //! Image builds and the postgres preload.
 //!
 //! Build order matters: `harness-taskfmt` (the crate) → `harness-base` (`COPY --from=harness-taskfmt`)
-//! → `harness-claude` / `harness-codex` on top of the base.
+//! → `harness-claude` / `harness-codex` / `harness-cursor` on top of the base.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -16,8 +16,11 @@ use super::docker::{self, BuildOpts};
 pub enum AgentFilter {
     Claude,
     Codex,
+    Cursor,
     All,
 }
+
+pub const CURSOR_AGENT_VERSION: &str = "2026.09.10-fd3934a";
 
 const TASKFMT_GIT_COMMIT_ARG: &str = "TASKFMT_GIT_COMMIT_SHA";
 
@@ -84,6 +87,12 @@ pub fn build_images(
             "2.1.261",
         )],
         AgentFilter::Codex => vec![("codex", &cfg.images.codex, "CODEX_VERSION", "0.153.4")],
+        AgentFilter::Cursor => vec![(
+            "cursor",
+            &cfg.images.cursor,
+            "CURSOR_AGENT_VERSION",
+            CURSOR_AGENT_VERSION,
+        )],
         AgentFilter::All => vec![
             (
                 "claude",
@@ -92,6 +101,12 @@ pub fn build_images(
                 "2.1.261",
             ),
             ("codex", &cfg.images.codex, "CODEX_VERSION", "0.153.4"),
+            (
+                "cursor",
+                &cfg.images.cursor,
+                "CURSOR_AGENT_VERSION",
+                CURSOR_AGENT_VERSION,
+            ),
         ],
     };
     for (kind, tag, arg, default) in agents {
@@ -111,8 +126,12 @@ pub fn build_images(
     }
 
     crate::redact::emit(&format!(
-        "== built: {} {} {} {}",
-        cfg.images.taskfmt, cfg.images.base, cfg.images.claude, cfg.images.codex
+        "== built: {} {} {} {} {}",
+        cfg.images.taskfmt,
+        cfg.images.base,
+        cfg.images.claude,
+        cfg.images.codex,
+        cfg.images.cursor
     ));
     Ok(())
 }

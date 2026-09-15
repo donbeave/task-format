@@ -2,6 +2,7 @@
 //! 0600 env-file that carries resolved secrets to `docker run` and nowhere else.
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
@@ -36,6 +37,7 @@ const LAUNCH_RECONCILE_POLL: Duration = Duration::from_millis(50);
 const LAUNCH_STOP_GRACE_S: u64 = 5;
 const CODEX_AUTH_STAGING: &str = "/tmp/taskfmt-host-codex-auth.json";
 const CODEX_HOST_AUTH_HOME: &str = "/tmp/taskfmt-codex-home";
+pub const CURSOR_AUTH_STAGING: &str = "/tmp/taskfmt-host-cursor-auth.json";
 
 /// The labels that make one run's container self-describing: run id, run dir, the manifest that
 /// dispatched it, task, profile, and the experiment when there is one.
@@ -170,6 +172,44 @@ impl Drop for SecretEnvFile {
     }
 }
 
+/// A temporary host auth file (e.g. Cursor credentials materialized from macOS Keychain).
+pub(crate) struct HostAuthStagingFile {
+    path: PathBuf,
+}
+
+impl HostAuthStagingFile {
+    fn write_json(body: &str) -> anyhow::Result<Self> {
+        redact::register(body);
+        let dir = tempfile::env::temp_dir();
+        std::fs::create_dir_all(&dir)?;
+        let path = dir.join(format!(".taskfmt-auth-{}", uuid::Uuid::new_v4()));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options
+            .open(&path)
+            .with_context(|| format!("creating host auth staging file {}", path.display()))?;
+        use std::io::Write;
+        file.write_all(body.as_bytes())?;
+        Ok(Self { path })
+    }
+}
+
+impl Drop for HostAuthStagingFile {
+    fn drop(&mut self) {
+        if let Err(err) = std::fs::remove_file(&self.path) {
+            redact::eemit(&format!(
+                "could not remove the host auth staging file {}: {err}",
+                self.path.display()
+            ));
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct LaunchPlan {
     pub container: String,
@@ -186,15 +226,17 @@ pub struct LaunchPlan {
 /// Build the launch plan for one run: mounts `/work /task:ro /progress /agent-home /out /seed:ro`,
 /// the static env from the profile plus `TASKFMT_BASE`, `AGENT_CMD`, `AGENT_KIND`, `HERDR_SESSION`,
 /// `CARGO_TARGET_DIR=/out/cargo-target`, and the `taskfmt.*` labels that let every later command
-/// find this run from the container alone. `auth = "host"` adds the host Codex auth file as a
-/// read-only staging mount; the entrypoint copies it into the run Codex home with safe ownership.
-pub fn launch_plan(
+/// find this run from the container alone. `auth = "host"` mounts the operator's host credentials
+/// read-only into the run container; the entrypoint copies them into the agent home with safe
+/// ownership (Codex `auth.json`, Cursor `~/.config/cursor/auth.json`).
+pub(crate) fn launch_plan(
     cfg: &ExperimentConfig,
     resolved: &Resolved,
     manifest: &Manifest,
     profile: &AgentProfile,
     agent_cmd: &str,
     base_ref: &str,
+    cursor_auth_staging: &mut Option<HostAuthStagingFile>,
 ) -> anyhow::Result<LaunchPlan> {
     let run_dir = PathBuf::from(&manifest.run_dir);
     let mut mounts = vec![
@@ -209,8 +251,17 @@ pub fn launch_plan(
         mounts.push(docker::Mount::ro(&seed_dir, "/seed"));
     }
     if profile.auth == AgentAuth::Host {
-        let auth_path = host_codex_auth_path()?;
-        mounts.push(docker::Mount::ro(&auth_path, CODEX_AUTH_STAGING));
+        match profile.kind.as_str() {
+            "codex" => {
+                let auth_path = host_codex_auth_path()?;
+                mounts.push(docker::Mount::ro(&auth_path, CODEX_AUTH_STAGING));
+            }
+            "cursor" => {
+                let auth_path = host_cursor_auth_path(cursor_auth_staging)?;
+                mounts.push(docker::Mount::ro(&auth_path, CURSOR_AUTH_STAGING));
+            }
+            kind => bail!("profile uses auth=host but kind {kind} does not support host auth"),
+        }
     }
     let mut labels = run_labels(manifest, &resolved.manifest);
     labels.push((
@@ -248,6 +299,13 @@ pub fn launch_plan(
             };
             env.push(("CODEX_HOME".to_string(), home.to_string()));
         }
+        "cursor" => {
+            env.push(("CURSOR_CONFIG_DIR".to_string(), "/agent-home".to_string()));
+            env.push(("HOME".to_string(), "/agent-home".to_string()));
+            if profile.auth == AgentAuth::Host {
+                env.push(("AGENT_CLI_CREDENTIAL_STORE".to_string(), "file".to_string()));
+            }
+        }
         _ => {}
     }
     // Keep build artifacts on the dedicated output mount. They must never land in /work, where
@@ -269,6 +327,30 @@ pub fn launch_plan(
     })
 }
 
+fn validate_private_auth_file(path: &Path, hint: &str) -> anyhow::Result<PathBuf> {
+    let path = std::fs::canonicalize(path)
+        .with_context(|| format!("host auth is missing at {}; {hint}", path.display()))?;
+    let metadata = std::fs::metadata(&path)
+        .with_context(|| format!("reading host auth metadata at {}", path.display()))?;
+    if !metadata.is_file() {
+        bail!("host auth path is not a file: {}", path.display());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = metadata.permissions().mode() & 0o777;
+        if mode & 0o400 == 0 || mode & 0o077 != 0 {
+            bail!(
+                "host auth file {} is not private (mode {:o}); run `chmod 600 {}`",
+                path.display(),
+                mode,
+                path.display()
+            );
+        }
+    }
+    Ok(path)
+}
+
 fn host_codex_auth_path() -> anyhow::Result<PathBuf> {
     let codex_home = std::env::var_os("CODEX_HOME")
         .filter(|value| !value.is_empty())
@@ -279,32 +361,99 @@ fn host_codex_auth_path() -> anyhow::Result<PathBuf> {
 }
 
 fn host_codex_auth_path_from(codex_home: &Path) -> anyhow::Result<PathBuf> {
-    let requested = codex_home.join("auth.json");
-    let path = std::fs::canonicalize(&requested).with_context(|| {
-        format!(
-            "host Codex auth is missing at {}; run `codex --login` on the host first",
-            requested.display()
-        )
-    })?;
-    let metadata = std::fs::metadata(&path)
-        .with_context(|| format!("reading host Codex auth metadata at {}", path.display()))?;
-    if !metadata.is_file() {
-        bail!("host Codex auth path is not a file: {}", path.display());
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = metadata.permissions().mode() & 0o777;
-        if mode & 0o400 == 0 || mode & 0o077 != 0 {
-            bail!(
-                "host Codex auth file {} is not private (mode {:o}); run `chmod 600 {}`",
-                path.display(),
-                mode,
-                path.display()
+    validate_private_auth_file(
+        &codex_home.join("auth.json"),
+        "run `codex --login` on the host first",
+    )
+}
+
+fn host_cursor_auth_file_path() -> anyhow::Result<PathBuf> {
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .context("cannot resolve host Cursor auth: HOME is unset")?;
+    let config_home = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".config"));
+    for candidate in [
+        config_home.join("cursor/auth.json"),
+        home.join(".cursor/auth.json"),
+    ] {
+        if candidate.is_file() {
+            return validate_private_auth_file(
+                &candidate,
+                "run `agent login` on the host first",
             );
         }
     }
+    Err(anyhow::anyhow!(
+        "host Cursor auth file not found under {} or {}",
+        config_home.join("cursor/auth.json").display(),
+        home.join(".cursor/auth.json").display()
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn materialize_cursor_auth_from_keychain(
+    staging: &mut Option<HostAuthStagingFile>,
+) -> anyhow::Result<PathBuf> {
+    let access = keychain_secret("cursor-access-token", "cursor-user")?;
+    let refresh = keychain_secret("cursor-refresh-token", "cursor-user")?;
+    redact::register(&access);
+    redact::register(&refresh);
+    let body = serde_json::json!({
+        "accessToken": access,
+        "refreshToken": refresh,
+    })
+    .to_string();
+    let file = HostAuthStagingFile::write_json(&body)?;
+    let path = file.path.clone();
+    *staging = Some(file);
     Ok(path)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn materialize_cursor_auth_from_keychain(
+    _staging: &mut Option<HostAuthStagingFile>,
+) -> anyhow::Result<PathBuf> {
+    bail!("host Cursor auth is missing; run `agent login` on the host first")
+}
+
+fn host_cursor_auth_path(staging: &mut Option<HostAuthStagingFile>) -> anyhow::Result<PathBuf> {
+    if let Ok(path) = host_cursor_auth_file_path() {
+        return Ok(path);
+    }
+    materialize_cursor_auth_from_keychain(staging)
+}
+
+#[cfg(unix)]
+fn keychain_secret(service: &str, account: &str) -> anyhow::Result<String> {
+    let output = super::capture(
+        Command::new("security").args([
+            "find-generic-password",
+            "-s",
+            service,
+            "-a",
+            account,
+            "-w",
+        ]),
+    )?;
+    if !output.ok() {
+        bail!(
+            "cannot read macOS keychain entry {service}/{account}: run `agent login` on the host first ({})",
+            output.stderr.trim()
+        );
+    }
+    let value = output.stdout.trim().to_string();
+    if value.is_empty() {
+        bail!("macOS keychain entry {service}/{account} is empty");
+    }
+    Ok(value)
+}
+
+#[cfg(not(unix))]
+fn keychain_secret(_service: &str, _account: &str) -> anyhow::Result<String> {
+    bail!("host Cursor auth requires a Unix host")
 }
 
 /// Start the container. Persistent by hard rule: no `--rm`, so the operator can re-attach.
@@ -415,6 +564,19 @@ pub fn codex_agent_cmd(model: &str, effort: &str) -> String {
     )
 }
 
+/// The agent command line for a cursor profile (`--model` only when a model is pinned).
+pub fn cursor_agent_cmd(model: &str, effort: &str) -> String {
+    let model_flag = if model.trim().is_empty() {
+        String::new()
+    } else {
+        format!(" --model {}", model.trim())
+    };
+    let _ = effort;
+    format!(
+        "agent --force --trust --sandbox disabled --workspace /work --add-dir /task --add-dir /progress{model_flag}"
+    )
+}
+
 /// `settings.json` pre-seed so Claude Code starts without dialogs. Contains no key material.
 /// `extraKnownMarketplaces` + `enabledPlugins` carry the rust-analyzer-lsp plugin into every
 /// per-run config; the plugins/ tree itself is copied from the image's /opt/claude-plugin-seed
@@ -448,21 +610,59 @@ pub fn claude_project_json() -> &'static str {
 "#
 }
 
-/// codex `config.toml` pre-seed.
+/// cursor `cli-config.json` pre-seed.
+pub fn cursor_cli_config_json() -> &'static str {
+    include_str!("../../images/cursor/cursor-cli-config.json")
+}
+
+/// codex `config.toml` pre-seed for OpenAI/default providers.
 pub fn codex_config_toml() -> &'static str {
     "approval_policy = \"never\"\nsandbox_mode    = \"danger-full-access\"\n[features]\ngoals = true\n[projects.\"/work\"]\ntrust_level = \"trusted\"\n[notice]\nhide_full_access_warning = true\n[tui]\nshow_tooltips = false\nanimations = false\n"
 }
 
-/// Pre-seed `<agent-home>` for the profile kind.
-pub fn preseed_agent_home(agent_home: &Path, kind: &str) -> anyhow::Result<()> {
+/// codex `config.toml` pre-seed for Z.ai via `ZAI_API_KEY` in `env_secret`.
+pub fn codex_zai_config_toml(model: &str) -> String {
+    format!(
+        "approval_policy = \"never\"\nsandbox_mode    = \"danger-full-access\"\nmodel = \"{model}\"\nmodel_provider = \"zai\"\n[features]\ngoals = true\n[model_providers.zai]\nname = \"Z.AI\"\nbase_url = \"https://api.z.ai/api/v1\"\nenv_key = \"ZAI_API_KEY\"\nwire_api = \"responses\"\n[projects.\"/work\"]\ntrust_level = \"trusted\"\n[notice]\nhide_full_access_warning = true\n[tui]\nshow_tooltips = false\nanimations = false\n"
+    )
+}
+
+/// codex `config.toml` pre-seed for Kimi via `KIMI_API_KEY` in `env_secret`.
+pub fn codex_kimi_config_toml(model: &str) -> String {
+    format!(
+        "approval_policy = \"never\"\nsandbox_mode    = \"danger-full-access\"\nmodel = \"{model}\"\nmodel_provider = \"kimi\"\nmodel_context_window = 1048576\n[features]\ngoals = true\n[model_providers.kimi]\nname = \"Kimi\"\nbase_url = \"https://api.moonshot.ai/v1\"\nenv_key = \"KIMI_API_KEY\"\nwire_api = \"responses\"\n[projects.\"/work\"]\ntrust_level = \"trusted\"\n[notice]\nhide_full_access_warning = true\n[tui]\nshow_tooltips = false\nanimations = false\n"
+    )
+}
+
+fn codex_config_for_profile(profile: &AgentProfile) -> String {
+    if profile.env_secret.contains_key("KIMI_API_KEY") {
+        codex_kimi_config_toml(&profile.model)
+    } else if profile.env_secret.contains_key("ZAI_API_KEY") {
+        codex_zai_config_toml(&profile.model)
+    } else {
+        codex_config_toml().to_string()
+    }
+}
+
+/// Pre-seed `<agent-home>` for one profile.
+pub fn preseed_agent_home(agent_home: &Path, profile: &AgentProfile) -> anyhow::Result<()> {
     std::fs::create_dir_all(agent_home)?;
-    match kind {
+    match profile.kind.as_str() {
         "claude" => {
             super::write_file(&agent_home.join("settings.json"), claude_settings_json())?;
             super::write_file(&agent_home.join(".claude.json"), claude_project_json())?;
         }
         "codex" => {
-            super::write_file(&agent_home.join("config.toml"), codex_config_toml())?;
+            super::write_file(
+                &agent_home.join("config.toml"),
+                &codex_config_for_profile(profile),
+            )?;
+        }
+        "cursor" => {
+            super::write_file(
+                &agent_home.join("cli-config.json"),
+                cursor_cli_config_json(),
+            )?;
         }
         other => anyhow::bail!("unknown agent kind: {other}"),
     }
@@ -520,12 +720,28 @@ mod tests {
             "no model pin when the profile model is empty"
         );
         assert!(codex_agent_cmd("gpt-5", "high").contains(" -m gpt-5 "));
+        let cursor = cursor_agent_cmd("composer-2.5", "high");
+        assert!(cursor.starts_with("agent --force --trust --sandbox disabled"));
+        assert!(cursor.contains("--workspace /work"));
+        assert!(cursor.contains("--model composer-2.5"));
+    }
+
+    fn test_profile(kind: &str) -> AgentProfile {
+        AgentProfile {
+            kind: kind.to_string(),
+            model: String::new(),
+            effort: "high".to_string(),
+            image: "i".to_string(),
+            auth: AgentAuth::None,
+            env_static: Default::default(),
+            env_secret: Default::default(),
+        }
     }
 
     #[test]
     fn preseed_writes_config_and_gitconfig_without_key_material() {
         let dir = tempfile::tempdir().unwrap();
-        preseed_agent_home(dir.path(), "claude").unwrap();
+        preseed_agent_home(dir.path(), &test_profile("claude")).unwrap();
         let settings = std::fs::read_to_string(dir.path().join("settings.json")).unwrap();
         assert!(settings.contains("skipDangerousModePermissionPrompt"));
         assert!(
@@ -553,9 +769,27 @@ mod tests {
         let gitconfig = std::fs::read_to_string(dir.path().join(".gitconfig")).unwrap();
         assert!(gitconfig.contains("directory = *"));
         let codex_dir = tempfile::tempdir().unwrap();
-        preseed_agent_home(codex_dir.path(), "codex").unwrap();
+        preseed_agent_home(codex_dir.path(), &test_profile("codex")).unwrap();
         assert!(codex_dir.path().join("config.toml").is_file());
-        assert!(preseed_agent_home(dir.path(), "ghost").is_err());
+        let mut zai = test_profile("codex");
+        zai.model = "glm-5.3-flash".into();
+        zai.env_secret.insert("ZAI_API_KEY".into(), "file://zai-flash.token".into());
+        let zai_dir = tempfile::tempdir().unwrap();
+        preseed_agent_home(zai_dir.path(), &zai).unwrap();
+        let zai_config = std::fs::read_to_string(zai_dir.path().join("config.toml")).unwrap();
+        assert!(zai_config.contains("model_provider = \"zai\""));
+        assert!(zai_config.contains("wire_api = \"responses\""));
+        assert!(zai_config.contains("https://api.z.ai/api/v1"));
+        let mut kimi = test_profile("codex");
+        kimi.model = "kimi-k3".into();
+        kimi.env_secret
+            .insert("KIMI_API_KEY".into(), "op://ChainArgos/Kimi/Test".into());
+        let kimi_dir = tempfile::tempdir().unwrap();
+        preseed_agent_home(kimi_dir.path(), &kimi).unwrap();
+        let kimi_config = std::fs::read_to_string(kimi_dir.path().join("config.toml")).unwrap();
+        assert!(kimi_config.contains("model_provider = \"kimi\""));
+        assert!(kimi_config.contains("KIMI_API_KEY"));
+        assert!(preseed_agent_home(dir.path(), &test_profile("ghost")).is_err());
     }
 
     /// A manifest with every field the label set reads.
@@ -702,7 +936,16 @@ mod tests {
         let resolved = Resolved::new(dir.path(), cfg.clone());
         let profile = cfg.profile("p").unwrap().clone();
         let manifest = sample_manifest(&dir.path().join("runs/20260101-000000-p-TASK-001"));
-        let plan = launch_plan(&cfg, &resolved, &manifest, &profile, "claude", "base").unwrap();
+        let plan = launch_plan(
+            &cfg,
+            &resolved,
+            &manifest,
+            &profile,
+            "claude",
+            "base",
+            &mut None,
+        )
+        .unwrap();
         let labels = plan.labels.iter().cloned().collect();
         let matching = docker::ContainerInfo {
             name: plan.container.clone(),
@@ -731,7 +974,16 @@ mod tests {
         let resolved = Resolved::new(dir.path(), cfg.clone());
         let profile = cfg.profile("p").unwrap().clone();
         let manifest = sample_manifest(&dir.path().join("runs/20260101-000000-p-TASK-001"));
-        let plan = launch_plan(&cfg, &resolved, &manifest, &profile, "claude", "base").unwrap();
+        let plan = launch_plan(
+            &cfg,
+            &resolved,
+            &manifest,
+            &profile,
+            "claude",
+            "base",
+            &mut None,
+        )
+        .unwrap();
         let label = |key: &str| {
             plan.labels
                 .iter()
@@ -801,6 +1053,7 @@ mod tests {
             &profile,
             "claude",
             &manifest.base_sha,
+            &mut None,
         )
         .unwrap();
         let base = plan
@@ -826,7 +1079,16 @@ mod tests {
         let resolved = Resolved::new(dir.path(), cfg.clone());
         let profile = cfg.profile("p").unwrap().clone();
         let manifest = sample_manifest(&dir.path().join("runs/20260101-000000-p-TASK-001"));
-        let plan = launch_plan(&cfg, &resolved, &manifest, &profile, "codex", "base").unwrap();
+        let plan = launch_plan(
+            &cfg,
+            &resolved,
+            &manifest,
+            &profile,
+            "codex",
+            "base",
+            &mut None,
+        )
+        .unwrap();
 
         let target_dir = plan
             .env

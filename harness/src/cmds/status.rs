@@ -290,7 +290,7 @@ pub fn check(manifest: &Manifest, run_dir: &Path) -> anyhow::Result<Status> {
         //    negligible) the agent has formally reported an end, so the quiet-window buys
         //    nothing: skip the downgrade and let the evidence classify terminal immediately.
         if matches!(state.as_str(), IDLE | BLOCKED) {
-            let active = if manifest.agent_kind == "codex" {
+            let active = if manifest.agent_kind == "codex" || manifest.agent_kind == "cursor" {
                 codex_recently_active(manifest)
             } else {
                 transcript::recently_active(&tr, ACTIVE_WINDOW)

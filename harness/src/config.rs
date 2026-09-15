@@ -126,6 +126,8 @@ pub struct Images {
     pub claude: String,
     #[serde(default = "default_image_codex")]
     pub codex: String,
+    #[serde(default = "default_image_cursor")]
+    pub cursor: String,
 }
 
 fn default_image_taskfmt() -> String {
@@ -140,6 +142,9 @@ fn default_image_claude() -> String {
 fn default_image_codex() -> String {
     "harness-codex:latest".to_string()
 }
+fn default_image_cursor() -> String {
+    "harness-cursor:latest".to_string()
+}
 
 impl Default for Images {
     fn default() -> Self {
@@ -148,6 +153,7 @@ impl Default for Images {
             base: default_image_base(),
             claude: default_image_claude(),
             codex: default_image_codex(),
+            cursor: default_image_cursor(),
         }
     }
 }
@@ -252,8 +258,9 @@ pub struct AgentDefault {
 
 /// How a profile obtains its agent credentials.
 ///
-/// API-key credentials continue to use `env_secret`. `host` is deliberately opt-in: for Codex it
-/// mounts the operator's host `auth.json` read-only into the run container.
+/// API-key credentials continue to use `env_secret` (`file://` or `op://`). `host` is deliberately
+/// opt-in: for Codex it mounts the operator's host `~/.codex/auth.json`; for Cursor it mounts the
+/// operator's host session (file or macOS Keychain) into the run container.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum AgentAuth {
@@ -311,23 +318,33 @@ impl ExperimentConfig {
             );
         }
         for (name, profile) in &cfg.agents.profiles {
-            if profile.kind != "claude" && profile.kind != "codex" {
+            if profile.kind != "claude" && profile.kind != "codex" && profile.kind != "cursor" {
                 bail!(
-                    "experiment.toml: profile {name} has kind {:?}, want claude|codex",
+                    "experiment.toml: profile {name} has kind {:?}, want claude|codex|cursor",
                     profile.kind
                 );
             }
-            if profile.auth == AgentAuth::Host && profile.kind != "codex" {
+            if profile.auth == AgentAuth::Host && profile.kind == "claude" {
                 bail!(
-                    "experiment.toml: profile {name} uses auth=host, but host auth is supported only for codex profiles"
+                    "experiment.toml: profile {name} uses auth=host, but host auth is supported only for codex and cursor profiles"
                 );
             }
             if profile.auth == AgentAuth::Host
+                && profile.kind == "codex"
                 && (profile.env_static.contains_key("OPENAI_API_KEY")
                     || profile.env_secret.contains_key("OPENAI_API_KEY"))
             {
                 bail!(
                     "experiment.toml: profile {name} selects auth=host and OPENAI_API_KEY; choose one Codex authentication source"
+                );
+            }
+            if profile.auth == AgentAuth::Host
+                && profile.kind == "cursor"
+                && (profile.env_static.contains_key("CURSOR_API_KEY")
+                    || profile.env_secret.contains_key("CURSOR_API_KEY"))
+            {
+                bail!(
+                    "experiment.toml: profile {name} selects auth=host and CURSOR_API_KEY; choose one Cursor authentication source"
                 );
             }
         }
@@ -506,6 +523,7 @@ taskfmt = "harness-taskfmt:latest"
 base = "harness-base:latest"
 claude = "harness-claude:latest"
 codex = "harness-codex:latest"
+cursor = "harness-cursor:latest"
 [runtime]
 memory = "4g"
 cpus = 2
@@ -562,14 +580,60 @@ ANTHROPIC_AUTH_TOKEN = "op://vault/item/section/field"
     }
 
     #[test]
-    fn host_auth_is_codex_only() {
-        let text = EXAMPLE.replace("kind = \"claude\"", "kind = \"codex\"\nauth = \"host\"");
-        let cfg = ExperimentConfig::parse(&text).unwrap();
-        assert_eq!(cfg.profile("zai-flash").unwrap().auth, AgentAuth::Host);
+    fn host_auth_validation() {
+        let codex = r#"
+schema = "experiment/v1"
+[agents.default]
+profile = "p"
+[agents.profiles.p]
+kind = "codex"
+image = "i"
+auth = "host"
+"#;
+        assert_eq!(
+            ExperimentConfig::parse(codex).unwrap().profile("p").unwrap().auth,
+            AgentAuth::Host
+        );
 
-        let invalid = EXAMPLE.replace("kind = \"claude\"", "kind = \"claude\"\nauth = \"host\"");
-        let err = ExperimentConfig::parse(&invalid).unwrap_err();
-        assert!(format!("{err:#}").contains("only for codex"), "{err:#}");
+        let cursor = r#"
+schema = "experiment/v1"
+[agents.default]
+profile = "p"
+[agents.profiles.p]
+kind = "cursor"
+image = "i"
+auth = "host"
+"#;
+        assert_eq!(
+            ExperimentConfig::parse(cursor).unwrap().profile("p").unwrap().auth,
+            AgentAuth::Host
+        );
+
+        let invalid = r#"
+schema = "experiment/v1"
+[agents.default]
+profile = "p"
+[agents.profiles.p]
+kind = "claude"
+image = "i"
+auth = "host"
+"#;
+        let err = ExperimentConfig::parse(invalid).unwrap_err();
+        assert!(format!("{err:#}").contains("codex and cursor"), "{err:#}");
+
+        let conflict = r#"
+schema = "experiment/v1"
+[agents.default]
+profile = "p"
+[agents.profiles.p]
+kind = "cursor"
+image = "i"
+auth = "host"
+[agents.profiles.p.env_secret]
+CURSOR_API_KEY = "file://cursor-api-key.token"
+"#;
+        let err = ExperimentConfig::parse(conflict).unwrap_err();
+        assert!(format!("{err:#}").contains("CURSOR_API_KEY"), "{err:#}");
     }
 
     #[test]

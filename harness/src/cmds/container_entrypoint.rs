@@ -25,6 +25,7 @@ const CLAUDE_PLUGIN_SEED: &str = "/opt/claude-plugin-seed";
 const OUT: &str = "/out";
 const PARK: Duration = Duration::from_secs(86400);
 const CODEX_AUTH_STAGING: &str = "/tmp/taskfmt-host-codex-auth.json";
+const CURSOR_AUTH_STAGING: &str = "/tmp/taskfmt-host-cursor-auth.json";
 
 pub fn run() -> anyhow::Result<i32> {
     let _flags = signals::install_terminate_flag();
@@ -104,6 +105,29 @@ pub fn run() -> anyhow::Result<i32> {
         && seed_claude_plugins(Path::new(CLAUDE_PLUGIN_SEED), Path::new(&claude_home))?
     {
         let _ = chown_agent_recursive(&Path::new(&claude_home).join("plugins").to_string_lossy());
+    }
+    let cursor_home = std::env::var("CURSOR_CONFIG_DIR").unwrap_or_default();
+    if !cursor_home.is_empty() {
+        let _ = std::fs::create_dir_all(&cursor_home);
+        if Path::new("/etc/cursor-cli-config.json").is_file()
+            && !Path::new(&cursor_home).join("cli-config.json").is_file()
+        {
+            let _ = std::fs::copy(
+                "/etc/cursor-cli-config.json",
+                Path::new(&cursor_home).join("cli-config.json"),
+            );
+        }
+        if Path::new(CURSOR_AUTH_STAGING).is_file() {
+            let auth_dir = Path::new("/agent-home/.config/cursor");
+            let _ = std::fs::create_dir_all(auth_dir);
+            let auth = auth_dir.join("auth.json");
+            std::fs::copy(CURSOR_AUTH_STAGING, &auth)
+                .with_context(|| format!("copying host Cursor auth to {}", auth.display()))?;
+            set_private_agent_file(&auth)?;
+            let _ = chown_agent_recursive(&auth_dir.to_string_lossy());
+            let _ = Command::new("umount").arg(CURSOR_AUTH_STAGING).status();
+        }
+        let _ = chown_agent(&cursor_home);
     }
     for dir in ["/work", "/out", "/agent-home"] {
         let _ = chown_agent(dir);
