@@ -170,6 +170,67 @@ taskfmt-host experiment \
 configured Claude/GLM-5.3-Flash profile during execution. Because `zai-flash` is the default
 profile, the execution commands may omit `--agent zai-flash`.
 
+### Use Codex with GLM-5.3-Flash (Z.ai)
+
+The `codex-zai` profile runs the Codex CLI against Z.ai with `model = "glm-5.3-flash"` and
+`effort = "max"`. You do **not** need `codex --login` (that is only for `codex-default`, which
+uses host OAuth).
+
+Credentials resolve at dispatch from `experiment.toml`. By default the profile reads
+`ZAI_API_KEY` from 1Password (`op://ChainArgos/Z.ai/Test`); sign in to the 1Password CLI first
+(`op signin`). Alternatively, put the Z.ai API key in a local file and point the profile at it:
+
+```sh
+mkdir -p ~/.config/taskfmt
+chmod 700 ~/.config/taskfmt
+$EDITOR ~/.config/taskfmt/zai-flash.token   # Z.ai API key only
+chmod 600 ~/.config/taskfmt/zai-flash.token
+```
+
+Then set `ZAI_API_KEY = "file://zai-flash.token"` under `[agents.profiles.codex-zai.env_secret]`
+in `experiment.toml`.
+
+Build the Codex image, lint the first task, and dispatch with **`--agent codex-zai`** (this
+profile is not the default):
+
+```sh
+taskfmt-host build-images --agent codex --auto
+taskfmt-host lint TASK-001
+taskfmt-host run \
+  --task TASK-001 \
+  --repo <repository-url> \
+  --agent codex-zai \
+  --wait
+```
+
+Model and effort are already pinned in the profile; override only when needed:
+
+```sh
+taskfmt-host run \
+  --task TASK-001 \
+  --repo <repository-url> \
+  --agent codex-zai \
+  --model glm-5.3-flash \
+  --effort max \
+  --wait
+```
+
+After a passing gate, promote the recorded tree:
+
+```sh
+taskfmt-host promote <run-id> --auto
+```
+
+For a series with the same profile:
+
+```sh
+taskfmt-host experiment \
+  --tasks 1-3 \
+  --repo <repository-url> \
+  --agent codex-zai \
+  --auto
+```
+
 ### Run one task
 
 Lint the task, then dispatch it to a fresh container:
