@@ -2,9 +2,9 @@
 
 use std::path::{Path, PathBuf};
 
-use taskfmt::cmds::run::plan_dispatch_for_task;
-use taskfmt::config::{DispatchOverrides, ExperimentConfig, Resolved, resolve_dispatch};
 use taskfmt::executioncfg::ExecutionConfig;
+use taskfmt_harness::cmds::run::plan_dispatch_for_task;
+use taskfmt_harness::config::{DispatchOverrides, ExperimentConfig, Resolved, resolve_dispatch};
 
 fn example_task() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/example")

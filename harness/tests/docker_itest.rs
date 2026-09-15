@@ -8,8 +8,8 @@ use std::path::Path;
 use std::process::{Command, ExitCode};
 use std::time::Duration;
 
-use taskfmt::itest::{self, CHECK_ARCH, CHECK_PREREQS, Preflight};
-use taskfmt::ops::docker;
+use taskfmt_harness::itest::{self, CHECK_ARCH, CHECK_PREREQS, Preflight};
+use taskfmt_harness::ops::docker;
 
 const PREREQ_IMAGE: &str = "harness-base:latest";
 const PREREQ_READY: &str = "/out/prereqs.ready";

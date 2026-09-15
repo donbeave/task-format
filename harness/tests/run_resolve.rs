@@ -2,11 +2,11 @@
 
 use std::path::{Path, PathBuf};
 
-use taskfmt::cmds::Ctx;
-use taskfmt::cmds::{RECENT_RUN_HINTS, resolve_run_arg};
-use taskfmt::config::{ExperimentConfig, Resolved};
-use taskfmt::interactive::Interaction;
-use taskfmt::runstate::{GateRecord, Manifest};
+use taskfmt_harness::cmds::Ctx;
+use taskfmt_harness::cmds::{RECENT_RUN_HINTS, resolve_run_arg};
+use taskfmt_harness::config::{ExperimentConfig, Resolved};
+use taskfmt_harness::interactive::Interaction;
+use taskfmt_harness::runstate::{GateRecord, Manifest};
 
 const MANIFEST: &str = r#"
 schema = "experiment/v1"
@@ -49,7 +49,7 @@ fn manifest(run: &str, container: &str) -> Manifest {
         agent_name: "task".into(),
         start: "2026-08-28T10:00:00Z".into(),
         experiment: None,
-        selfcheck: taskfmt::runstate::SELFCHECK_NOT_RUN.into(),
+        selfcheck: taskfmt_harness::runstate::SELFCHECK_NOT_RUN.into(),
         gate: Some(GateRecord {
             verdict: "fail".into(),
             exit: 1,
@@ -214,14 +214,14 @@ fn recent_runs_skips_dirs_without_a_manifest() {
     for noise in ["exp-20260828-000000", "repos"] {
         std::fs::create_dir_all(runs_dir.join(noise)).unwrap();
     }
-    let got = taskfmt::cmds::recent_runs(&runs_dir);
+    let got = taskfmt_harness::cmds::recent_runs(&runs_dir);
     let ids: Vec<String> = got.iter().map(|(_, id)| id.clone()).collect();
     assert_eq!(ids, vec!["20260828-000000-zai-flash-TASK-001".to_string()]);
     assert_eq!(
         PathBuf::from(&got[0].0),
         runs_dir.join("20260828-000000-zai-flash-TASK-001")
     );
-    assert!(taskfmt::cmds::recent_runs(Path::new("/nonexistent-runs")).is_empty());
+    assert!(taskfmt_harness::cmds::recent_runs(Path::new("/nonexistent-runs")).is_empty());
 }
 
 /// `status`, `gate`, `promote` and `attach` must all route through the shared resolver: an unknown
@@ -233,16 +233,16 @@ fn every_run_command_routes_through_the_resolver() {
         "harness-20260828-000000-zai-flash-TASK-001",
     )]);
     for err in [
-        taskfmt::cmds::status::run(&fx.ctx, "ghost", false, None)
+        taskfmt_harness::cmds::status::run(&fx.ctx, "ghost", false, None)
             .unwrap_err()
             .to_string(),
-        taskfmt::cmds::gate::run(&fx.ctx, "ghost")
+        taskfmt_harness::cmds::gate::run(&fx.ctx, "ghost")
             .unwrap_err()
             .to_string(),
-        taskfmt::cmds::promote::run(&fx.ctx, "ghost", true)
+        taskfmt_harness::cmds::promote::run(&fx.ctx, "ghost", true)
             .unwrap_err()
             .to_string(),
-        taskfmt::cmds::attach::run(&fx.ctx, "ghost")
+        taskfmt_harness::cmds::attach::run(&fx.ctx, "ghost")
             .unwrap_err()
             .to_string(),
     ] {
@@ -264,7 +264,7 @@ fn attach_explains_a_run_that_failed_before_agent_launch() {
     saved.pane.clear();
     saved.save(&run_dir).unwrap();
 
-    let err = taskfmt::cmds::attach::run(&fx.ctx, &saved.run)
+    let err = taskfmt_harness::cmds::attach::run(&fx.ctx, &saved.run)
         .unwrap_err()
         .to_string();
     assert!(err.contains("no agent pane"), "{err}");
@@ -278,10 +278,13 @@ fn promote_accepts_the_container_name() {
         "20260828-000000-zai-flash-TASK-001",
         "harness-20260828-000000-zai-flash-TASK-001",
     )]);
-    let err =
-        taskfmt::cmds::promote::run(&fx.ctx, "harness-20260828-000000-zai-flash-TASK-001", true)
-            .unwrap_err()
-            .to_string();
+    let err = taskfmt_harness::cmds::promote::run(
+        &fx.ctx,
+        "harness-20260828-000000-zai-flash-TASK-001",
+        true,
+    )
+    .unwrap_err()
+    .to_string();
     // resolution succeeded; promote now refuses for the real reason (no workspace yet)
     let expected = fx
         .resolved

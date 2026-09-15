@@ -4,11 +4,11 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
-use taskfmt::config::ExperimentConfig;
 use taskfmt::lint::{self, Finding, Severity};
 use taskfmt::ops;
 use taskfmt::taskfile::TaskFile;
 use taskfmt::verifycfg::VerifyConfig;
+use taskfmt_harness::config::ExperimentConfig;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

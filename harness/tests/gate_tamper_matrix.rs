@@ -91,7 +91,7 @@ fn pass_means_exit_zero_and_done() {
     let progress = tmp.path().join("progress.md");
 
     let generated =
-        taskfmt::cmds::progress_init::generate_and_write(&example(), Some(&progress)).unwrap();
+        taskfmt_harness::cmds::init::generate_and_write(&example(), Some(&progress)).unwrap();
     assert_eq!(generated, 0);
     let fresh = std::fs::read_to_string(&progress).unwrap();
     assert!(fresh.contains("schema: progress/v1\n"));
@@ -123,7 +123,7 @@ fn every_tamper_fails_the_gate() {
     let (work, task) = fixture(tmp.path());
     let logs = tmp.path().join("logs");
     let fresh = tmp.path().join("fresh.md");
-    taskfmt::cmds::progress_init::generate_and_write(&example(), Some(&fresh)).unwrap();
+    taskfmt_harness::cmds::init::generate_and_write(&example(), Some(&fresh)).unwrap();
     let done = to_done(&std::fs::read_to_string(&fresh).unwrap());
 
     let tamper = |name: &str, text: String| {
@@ -180,7 +180,7 @@ fn scope_whitelist_and_base_resolution() {
     std::fs::copy(example().join("README.md"), task.join("README.md")).unwrap();
     let logs = tmp.path().join("logs");
     let progress = tmp.path().join("progress.md");
-    taskfmt::cmds::progress_init::generate_and_write(&example(), Some(&progress)).unwrap();
+    taskfmt_harness::cmds::init::generate_and_write(&example(), Some(&progress)).unwrap();
     std::fs::write(
         &progress,
         to_done(&std::fs::read_to_string(&progress).unwrap()),
@@ -295,7 +295,7 @@ fn forbidden_paths_reject_changes_not_existence() {
     std::fs::copy(example().join("README.md"), task.join("README.md")).unwrap();
     let logs = tmp.path().join("logs");
     let progress = tmp.path().join("progress.md");
-    taskfmt::cmds::progress_init::generate_and_write(&example(), Some(&progress)).unwrap();
+    taskfmt_harness::cmds::init::generate_and_write(&example(), Some(&progress)).unwrap();
     std::fs::write(
         &progress,
         to_done(&std::fs::read_to_string(&progress).unwrap()),

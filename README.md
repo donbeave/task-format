@@ -23,7 +23,9 @@ flat experiment corpus and taskfmt workflows remain supported.
 From the repository root, install both harness binaries with Cargo:
 
 ```sh
-cargo install --path harness --locked --bin taskfmt-host --bin taskfmt
+cargo install --path crates/taskfmt-host --locked --bin taskfmt-host
+cargo install --path crates/taskfmt --locked --bin taskfmt
+cargo install --path crates/taskfmt-runtime --locked --bin taskfmt-runtime
 ```
 
 Cargo installs the binaries to `~/.cargo/bin`. Ensure that directory is on your
@@ -34,8 +36,8 @@ taskfmt-host --help
 ```
 
 `taskfmt-host` is the host operator CLI (`lint`, `run`, `experiment`, `gate`,
-`promote`, …). `taskfmt` is the in-container runtime (`verify`, `prereqs`,
-`agent-launch`, …) baked into harness images.
+`promote`, …). `taskfmt` is the in-container validation binary (`init`, `status`, `lint`, `verify`).
+`taskfmt-runtime` handles container boot (`container-entrypoint`, `prereqs`, `agent-launch`).
 
 ## Projects and groups
 
@@ -91,7 +93,9 @@ Install the host binary, preload the pinned PostgreSQL prerequisite image, and b
 images:
 
 ```sh
-cargo install --path harness --locked --bin taskfmt-host --bin taskfmt
+cargo install --path crates/taskfmt-host --locked --bin taskfmt-host
+cargo install --path crates/taskfmt --locked --bin taskfmt
+cargo install --path crates/taskfmt-runtime --locked --bin taskfmt-runtime
 taskfmt-host preload --auto
 taskfmt-host build-images --auto
 ```
@@ -272,7 +276,7 @@ No completed ablation matrix yet proves that one wording or checklist style prod
 
 | Path | Role |
 | --- | --- |
-| `harness/` | Rust `taskfmt-host` / `taskfmt` binaries and operator reference. |
+| `harness/` | Rust `taskfmt-host`, `taskfmt`, and `taskfmt-runtime` binaries; see [`docs/crate-split.md`](docs/crate-split.md). |
 | `experiments/tasks/` | Versioned task packages used as experiment inputs. |
 | `experiments/fixtures/` | Shared deterministic seed data. |
 | `experiments/runs/` | Generated run workspaces and evidence; Git-ignored. |

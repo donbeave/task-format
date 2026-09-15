@@ -1,9 +1,9 @@
 //! Config, selection, taskfile and CLI surface.
 
 use clap::Parser as _;
-use taskfmt::cli::container::Cli as ContainerCli;
-use taskfmt::cli::host::Cli;
-use taskfmt::config::{AgentAuth, ExperimentConfig};
+use taskfmt_harness::cli::container::Cli as ContainerCli;
+use taskfmt_harness::cli::host::Cli;
+use taskfmt_harness::config::{AgentAuth, ExperimentConfig};
 
 const MANIFEST: &str = r#"
 schema = "experiment/v1"
@@ -103,7 +103,7 @@ fn selection_semantics() {
     let tasks_dir = dir.path();
     let one = |tokens: &[&str]| -> Vec<String> {
         let owned: Vec<String> = tokens.iter().map(|t| t.to_string()).collect();
-        taskfmt::selection::resolve(&owned, tasks_dir).unwrap()
+        taskfmt_harness::selection::resolve(&owned, tasks_dir).unwrap()
     };
 
     assert_eq!(
@@ -126,17 +126,17 @@ fn selection_semantics() {
         vec!["TASK-101", "TASK-102", "TASK-103"]
     );
     assert!(
-        taskfmt::selection::resolve(&["TASK-999".to_string()], tasks_dir).is_ok(),
+        taskfmt_harness::selection::resolve(&["TASK-999".to_string()], tasks_dir).is_ok(),
         "ids need not exist yet"
     );
     assert!(
-        taskfmt::selection::resolve(&["7".to_string()], tasks_dir).is_err(),
+        taskfmt_harness::selection::resolve(&["7".to_string()], tasks_dir).is_err(),
         "position 7 does not exist"
     );
 
     let done = vec!["TASK-101".to_string()];
     assert_eq!(
-        taskfmt::selection::skip_completed(&one(&["all"]), &done),
+        taskfmt_harness::selection::skip_completed(&one(&["all"]), &done),
         vec!["TASK-102", "TASK-103", "TASK-104"]
     );
 }
@@ -148,13 +148,6 @@ fn every_cli_subcommand_parses() {
         vec!["taskfmt-host", "lint"],
         vec!["taskfmt-host", "lint", "--json", "TASK-101"],
         vec!["taskfmt-host", "lint", "TASK-101"],
-        vec![
-            "taskfmt-host",
-            "progress-init",
-            "TASK-101",
-            "--out",
-            "/tmp/progress.md",
-        ],
         vec!["taskfmt-host", "selftest"],
         vec![
             "taskfmt-host",
@@ -200,17 +193,28 @@ fn every_cli_subcommand_parses() {
         let parsed = Cli::try_parse_from(&case);
         assert!(parsed.is_ok(), "{case:?}: {parsed:?}");
     }
-    let container_cases: Vec<Vec<&str>> = vec![
+    let validation_cases: Vec<Vec<&str>> = vec![
+        vec!["taskfmt", "init"],
+        vec!["taskfmt", "init", "--out", "/progress/progress.md"],
+        vec!["taskfmt", "status"],
+        vec!["taskfmt", "status", "--json"],
         vec!["taskfmt", "lint"],
         vec!["taskfmt", "lint", "--json", "/task"],
-        vec!["taskfmt", "container-entrypoint"],
-        vec!["taskfmt", "prereqs"],
-        vec!["taskfmt", "agent-launch"],
         vec!["taskfmt", "verify", "--fail-fast"],
-        vec!["taskfmt", "codex-login"],
     ];
-    for case in container_cases {
+    for case in validation_cases {
         let parsed = ContainerCli::try_parse_from(&case);
+        assert!(parsed.is_ok(), "{case:?}: {parsed:?}");
+    }
+    use taskfmt_harness::cli::runtime::Cli as RuntimeCli;
+    let runtime_cases: Vec<Vec<&str>> = vec![
+        vec!["taskfmt-runtime", "container-entrypoint"],
+        vec!["taskfmt-runtime", "prereqs"],
+        vec!["taskfmt-runtime", "agent-launch"],
+        vec!["taskfmt-runtime", "codex-login"],
+    ];
+    for case in runtime_cases {
+        let parsed = RuntimeCli::try_parse_from(&case);
         assert!(parsed.is_ok(), "{case:?}: {parsed:?}");
     }
     // mutating commands demand an explicit answer: without --auto/--yes and a TTY they must

@@ -57,9 +57,10 @@ RUN case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
  && chmod 755 /usr/local/bin/herdr \
  && herdr --version
 
-# --- taskfmt, built by images/taskfmt/Dockerfile (`taskfmt build-images` builds it first) ---
+# --- taskfmt + taskfmt-runtime, built by images/taskfmt/Dockerfile ---
 COPY --from=harness-taskfmt:latest /usr/local/bin/taskfmt /usr/local/bin/taskfmt
-RUN /usr/local/bin/taskfmt --version
+COPY --from=harness-taskfmt:latest /usr/local/bin/taskfmt-runtime /usr/local/bin/taskfmt-runtime
+RUN /usr/local/bin/taskfmt --version && /usr/local/bin/taskfmt-runtime --version
 
 # --- unprivileged agent user + pinned rust toolchain (minimal profile PLUS the components the
 #     image needs: rustfmt/clippy for the corpus gate's own `[lint]` block, rust-analyzer as the
@@ -105,4 +106,4 @@ ENV TERM=xterm-256color \
     HERDR_SESSION=agent
 
 WORKDIR /work
-ENTRYPOINT ["/usr/local/bin/taskfmt", "container-entrypoint"]
+ENTRYPOINT ["/usr/local/bin/taskfmt-runtime", "container-entrypoint"]

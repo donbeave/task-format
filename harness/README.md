@@ -4,10 +4,11 @@
 
 AI agents can change a repository quickly. A run record is promotion evidence only after a passing host gate has recorded an immutable candidate tree, its expected parent, and verifier evidence.
 
-The Rust crate ships two binaries from this directory:
+The Rust workspace ships three binaries from `crates/*` (see [`docs/crate-split.md`](../docs/crate-split.md)); this directory holds Docker images, testdata, and integration tests:
 
 - **`taskfmt-host`** — operator CLI on the host: lint, dispatch, gate, promote, experiment, images.
-- **`taskfmt`** — in-container validation and runtime: `lint`, `verify`, `container-entrypoint`, `prereqs`, `agent-launch`, `codex-login`.
+- **`taskfmt`** — in-container validation: `init`, `status`, `lint`, `verify`.
+- **`taskfmt-runtime`** — in-container boot: `container-entrypoint`, `prereqs`, `agent-launch`, `codex-login`.
 
 Repository-level settings live in [`experiment.toml`](../experiment.toml).
 
@@ -40,7 +41,9 @@ Task-package Markdown, the launch prompt, and bundled task fixtures are executab
 Run from the repository root. Docker must be running.
 
 ```sh
-cargo install --path harness --locked --bin taskfmt-host --bin taskfmt
+cargo install --path crates/taskfmt-host --locked --bin taskfmt-host
+cargo install --path crates/taskfmt --locked --bin taskfmt
+cargo install --path crates/taskfmt-runtime --locked --bin taskfmt-runtime
 taskfmt-host preload --auto
 taskfmt-host build-images --agent all --auto
 ```
@@ -193,7 +196,10 @@ Validate task packages before dispatch:
 ```sh
 taskfmt-host lint TASK-001
 taskfmt-host lint --json
-taskfmt-host progress-init TASK-001
+```
+
+In-container progress (agents): `taskfmt init` (once), `taskfmt status`, then `taskfmt verify`.
+The runtime entrypoint calls `taskfmt init` when `/progress/progress.md` is missing.
 ```
 
 Re-run the host gate for a dispatched run:
@@ -308,7 +314,9 @@ taskfmt-host run --task TASK-001 --repo <repository-url> --agent codex-kimi --wa
 After changing Rust code, reinstall the binaries and rebuild all affected images before dispatch:
 
 ```sh
-cargo install --path harness --locked --bin taskfmt-host --bin taskfmt
+cargo install --path crates/taskfmt-host --locked --bin taskfmt-host
+cargo install --path crates/taskfmt --locked --bin taskfmt
+cargo install --path crates/taskfmt-runtime --locked --bin taskfmt-runtime
 taskfmt-host build-images --agent all --no-cache --auto
 ```
 

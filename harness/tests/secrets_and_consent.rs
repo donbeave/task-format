@@ -3,9 +3,9 @@
 use std::io::IsTerminal;
 use std::os::unix::fs::PermissionsExt;
 
-use taskfmt::interactive::Interaction;
-use taskfmt::ops::container::SecretEnvFile;
 use taskfmt::redact;
+use taskfmt_harness::interactive::Interaction;
+use taskfmt_harness::ops::container::SecretEnvFile;
 
 const SECRET: &str = "sk-super-secret-token-value-1234";
 
@@ -99,7 +99,7 @@ fn consent_defaults_to_no_and_skips_when_auto() {
 
 #[test]
 fn run_dir_names_are_deterministic() {
-    let name = taskfmt::runstate::run_dir_name("20260101-000000", "zai-flash", "TASK-101");
+    let name = taskfmt_harness::runstate::run_dir_name("20260101-000000", "zai-flash", "TASK-101");
     assert_eq!(name, "20260101-000000-zai-flash-TASK-101");
 }
 
@@ -117,11 +117,11 @@ fn secret_never_reaches_a_command_line() {
 #[test]
 fn agent_commands_carry_no_secret() {
     let session = "0f0e0d0c-0b0a-4938-a716-1c2d3e4f5a6b";
-    let claude = taskfmt::ops::container::claude_agent_cmd(session, "glm-5.3-flash", "low");
+    let claude = taskfmt_harness::ops::container::claude_agent_cmd(session, "glm-5.3-flash", "low");
     assert!(claude.starts_with("claude --dangerously-skip-permissions --session-id "));
     assert!(claude.contains("--add-dir /task --add-dir /progress"));
     assert!(!claude.contains("ANTHROPIC"), "{claude}");
-    let codex = taskfmt::ops::container::codex_agent_cmd("", "high");
+    let codex = taskfmt_harness::ops::container::codex_agent_cmd("", "high");
     assert!(codex.starts_with("codex --dangerously-bypass-approvals-and-sandbox"));
     assert!(!codex.contains("OPENAI"), "{codex}");
 }

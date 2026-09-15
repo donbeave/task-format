@@ -1,0 +1,30 @@
+[package]
+name = "taskfmt-host"
+version = "0.2.0"
+edition = "2024"
+default-run = "taskfmt-host"
+rust-version = "1.98"
+description = "Host operator CLI: dispatch, gate, experiment orchestration"
+license = "Apache-2.0"
+
+[lib]
+name = "taskfmt_host"
+path = "src/lib.rs"
+
+[[bin]]
+name = "taskfmt-host"
+path = "src/main.rs"
+
+[dependencies]
+taskfmt = { package = "taskfmt-core", path = "../taskfmt-core" }
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+clap = { version = "4.5", features = ["derive"] }
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+toml = "1.1.5"
+uuid = { version = "1", features = ["v4"] }
+walkdir = "2"
+sha2 = "0.11"

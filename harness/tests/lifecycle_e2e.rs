@@ -7,10 +7,10 @@
 use std::path::Path;
 use std::process::Command;
 
-use taskfmt::cmds::{self, Ctx};
-use taskfmt::config::{ExperimentConfig, Resolved};
-use taskfmt::interactive::Interaction;
-use taskfmt::runstate::{ExperimentState, ExperimentTask, Manifest, SELFCHECK_PASS};
+use taskfmt_harness::cmds::{self, Ctx};
+use taskfmt_harness::config::{ExperimentConfig, Resolved};
+use taskfmt_harness::interactive::Interaction;
+use taskfmt_harness::runstate::{ExperimentState, ExperimentTask, Manifest, SELFCHECK_PASS};
 
 const TASK_README: &str = r#"---
 schema: task/v5

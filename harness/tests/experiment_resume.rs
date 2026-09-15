@@ -1,13 +1,13 @@
 //! Repo resolution for `taskfmt experiment`: a resume is pinned to the experiment's recorded
 //! `repo_url` and must never create a repo, while a fresh experiment still mints one.
 
-use taskfmt::cmds::Ctx;
-use taskfmt::cmds::experiment::{
+use taskfmt_harness::cmds::Ctx;
+use taskfmt_harness::cmds::experiment::{
     require_recorded_predecessor, resolve_proof_corpus, resolve_repo_url, resume_repo_url,
 };
-use taskfmt::config::{ExperimentConfig, Resolved};
-use taskfmt::interactive::Interaction;
-use taskfmt::runstate::{ExperimentState, ExperimentTask, RepoRecord};
+use taskfmt_harness::config::{ExperimentConfig, Resolved};
+use taskfmt_harness::interactive::Interaction;
+use taskfmt_harness::runstate::{ExperimentState, ExperimentTask, RepoRecord};
 
 const MANIFEST: &str = r#"
 schema = "experiment/v1"
@@ -220,7 +220,7 @@ fn lifecycle_refuses_missing_or_mismatched_predecessor_record() {
 #[test]
 fn resuming_a_finished_experiment_creates_no_repo() {
     let fx = fixture(&[("TASK-001", "pass", true), ("TASK-002", "pass", true)]);
-    let code = taskfmt::cmds::experiment::run(
+    let code = taskfmt_harness::cmds::experiment::run(
         &fx.ctx,
         &[String::from("all")],
         None,
@@ -242,7 +242,7 @@ fn resuming_a_finished_experiment_creates_no_repo() {
 #[test]
 fn resuming_with_a_conflicting_repo_arg_fails_before_dispatch() {
     let fx = fixture(&[("TASK-001", "pass", true)]);
-    let err = taskfmt::cmds::experiment::run(
+    let err = taskfmt_harness::cmds::experiment::run(
         &fx.ctx,
         &[String::from("all")],
         Some(OTHER),
@@ -264,7 +264,7 @@ fn resuming_with_a_conflicting_repo_arg_fails_before_dispatch() {
 #[test]
 fn resuming_a_missing_experiment_says_so_without_creating_a_repo() {
     let fx = fixture(&[]);
-    let err = taskfmt::cmds::experiment::run(
+    let err = taskfmt_harness::cmds::experiment::run(
         &fx.ctx,
         &[String::from("all")],
         None,
@@ -302,7 +302,7 @@ fn run_with_exp_tag_uses_the_recorded_repo() {
 #[test]
 fn run_with_exp_tag_refuses_a_conflicting_repo_arg() {
     let fx = fixture(&[]);
-    let err = taskfmt::cmds::run::run(
+    let err = taskfmt_harness::cmds::run::run(
         &fx.ctx,
         "TASK-001",
         Some(OTHER),
@@ -386,7 +386,7 @@ fn proof_corpus_cannot_be_added_after_task_history_exists() {
 fn proof_corpus_preflight_runs_before_runtime_repo_creation() {
     let fx = fixture(&[]);
     let missing = fx._dir.path().join("missing-proof-corpus");
-    let err = taskfmt::cmds::experiment::run_with_proof_corpus(
+    let err = taskfmt_harness::cmds::experiment::run_with_proof_corpus(
         &fx.ctx,
         &[String::from("all")],
         None,
