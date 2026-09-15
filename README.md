@@ -105,8 +105,9 @@ taskfmt-host build-images --auto
 ```
 
 `taskfmt-host build-images` defaults to `--agent all`, so it builds the shared taskfmt/base images plus
-both `harness-claude` and `harness-codex`. Use `--agent claude` or `--agent codex` only when you
-want to build one agent layer. You do not need to run `docker build` directly. Re-run
+`harness-claude`, `harness-codex`, and `harness-cursor`. Use `--agent claude`, `--agent codex`, or
+`--agent cursor` only when you want to build one agent layer. You do not need to run `docker build`
+directly. Re-run
 `build-images` after changing harness Rust code so the binary on the host and the binary inside
 the image match.
 
@@ -123,6 +124,7 @@ The current image toolchain is:
 | --- | --- |
 | Claude Code | `2.1.261` |
 | Codex CLI | `0.153.4` |
+| Cursor Agent CLI | `2026.09.10-fd3934a` |
 | Rust | `1.98.1` |
 | Node.js LTS | `24.20.0` |
 | Herdr | `0.8.2` |
@@ -228,6 +230,55 @@ taskfmt-host experiment \
   --tasks 1-3 \
   --repo <repository-url> \
   --agent codex-zai \
+  --auto
+```
+
+### Use Cursor
+
+The `cursor-default` profile runs the headed Cursor Agent CLI under herdr with
+`model = "composer-2.5"`. Dispatch arms a native `/goal` for the task prompt (typed slash input,
+not bracketed paste), so the composer should show **`Goal active (...)`** after launch—not
+`[Pasted text]` or an idle slash-command menu.
+
+**Authentication.** Cursor uses the same login as your host `agent` CLI. Run `agent login` on the
+host before dispatch. The `cursor-default` profile sets `auth = "host"`; do not combine that with
+`CURSOR_API_KEY` in `env_secret`. On macOS the harness reads your Keychain session at dispatch
+time; on Linux it mounts `~/.cursor/auth.json` (or legacy `~/.config/cursor/auth.json`). Inside the
+Linux container the entrypoint installs credentials at `/home/agent/.config/cursor/auth.json`.
+
+Build the Cursor image, lint the task, and dispatch:
+
+```sh
+taskfmt-host build-images --agent cursor --auto
+taskfmt-host lint TASK-001
+taskfmt-host run \
+  --task TASK-001 \
+  --repo <repository-url> \
+  --agent cursor-default \
+  --wait
+```
+
+Omit `--wait` to return immediately; follow with `taskfmt-host status <run-id> --wait`, then
+`taskfmt-host gate <run-id>` before promotion. Attach to the live TUI with
+`taskfmt-host attach <run-id>` (detach with `ctrl+b q`, not `ctrl+c`).
+
+Harness completion still requires in-container `taskfmt verify` (last line `DONE`), a valid
+`/progress/progress.md` event stream, and a final `GOAL_RESULT task=<id> status=DONE` line in the
+transcript—the Cursor UI banner alone is not gate evidence. Reinstall the host binary and rebuild
+the Cursor image after pulling harness changes:
+
+```sh
+cargo install --path crates/taskfmt-host --locked --bin taskfmt-host
+taskfmt-host build-images --agent cursor --auto
+```
+
+For a series with the same profile:
+
+```sh
+taskfmt-host experiment \
+  --tasks 1-3 \
+  --repo <repository-url> \
+  --agent cursor-default \
   --auto
 ```
 
