@@ -3,13 +3,13 @@
 use crate::cmds::Ctx;
 use crate::ops::images::{self, AgentFilter};
 
-impl From<crate::cli::AgentFilter> for AgentFilter {
-    fn from(value: crate::cli::AgentFilter) -> Self {
+impl From<crate::cli::host::AgentFilter> for AgentFilter {
+    fn from(value: crate::cli::host::AgentFilter) -> Self {
         match value {
-            crate::cli::AgentFilter::Claude => AgentFilter::Claude,
-            crate::cli::AgentFilter::Codex => AgentFilter::Codex,
-            crate::cli::AgentFilter::Cursor => AgentFilter::Cursor,
-            crate::cli::AgentFilter::All => AgentFilter::All,
+            crate::cli::host::AgentFilter::Claude => AgentFilter::Claude,
+            crate::cli::host::AgentFilter::Codex => AgentFilter::Codex,
+            crate::cli::host::AgentFilter::Cursor => AgentFilter::Cursor,
+            crate::cli::host::AgentFilter::All => AgentFilter::All,
         }
     }
 }

@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, anyhow, bail};
 
-use crate::cli::Cli;
+use crate::cli::{GlobalOpts, container as cli_container, host};
 use crate::config::{ExperimentConfig, MANIFEST_NAME, Resolved, discover_upward};
 use crate::interactive::Interaction;
 use crate::ops::container::{self, CONTAINER_PREFIX};
@@ -53,15 +53,19 @@ fn config_path(explicit: Option<PathBuf>, env: Option<PathBuf>) -> PathBuf {
 }
 
 impl Ctx {
-    pub fn from_cli(cli: &Cli) -> Self {
+    pub fn from_opts(opts: &GlobalOpts) -> Self {
         let env = std::env::var_os("TASKFMT_CONFIG")
             .filter(|value| !value.is_empty())
             .map(PathBuf::from);
         Self {
-            config_path: config_path(cli.config.clone(), env),
-            verbose: cli.verbose,
-            interaction: Interaction::new(cli.auto, cli.yes),
+            config_path: config_path(opts.config.clone(), env),
+            verbose: opts.verbose,
+            interaction: Interaction::new(opts.auto, opts.yes),
         }
+    }
+
+    pub fn from_host(cli: &host::Cli) -> Self {
+        Self::from_opts(&GlobalOpts::from_host(cli))
     }
 
     /// Load the experiment manifest and the path resolver rooted at its directory. A relative
@@ -110,7 +114,7 @@ pub fn load_run(ctx: &Ctx, arg: &str) -> anyhow::Result<(Resolved, PathBuf)> {
         }
         Err(cwd_err) => bail!(
             "cannot resolve a manifest for {arg:?} from the run itself: {run_err:#}; nor from \
-             this process: {cwd_err:#}. Run `taskfmt ps` to list the runs on this host, or name \
+             this process: {cwd_err:#}. Run `taskfmt-host ps` to list the runs on this host, or name \
              the manifest with --config <path> (or $TASKFMT_CONFIG)"
         ),
     }
@@ -205,35 +209,15 @@ fn locate_run_dir_with(
     None
 }
 
-/// Dispatch one parsed CLI. Returns the process exit code.
-pub fn dispatch(cli: &Cli) -> anyhow::Result<i32> {
-    let ctx = Ctx::from_cli(cli);
-    use crate::cli::{Command, RepoCmd};
+/// Dispatch the host operator CLI. Returns the process exit code.
+pub fn dispatch_host(cli: &host::Cli) -> anyhow::Result<i32> {
+    let ctx = Ctx::from_host(cli);
+    use host::{Command, RepoCmd};
     match &cli.command {
         Command::Lint { json, tasks } => lint::run(&ctx, *json, tasks),
         Command::ProgressInit { task, out } => progress_init::run(&ctx, task, out.as_deref()),
         Command::Selftest => selftest::run(&ctx),
         Command::Fingerprint { path, image } => fingerprint::run(path.as_deref(), image.as_deref()),
-        Command::Verify {
-            root,
-            task_dir,
-            progress,
-            no_progress,
-            base,
-            log_dir,
-            fail_fast,
-        } => verify::run(
-            root.as_deref(),
-            task_dir.as_deref(),
-            if *no_progress {
-                Some(String::new())
-            } else {
-                progress.clone()
-            },
-            base.clone(),
-            log_dir.as_deref(),
-            *fail_fast,
-        ),
         Command::Selfcheck {
             task,
             workspace,
@@ -305,9 +289,39 @@ pub fn dispatch(cli: &Cli) -> anyhow::Result<i32> {
             proof_corpus.as_deref(),
             *selfcheck,
         ),
+    }
+}
+
+/// Dispatch the in-container CLI. Returns the process exit code.
+pub fn dispatch_container(cli: &cli_container::Cli) -> anyhow::Result<i32> {
+    use cli_container::Command;
+    match &cli.command {
+        Command::Lint { json, paths } => lint::run_paths(*json, paths),
+        Command::Verify {
+            root,
+            task_dir,
+            progress,
+            no_progress,
+            base,
+            log_dir,
+            fail_fast,
+        } => verify::run(
+            root.as_deref(),
+            task_dir.as_deref(),
+            if *no_progress {
+                Some(String::new())
+            } else {
+                progress.clone()
+            },
+            base.clone(),
+            log_dir.as_deref(),
+            *fail_fast,
+        ),
+        Command::Fingerprint { path } => fingerprint::run(path.as_deref(), None),
         Command::ContainerEntrypoint => container_entrypoint::run(),
         Command::Prereqs => container_entrypoint::prereqs_only(),
         Command::AgentLaunch => agent_launch::run(),
+        Command::CodexLogin => container_entrypoint::codex_login(),
     }
 }
 
@@ -371,7 +385,7 @@ pub fn resolve_run_arg(resolved: &Resolved, arg: &str) -> anyhow::Result<PathBuf
     }
     bail!(
         "no such run: {} (nothing in {} matches {arg:?} as a run id, as a container name \
-         harness-<run id>, or as a manifest container); `taskfmt ps` lists every run container on \
+         harness-<run id>, or as a manifest container); `taskfmt-host ps` lists every run container on \
          this host; recent runs: {}",
         direct.display(),
         runs_dir.display(),
@@ -457,15 +471,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = std::fs::canonicalize(dir.path()).unwrap();
         let named = root.join("elsewhere.toml");
-        let cli = crate::cli::Cli::try_parse_from([
-            "taskfmt",
+        let cli = host::Cli::try_parse_from([
+            "taskfmt-host",
             "--config",
             named.to_str().unwrap(),
             "status",
             "some-run",
         ])
         .unwrap();
-        let ctx = Ctx::from_cli(&cli);
+        let ctx = Ctx::from_host(&cli);
         assert_eq!(ctx.config_path, named);
         // and it is read as named: no ancestor of the cwd is consulted
         let err = ctx
@@ -758,7 +772,7 @@ image = "harness-claude:latest"
         assert!(err.contains("cannot read experiment manifest"), "{err}");
         assert!(err.contains("cannot locate a run directory"), "{err}");
         // and it ends with the two things an operator can actually do next
-        assert!(err.contains("taskfmt ps"), "{err}");
+        assert!(err.contains("taskfmt-host ps"), "{err}");
         assert!(err.contains("--config"), "{err}");
         assert!(err.contains("TASKFMT_CONFIG"), "{err}");
     }

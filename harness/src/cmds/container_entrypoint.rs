@@ -232,7 +232,7 @@ fn prereqs() -> anyhow::Result<String> {
 
     // 1. baked image tarball (built by `taskfmt preload` on the host)
     if !Path::new(PRELOAD_TAR).is_file() {
-        anyhow::bail!("{PRELOAD_TAR} missing — run `taskfmt preload` first");
+        anyhow::bail!("{PRELOAD_TAR} missing — run `taskfmt-host preload` first");
     }
     crate::ops::check(
         Command::new("docker").args(["load", "-i", PRELOAD_TAR]),

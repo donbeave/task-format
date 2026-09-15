@@ -1,5 +1,12 @@
 # Task progress monitoring
 
+> **Historical / partially stale.** The `taskfmt project`, `taskfmt group`,
+> `taskfmt monitor`, `taskfmt study`, and `taskfmt selfhost` CLI subcommands were
+> removed in commit `8c84695`. Host operators now use **`taskfmt-host`**
+> (`run`, `gate`, `selfcheck`, …). In-container agents use **`taskfmt verify`**.
+> The browser monitor, HTTP API, and catalog layout below remain accurate where
+> they do not reference those removed CLI subcommands.
+
 The monitor adds a filesystem catalog and browser to the existing taskfmt harness.
 It does not edit task contracts, create tasks, or replace taskfmt's verification.
 
@@ -169,7 +176,7 @@ To enable execution, start the backend with operator-owned settings:
 ```sh
 harness/target/debug/task-monitor \
   --origin http://127.0.0.1:5173 \
-  --taskfmt harness/target/debug/taskfmt \
+  --taskfmt harness/target/debug/taskfmt-host \
   --config experiment.toml \
   --repo '<existing-repository-url>' \
   --agent codex-default
@@ -179,49 +186,18 @@ Build all binaries together: `task-monitor-supervisor` must remain beside
 `task-monitor`. Its pipe and filesystem lease couple executor lifetime to the
 backend and allow restart recovery without trusting reusable process IDs.
 
-## Project and group CLI
+## Project and group CLI (removed)
 
-Project/group commands are first-class `taskfmt` subcommands. Read operations
-scan the filesystem and validate the catalog; no monitor process is required:
-
-```sh
-taskfmt project list --projects-root projects --json
-taskfmt project show demo --projects-root projects
-taskfmt project lint demo --projects-root projects
-taskfmt group list demo --projects-root projects
-taskfmt group show demo/pgtui --projects-root projects
-taskfmt group lint demo/pgtui --projects-root projects
-```
-
-Read operations accept `--json`. If `--projects-root` is omitted, the root comes
-from `paths.projects_dir` in the resolved experiment configuration. An explicit
-root does not require an experiment configuration. Reads describe persisted
-filesystem metadata, not live execution progress or a new verification verdict.
-
-Run operations submit a validated canonical scope to the configured monitor:
-
-```sh
-taskfmt project run demo --monitor-url http://127.0.0.1:3001 --wait
-taskfmt group run demo/pgtui --monitor-url http://127.0.0.1:3001 --wait
-```
-
-Choose one scope; these are alternative examples. The monitor URL defaults to
-`http://127.0.0.1:3001`. Its configured projects root, repository, agent, and
-execution settings determine what runs; a CLI read-root override does not
-reconfigure the server. The commands retain the harness consent protocol;
-global `--auto` or `--yes` may be used when explicitly choosing unattended
-execution. `--json` supports machine-readable output.
-
-Without `--wait`, the command returns after the server accepts the execution.
-With `--wait`, it polls the exact returned execution ID, exits zero for `done`,
-and exits nonzero for other terminal outcomes. It does not mark tasks done,
-skip dependency checks, promote, or push code itself.
+The former `taskfmt project` and `taskfmt group` read/run subcommands were
+removed in `8c84695`. Use the browser monitor HTTP API (`POST /api/run/...`) or
+`taskfmt-host run` for individual task dispatch. Host-side verification uses
+`taskfmt-host gate` or `taskfmt-host selfcheck`, not `taskfmt verify`.
 
 ## Execution prerequisites
 
 Read-only monitoring works without agent credentials or a configured execution
-repository. Execution uses the installed `taskfmt`, an existing experiment
-configuration, and an explicit repository chosen by the operator.
+repository. Execution uses the installed `taskfmt-host` binary, an existing
+experiment configuration, and an explicit repository chosen by the operator.
 The normal taskfmt Docker images, prerequisites, and selected profile credentials
 must be configured as described in `harness/README.md`.
 After harness source changes, rebuild images so host/image fingerprints match.
@@ -258,7 +234,7 @@ cargo +1.98.1 build --manifest-path harness/Cargo.toml --bins
 cargo +1.98.1 fmt --manifest-path harness/Cargo.toml -- --check
 cargo +1.98.1 clippy --manifest-path harness/Cargo.toml --all-targets -- -D warnings
 cargo +1.98.1 test --manifest-path harness/Cargo.toml
-cargo +1.98.1 run --manifest-path harness/Cargo.toml --bin taskfmt -- selftest
+cargo +1.98.1 run --manifest-path harness/Cargo.toml --bin taskfmt-host -- selftest
 RUSTUP_TOOLCHAIN=1.98.1 sh harness/tests/run_docker_itest.sh
 cd web
 bun install --frozen-lockfile

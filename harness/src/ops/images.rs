@@ -29,12 +29,15 @@ fn require_preload_tar(harness_dir: &Path) -> anyhow::Result<PathBuf> {
     let tar = harness_dir.join("images/preload/postgres.tar");
     let meta = std::fs::metadata(&tar).with_context(|| {
         format!(
-            "{} missing or empty — run `taskfmt preload` first",
+            "{} missing or empty — run `taskfmt-host preload` first",
             tar.display()
         )
     })?;
     if meta.len() == 0 {
-        anyhow::bail!("{} is empty — run `taskfmt preload` first", tar.display());
+        anyhow::bail!(
+            "{} is empty — run `taskfmt-host preload` first",
+            tar.display()
+        );
     }
     Ok(tar)
 }
@@ -127,11 +130,7 @@ pub fn build_images(
 
     crate::redact::emit(&format!(
         "== built: {} {} {} {} {}",
-        cfg.images.taskfmt,
-        cfg.images.base,
-        cfg.images.claude,
-        cfg.images.codex,
-        cfg.images.cursor
+        cfg.images.taskfmt, cfg.images.base, cfg.images.claude, cfg.images.codex, cfg.images.cursor
     ));
     Ok(())
 }
@@ -217,7 +216,10 @@ mod tests {
     fn missing_tar_is_reported_before_any_build() {
         let dir = tempfile::tempdir().unwrap();
         let err = require_preload_tar(dir.path()).unwrap_err();
-        assert!(format!("{err:#}").contains("taskfmt preload"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("taskfmt-host preload"),
+            "{err:#}"
+        );
         std::fs::create_dir_all(dir.path().join("images/preload")).unwrap();
         std::fs::write(dir.path().join("images/preload/postgres.tar"), []).unwrap();
         let err = require_preload_tar(dir.path()).unwrap_err();

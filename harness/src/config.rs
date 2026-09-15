@@ -648,7 +648,11 @@ image = "i"
 auth = "host"
 "#;
         assert_eq!(
-            ExperimentConfig::parse(codex).unwrap().profile("p").unwrap().auth,
+            ExperimentConfig::parse(codex)
+                .unwrap()
+                .profile("p")
+                .unwrap()
+                .auth,
             AgentAuth::Host
         );
 
@@ -662,7 +666,11 @@ image = "i"
 auth = "host"
 "#;
         assert_eq!(
-            ExperimentConfig::parse(cursor).unwrap().profile("p").unwrap().auth,
+            ExperimentConfig::parse(cursor)
+                .unwrap()
+                .profile("p")
+                .unwrap()
+                .auth,
             AgentAuth::Host
         );
 
@@ -832,7 +840,11 @@ image = "harness-codex:latest"
         .unwrap()
     }
 
-    fn execution(profile: &str, model: Option<&str>, effort: Option<&str>) -> crate::executioncfg::ExecutionConfig {
+    fn execution(
+        profile: &str,
+        model: Option<&str>,
+        effort: Option<&str>,
+    ) -> crate::executioncfg::ExecutionConfig {
         crate::executioncfg::ExecutionConfig {
             schema: crate::executioncfg::SCHEMA.to_string(),
             profile: profile.to_string(),

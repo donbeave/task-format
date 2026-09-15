@@ -105,14 +105,8 @@ model = "exec-model"
 effort = "high"
 "#,
     ));
-    let (profile, model, effort) = plan_dispatch_for_task(
-        &fx.resolved,
-        "TASK-042",
-        Some("default-p"),
-        None,
-        None,
-    )
-    .unwrap();
+    let (profile, model, effort) =
+        plan_dispatch_for_task(&fx.resolved, "TASK-042", Some("default-p"), None, None).unwrap();
     assert_eq!(profile, "default-p");
     assert_eq!(model, "exec-model");
     assert_eq!(effort, "high");

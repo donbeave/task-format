@@ -29,9 +29,9 @@ The series starts from an empty repository. TASK-001 creates the Rust workspace,
 From the repository root:
 
 ```sh
-taskfmt lint                 # validate every task package
-taskfmt run --task TASK-001  # dispatch one fresh run
-taskfmt experiment --tasks all --repo <URL>
+taskfmt-host lint                 # validate every task package
+taskfmt-host run --task TASK-001  # dispatch one fresh run
+taskfmt-host experiment --tasks all --repo <URL>
 ```
 
 `experiment.toml` defines `tasks_dir`, `runs_dir`, and `seed_dir`. For dispatch, gates, promotion, run records, and safety rules, see [`harness/README.md`](../harness/README.md).

@@ -28,12 +28,12 @@ bash experiments/corpus-preflight.sh /path/to/pgtui-proof.git
 ```
 
 For the full lifecycle runner, pass the same path with
-`taskfmt experiment --proof-corpus /path/to/pgtui-proof.git`. The runner performs this preflight
+`taskfmt-host experiment --proof-corpus /path/to/pgtui-proof.git`. The runner performs this preflight
 before creating or mutating the runtime repository and pins the path in the experiment state.
 
 The command prints the resolved commit OIDs, derives a binary patch from each
 `baseline..reference`, runs the
-source-built `taskfmt selfcheck`, and fails closed on missing tags, wrong
+source-built `taskfmt-host selfcheck`, and fails closed on missing tags, wrong
 trusted blobs, broken ancestry, or an unproven RED/GREEN result. A PASS is the
 required baseline-red/reference-green evidence; missing artifacts are not a
 passing substitute.

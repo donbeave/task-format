@@ -222,10 +222,7 @@ mod tests {
         let second_digest = write_matcher_evidence(&path, &output).unwrap();
         assert_eq!(first, std::fs::read(&path).unwrap());
         assert_eq!(first_digest, second_digest);
-        assert_eq!(
-            first_digest,
-            crate::hash::digest_file(&path).unwrap()
-        );
+        assert_eq!(first_digest, crate::hash::digest_file(&path).unwrap());
         assert!(
             std::str::from_utf8(&first)
                 .unwrap()
@@ -246,10 +243,7 @@ mod tests {
         let first = std::fs::read(&first_path).unwrap();
         assert_eq!(first, std::fs::read(&second_path).unwrap());
         assert_eq!(first_digest, second_digest);
-        assert_eq!(
-            first_digest,
-            crate::hash::digest_file(&first_path).unwrap()
-        );
+        assert_eq!(first_digest, crate::hash::digest_file(&first_path).unwrap());
         let value: serde_json::Value = serde_json::from_slice(&first).unwrap();
         assert_eq!(value["schema"], "gate-evidence/v1");
         let checks = value["checks"].as_array().unwrap();

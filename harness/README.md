@@ -1,14 +1,19 @@
 # Harness
 
-`taskfmt` runs one bounded coding task in the caller-provided execution boundary. It gates a frozen candidate tree and can promote that exact tree.
+`taskfmt-host` runs one bounded coding task in the caller-provided execution boundary. It gates a frozen candidate tree and can promote that exact tree.
 
 AI agents can change a repository quickly. A run record is promotion evidence only after a passing host gate has recorded an immutable candidate tree, its expected parent, and verifier evidence.
 
-The Rust crate and `taskfmt` binary live in this directory. Repository-level settings live in [`experiment.toml`](../experiment.toml).
+The Rust crate ships two binaries from this directory:
+
+- **`taskfmt-host`** — operator CLI on the host: lint, dispatch, gate, promote, experiment, images.
+- **`taskfmt`** — in-container validation and runtime: `lint`, `verify`, `fingerprint`, `container-entrypoint`, `prereqs`, `agent-launch`, `codex-login`.
+
+Repository-level settings live in [`experiment.toml`](../experiment.toml).
 
 ## Lifecycle
 
-For each task, `taskfmt`:
+For each task, `taskfmt-host`:
 
 1. Lints the task package before dispatch.
 2. Creates a fresh workspace from the experiment repository's `main` branch.
@@ -25,7 +30,7 @@ The harness supports Claude, Codex, and Cursor agent profiles. Images are built 
 - **Task package** — planner-owned instructions and verifier inputs. Start from the [task template](../reference/task-template/README.md); configured packages are under [`experiments/tasks/`](../experiments/tasks/).
 - **Trusted material** — tests, fixtures, support code, or other verifier inputs supplied by the planner. It is added to the run workspace before the agent starts and is outside the agent's allowed output paths.
 - **Run** — one task, one fresh container, one recorded workspace. Its record is `experiments/runs/<id>/manifest.json`.
-- **Gate** — `taskfmt verify` runs against the frozen candidate at the caller-provided boundary. Its record includes the candidate tree, parent, verifier evidence, and verdict.
+- **Gate** — `taskfmt-host gate` re-runs verification against the frozen candidate at the caller-provided boundary. In-container agents use `taskfmt verify`; the host gate record includes the candidate tree, parent, verifier evidence, and verdict.
 - **Promotion** — creates a commit from the recorded passing tree and parent, then pushes it with an expected-parent lease. It refuses failed, incomplete, changed, or stale-parent records.
 
 Task-package Markdown, the launch prompt, and bundled task fixtures are executable inputs. Do not casually rewrite them while changing operator documentation.
@@ -35,9 +40,9 @@ Task-package Markdown, the launch prompt, and bundled task fixtures are executab
 Run from the repository root. Docker must be running.
 
 ```sh
-cargo install --path harness --locked
-taskfmt preload --auto
-taskfmt build-images --agent all --auto
+cargo install --path harness --locked --bin taskfmt-host --bin taskfmt
+taskfmt-host preload --auto
+taskfmt-host build-images --agent all --auto
 ```
 
 `build-images --agent all` builds, in order:
@@ -74,7 +79,7 @@ In `experiment.toml`, set `ANTHROPIC_AUTH_TOKEN = "op://ChainArgos/Z.ai/Test"` o
 Run with `--agent zai-flash`, or omit `--agent` because it is the configured default:
 
 ```sh
-taskfmt run --task TASK-001 --repo <repository-url> --agent zai-flash --wait
+taskfmt-host run --task TASK-001 --repo <repository-url> --agent zai-flash --wait
 ```
 
 ### Codex
@@ -95,7 +100,7 @@ configuring `OPENAI_API_KEY` through `env_secret`.
 Use the `codex-default` profile and the image built by `--agent all`:
 
 ```sh
-taskfmt run --task TASK-001 --repo <repository-url> --agent codex-default --wait
+taskfmt-host run --task TASK-001 --repo <repository-url> --agent codex-default --wait
 ```
 
 ## Run one task
@@ -103,23 +108,23 @@ taskfmt run --task TASK-001 --repo <repository-url> --agent codex-default --wait
 Lint first, then dispatch to a fresh container:
 
 ```sh
-taskfmt lint TASK-001
-taskfmt run --task TASK-001 --repo <repository-url> --agent codex-default --wait
+taskfmt-host lint TASK-001
+taskfmt-host run --task TASK-001 --repo <repository-url> --agent codex-default --wait
 ```
 
 `--wait` waits for the agent, runs the host gate, and returns success only for a passing goal.
 Promotion remains explicit:
 
 ```sh
-taskfmt promote <run-id> --auto
+taskfmt-host promote <run-id> --auto
 ```
 
 To return immediately, omit `--wait`, then run:
 
 ```sh
-taskfmt status <run-id> --wait
-taskfmt gate <run-id> --auto
-taskfmt promote <run-id> --auto
+taskfmt-host status <run-id> --wait
+taskfmt-host gate <run-id> --auto
+taskfmt-host promote <run-id> --auto
 ```
 
 Without `--repo`, `run` creates a disposable private repository after confirmation. `--exp <id>`
@@ -133,7 +138,7 @@ in order. It stops on the first failed or blocked task.
 Run a range against an existing repository:
 
 ```sh
-taskfmt experiment \
+taskfmt-host experiment \
   --tasks 1-3 \
   --repo <repository-url> \
   --agent zai-flash \
@@ -143,7 +148,7 @@ taskfmt experiment \
 Run every configured task in one command:
 
 ```sh
-taskfmt experiment \
+taskfmt-host experiment \
   --tasks all \
   --repo <repository-url> \
   --agent zai-flash \
@@ -158,7 +163,7 @@ experiment; resume reuses it and rejects a different path. Valid selections incl
 recorded ID:
 
 ```sh
-taskfmt experiment --resume <experiment-id> --tasks all --agent zai-flash --auto
+taskfmt-host experiment --resume <experiment-id> --tasks all --agent zai-flash --auto
 ```
 
 Use `--selfcheck` to run the D13 gate selfcheck before each dispatch. It refuses to dispatch when
@@ -170,11 +175,11 @@ shell requires one of them. Read-only commands do not prompt.
 ## Follow and inspect runs
 
 ```sh
-taskfmt ps
-taskfmt ps --json
-taskfmt status <run-id>
-taskfmt status <run-id> --wait
-taskfmt attach <run-id>
+taskfmt-host ps
+taskfmt-host ps --json
+taskfmt-host status <run-id>
+taskfmt-host status <run-id> --wait
+taskfmt-host attach <run-id>
 ```
 
 `<run-id>` may be the run ID, `harness-<run-id>` container name, run directory, or its
@@ -186,28 +191,26 @@ Run records and evidence live under `experiments/runs/`.
 Validate task packages before dispatch:
 
 ```sh
-taskfmt lint TASK-001
-taskfmt lint --json
-taskfmt progress-init TASK-001
+taskfmt-host lint TASK-001
+taskfmt-host lint --json
+taskfmt-host progress-init TASK-001
 ```
 
-Run a gate directly in a workspace with `taskfmt verify`:
+Re-run the host gate for a dispatched run:
 
 ```sh
-taskfmt verify \
-  --root <repository-root> \
-  --task-dir <task-directory> \
-  --progress <progress-file>
+taskfmt-host gate <run-id> --auto
 ```
 
 The gate passes only when the declared checks pass and the final stdout line is `DONE`. It also
-checks expected results, writable paths, scope, and progress unless progress is disabled with
-`--no-progress` or `--progress ""`. Use `--fail-fast` to stop after the first failed check.
+checks expected results, writable paths, scope, and progress. Agents prove completion in-container
+with `taskfmt verify` (see the task template); the host does not expose `verify` on
+`taskfmt-host`.
 
 Prove a task gate distinguishes the untouched base from a reference solution:
 
 ```sh
-taskfmt selfcheck <task-directory> <base-workspace> \
+taskfmt-host selfcheck <task-directory> <base-workspace> \
   --reference <reference-directory> \
   --auto
 ```
@@ -253,7 +256,7 @@ Precedence (one resolver for `run`, `experiment`, and lint cross-checks):
 | model | CLI `--model` > `execution.toml` model > profile.model |
 | effort | CLI `--effort` > `execution.toml` effort > profile.effort |
 
-`taskfmt experiment` accepts optional `--model` and `--effort` to override every selected task;
+`taskfmt-host experiment` accepts optional `--model` and `--effort` to override every selected task;
 `--agent` overrides all tasks as well. The confirmation plan shows the resolved profile, model,
 and effort per task. `execution.toml` is not part of the gate fingerprint (`README.md` and
 `verify.toml` only).
@@ -267,18 +270,18 @@ for a parseable example.
 Compare the host binary fingerprint with an image:
 
 ```sh
-taskfmt fingerprint
-taskfmt fingerprint --image harness-claude:latest
-taskfmt fingerprint --image harness-codex:latest
-taskfmt fingerprint --image harness-cursor:latest
-taskfmt fingerprint --path harness
+taskfmt-host fingerprint
+taskfmt-host fingerprint --image harness-claude:latest
+taskfmt-host fingerprint --image harness-codex:latest
+taskfmt-host fingerprint --image harness-cursor:latest
+taskfmt-host fingerprint --path harness
 ```
 
 Manage disposable GitHub repositories explicitly when needed:
 
 ```sh
-taskfmt repo create --auto
-taskfmt repo delete --name <repository-name> --auto
+taskfmt-host repo create --auto
+taskfmt-host repo delete --name <repository-name> --auto
 ```
 
 ### Cursor
@@ -288,7 +291,7 @@ On macOS the harness reads your Keychain session at dispatch time; on Linux it m
 `~/.config/cursor/auth.json` (or `~/.cursor/auth.json`).
 
 ```sh
-taskfmt run --task TASK-001 --repo <repository-url> --agent cursor-default --wait
+taskfmt-host run --task TASK-001 --repo <repository-url> --agent cursor-default --wait
 ```
 
 The `cursor-default` profile sets `auth = "host"`. Do not combine that with
@@ -299,7 +302,7 @@ The `cursor-default` profile sets `auth = "host"`. Do not combine that with
 Use the `codex-zai` profile to run Codex against Z.ai with the ChainArgos API key from 1Password:
 
 ```sh
-taskfmt run --task TASK-001 --repo <repository-url> --agent codex-zai --wait
+taskfmt-host run --task TASK-001 --repo <repository-url> --agent codex-zai --wait
 ```
 
 ### Codex via Kimi
@@ -307,7 +310,7 @@ taskfmt run --task TASK-001 --repo <repository-url> --agent codex-zai --wait
 Use the `codex-kimi` profile to run Codex against Kimi K3 with the ChainArgos API key from 1Password:
 
 ```sh
-taskfmt run --task TASK-001 --repo <repository-url> --agent codex-kimi --wait
+taskfmt-host run --task TASK-001 --repo <repository-url> --agent codex-kimi --wait
 ```
 
 ## Development and release checks
@@ -316,8 +319,8 @@ After changing Rust code, the host binary and image-baked binary must match. Rei
 all affected images before dispatch:
 
 ```sh
-cargo install --path harness --locked
-taskfmt build-images --agent all --no-cache --auto
+cargo install --path harness --locked --bin taskfmt-host --bin taskfmt
+taskfmt-host build-images --agent all --no-cache --auto
 ```
 
 Run the Rust checks from repository root:
@@ -326,13 +329,13 @@ Run the Rust checks from repository root:
 cargo fmt --manifest-path harness/Cargo.toml --check
 cargo clippy --manifest-path harness/Cargo.toml --all-targets -- -D warnings
 cargo test --manifest-path harness/Cargo.toml
-cargo run --manifest-path harness/Cargo.toml -- selftest
+cargo run --manifest-path harness/Cargo.toml --bin taskfmt-host -- selftest
 ```
 
 The Docker integration gate is opt-in:
 
 ```sh
-taskfmt build-images --agent all --auto
+taskfmt-host build-images --agent all --auto
 sh harness/tests/run_docker_itest.sh
 ```
 

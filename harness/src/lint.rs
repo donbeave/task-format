@@ -214,11 +214,7 @@ fn lint(
     out
 }
 
-fn lint_execution(
-    out: &mut Vec<Finding>,
-    dir: &Path,
-    experiment: Option<&ExperimentConfig>,
-) {
+fn lint_execution(out: &mut Vec<Finding>, dir: &Path, experiment: Option<&ExperimentConfig>) {
     let config_path = dir.join(executioncfg::FILE_NAME);
     match ExecutionConfig::load_optional(dir) {
         Ok(None) => {}
@@ -252,11 +248,7 @@ fn execution_profile_line(path: &Path) -> Option<usize> {
     let text = std::fs::read_to_string(path).ok()?;
     text.lines()
         .enumerate()
-        .find(|(_, line)| {
-            line.trim_start()
-                .starts_with("profile")
-                && line.contains('=')
-        })
+        .find(|(_, line)| line.trim_start().starts_with("profile") && line.contains('='))
         .map(|(index, _)| index + 1)
 }
 

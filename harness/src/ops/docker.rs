@@ -504,7 +504,7 @@ pub fn image_prerequisites(image: &str) -> anyhow::Result<()> {
             detail
         };
         anyhow::bail!(
-            "{image} failed its runtime prerequisite check: {detail}; run `taskfmt preload --auto` then `taskfmt build-images --agent all --auto`"
+            "{image} failed its runtime prerequisite check: {detail}; run `taskfmt-host preload --auto` then `taskfmt-host build-images --agent all --auto`"
         );
     }
     Ok(())

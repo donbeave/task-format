@@ -1,11 +1,13 @@
 # task-format
 
 `task-format` manages filesystem-backed projects, groups, and dependency-linked
-tasks through the Rust `taskfmt` CLI and a local browser monitor. The `projects/`
-directory is the catalog: project and group README files describe ownership;
-task packages retain their immutable contracts, verification, and trusted inputs.
-The Rust API and Bun/TanStack Start browser share taskfmt's authoritative
+tasks through the Rust **`taskfmt-host`** operator CLI and a local browser monitor.
+The `projects/` directory is the catalog: project and group README files describe
+ownership; task packages retain their immutable contracts, verification, and
+trusted inputs. The Rust API and Bun/TanStack Start browser share the harness
 verification lifecycle. Progress never substitutes for a passing host gate.
+In-container agents run **`taskfmt verify`**; host-side completion uses
+**`taskfmt-host gate`** or **`taskfmt-host selfcheck`**.
 See [monitoring setup and schemas](docs/monitoring.md),
 [example projects](docs/monitoring-examples.md), and
 [installed toolchain versions](docs/monitoring-versions.md).
@@ -18,47 +20,30 @@ flat experiment corpus and taskfmt workflows remain supported.
 
 ## Install locally
 
-From the repository root, install the `taskfmt` binary with Cargo:
+From the repository root, install both harness binaries with Cargo:
 
 ```sh
-cargo install --path harness --locked
+cargo install --path harness --locked --bin taskfmt-host --bin taskfmt
 ```
 
-Cargo installs the binary to `~/.cargo/bin`. Ensure that directory is on your `PATH`, then run:
+Cargo installs the binaries to `~/.cargo/bin`. Ensure that directory is on your
+`PATH`, then run:
 
 ```sh
-taskfmt --help
+taskfmt-host --help
 ```
+
+`taskfmt-host` is the host operator CLI (`lint`, `run`, `experiment`, `gate`,
+`promote`, …). `taskfmt` is the in-container runtime (`verify`, `prereqs`,
+`agent-launch`, …) baked into harness images.
 
 ## Projects and groups
 
-The default catalog is `projects/`. Inspect and validate it without starting the
-browser or execution service:
-
-```sh
-taskfmt project list
-taskfmt project show demo
-taskfmt project lint demo
-taskfmt group list demo
-taskfmt group show demo/pgtui
-taskfmt group lint demo/pgtui
-```
-
-Read commands accept `--projects-root /absolute/path/to/projects` and `--json`.
-Without an explicit root, they resolve `paths.projects_dir` from the experiment
-configuration. Start the local monitor using [the setup guide](docs/monitoring.md)
-to browse live progress or execute dependency-ordered scopes:
-
-```sh
-taskfmt project run demo --monitor-url http://127.0.0.1:3001 --wait
-taskfmt group run demo/pgtui --monitor-url http://127.0.0.1:3001 --wait
-```
-
-These are alternative scope examples, not consecutive runs: executable tasks
-must start pending. Run commands retain execution consent and use the monitor's
-configured repository and agent. `--wait` follows the returned execution to its
-terminal result; it does not promote candidate code. Filesystem reads show
-persisted metadata; the monitor supplies live progress and verified evidence.
+The default catalog is `projects/`. The former `taskfmt project` and
+`taskfmt group` CLI subcommands were removed; use the browser monitor described
+in [monitoring setup](docs/monitoring.md) (historical CLI examples there are
+stale). Host operators dispatch and gate individual tasks with `taskfmt-host`
+as shown below.
 
 ## Why this exists
 
@@ -91,8 +76,8 @@ The harness protects the experiment in layers:
 1. A fresh workspace and agent session prevent previous state from contaminating a run.
 2. A recorded baseline anchors scope checks to a known Git tree.
 3. Trusted verification material is overlaid before execution and kept outside `verify.toml`'s writable paths.
-4. `taskfmt verify` executes the declared checks, expected matchers, progress validation, and scope check.
-5. The host freezes one complete candidate tree, gates that exact tree, and records its evidence.
+4. In-container `taskfmt verify` executes the declared checks, expected matchers, progress validation, and scope check.
+5. The host freezes one complete candidate tree, runs `taskfmt-host gate` on that exact tree, and records its evidence.
 6. Promotion creates and pushes a commit directly from the recorded tree with an expected-parent lease. The host verdict, not the agent's report, decides success.
 
 ## Running experiments
@@ -106,20 +91,20 @@ Install the host binary, preload the pinned PostgreSQL prerequisite image, and b
 images:
 
 ```sh
-cargo install --path harness --locked
-taskfmt preload --auto
-taskfmt build-images --auto
+cargo install --path harness --locked --bin taskfmt-host --bin taskfmt
+taskfmt-host preload --auto
+taskfmt-host build-images --auto
 ```
 
-`taskfmt build-images` defaults to `--agent all`, so it builds the shared taskfmt/base images plus
+`taskfmt-host build-images` defaults to `--agent all`, so it builds the shared taskfmt/base images plus
 both `harness-claude` and `harness-codex`. Use `--agent claude` or `--agent codex` only when you
 want to build one agent layer. You do not need to run `docker build` directly. Re-run
 `build-images` after changing harness Rust code so the binary on the host and the binary inside
 the image match.
 
 Dispatch also checks that the image contains the preloaded PostgreSQL tarball before launching a
-persistent run. If a stale image is missing it, rebuild with `taskfmt preload --auto` followed by
-`taskfmt build-images --agent all --auto`.
+persistent run. If a stale image is missing it, rebuild with `taskfmt-host preload --auto` followed by
+`taskfmt-host build-images --agent all --auto`.
 
 Image building and runtime selection are separate. Build both images once, then choose the agent
 profile for each run with `--agent`.
@@ -155,8 +140,8 @@ Put only the Z.ai API token in that file. Build the Claude image, then select th
 profile when running tasks:
 
 ```sh
-taskfmt build-images --agent claude --auto
-taskfmt run \
+taskfmt-host build-images --agent claude --auto
+taskfmt-host run \
   --task TASK-001 \
   --repo <repository-url> \
   --agent zai-flash \
@@ -166,7 +151,7 @@ taskfmt run \
 For a series:
 
 ```sh
-taskfmt experiment \
+taskfmt-host experiment \
   --tasks 1-3 \
   --repo <repository-url> \
   --agent zai-flash \
@@ -182,22 +167,22 @@ profile, the execution commands may omit `--agent zai-flash`.
 Lint the task, then dispatch it to a fresh container:
 
 ```sh
-taskfmt lint TASK-001
-taskfmt run --task TASK-001 --repo <repository-url> --agent codex-default --wait
+taskfmt-host lint TASK-001
+taskfmt-host run --task TASK-001 --repo <repository-url> --agent codex-default --wait
 ```
 
-Without `--repo`, `taskfmt run` creates a disposable private repository after confirmation. The
+Without `--repo`, `taskfmt-host run` creates a disposable private repository after confirmation. The
 `--wait` flag waits for the agent and runs the host gate. After a passing result, promote the
 recorded tree:
 
 ```sh
-taskfmt promote <run-id>  # only after a passing gate
+taskfmt-host promote <run-id>  # only after a passing gate
 ```
 
-To return immediately instead, omit `--wait`; follow the run with `taskfmt status <run-id> --wait`,
-then run `taskfmt gate <run-id>` before promotion.
+To return immediately instead, omit `--wait`; follow the run with `taskfmt-host status <run-id> --wait`,
+then run `taskfmt-host gate <run-id>` before promotion.
 
-`taskfmt selfcheck TASK-001 <workspace>` is an optional pre-dispatch check that proves the task
+`taskfmt-host selfcheck TASK-001 <workspace>` is an optional pre-dispatch check that proves the task
 gate distinguishes the untouched base from a reference solution.
 
 ### Run an ordered experiment series
@@ -206,7 +191,7 @@ gate distinguishes the untouched base from a reference solution.
 and promotion in order. It stops on the first failure or blocked task:
 
 ```sh
-taskfmt experiment \
+taskfmt-host experiment \
   --tasks 1-3 \
   --repo <repository-url> \
   --agent codex-default \
@@ -217,7 +202,7 @@ Omit `--repo` to create a disposable experiment repository. Use `--tasks all` or
 as `1-3,5` and `TASK-002..TASK-004`. Resume an interrupted series with its experiment ID:
 
 ```sh
-taskfmt experiment --resume <experiment-id> --tasks all --agent codex-default --auto
+taskfmt-host experiment --resume <experiment-id> --tasks all --agent codex-default --auto
 ```
 
 ### Run every task in one command
@@ -226,27 +211,27 @@ After first-time setup, run the complete configured task corpus sequentially wit
 GLM-5.3-Flash:
 
 ```sh
-taskfmt experiment \
+taskfmt-host experiment \
   --tasks all \
   --repo <repository-url> \
   --agent zai-flash \
   --auto
 ```
 
-Omit `--repo` to let `taskfmt` create a disposable private repository. Add
+Omit `--repo` to let `taskfmt-host` create a disposable private repository. Add
 `--proof-corpus /path/to/pgtui-proof.git` for a controlled campaign; the corpus is preflighted
 before any runtime repository is created and pinned to the experiment state. This is one command,
 not parallel execution: tasks run in order, and the experiment stops at the first failed or
 blocked task. Resume the same experiment after fixing the cause:
 
 ```sh
-taskfmt experiment \
+taskfmt-host experiment \
   --resume <experiment-id> \
   --agent zai-flash \
   --auto
 ```
 
-Use `taskfmt ps`, `taskfmt status <run-id>`, or `taskfmt attach <run-id>` to inspect a live or
+Use `taskfmt-host ps`, `taskfmt-host status <run-id>`, or `taskfmt-host attach <run-id>` to inspect a live or
 completed run. A prereq failure still writes the launch manifest, so `attach` can locate the
 parked container and points to `out/prereqs.log`. Run records and evidence are stored under
 `experiments/runs/`.
@@ -287,7 +272,7 @@ No completed ablation matrix yet proves that one wording or checklist style prod
 
 | Path | Role |
 | --- | --- |
-| `harness/` | Rust `taskfmt` CLI and operator reference. |
+| `harness/` | Rust `taskfmt-host` / `taskfmt` binaries and operator reference. |
 | `experiments/tasks/` | Versioned task packages used as experiment inputs. |
 | `experiments/fixtures/` | Shared deterministic seed data. |
 | `experiments/runs/` | Generated run workspaces and evidence; Git-ignored. |

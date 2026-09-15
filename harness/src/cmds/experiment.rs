@@ -69,16 +69,7 @@ pub fn run(
     selfcheck: bool,
 ) -> anyhow::Result<i32> {
     run_with_proof_corpus(
-        ctx,
-        tasks,
-        repo,
-        agent,
-        model,
-        effort,
-        resume,
-        kill_after,
-        None,
-        selfcheck,
+        ctx, tasks, repo, agent, model, effort, resume, kill_after, None, selfcheck,
     )
 }
 

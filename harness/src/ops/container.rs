@@ -380,10 +380,7 @@ fn host_cursor_auth_file_path() -> anyhow::Result<PathBuf> {
         home.join(".cursor/auth.json"),
     ] {
         if candidate.is_file() {
-            return validate_private_auth_file(
-                &candidate,
-                "run `agent login` on the host first",
-            );
+            return validate_private_auth_file(&candidate, "run `agent login` on the host first");
         }
     }
     Err(anyhow::anyhow!(
@@ -428,16 +425,14 @@ fn host_cursor_auth_path(staging: &mut Option<HostAuthStagingFile>) -> anyhow::R
 
 #[cfg(unix)]
 fn keychain_secret(service: &str, account: &str) -> anyhow::Result<String> {
-    let output = super::capture(
-        Command::new("security").args([
-            "find-generic-password",
-            "-s",
-            service,
-            "-a",
-            account,
-            "-w",
-        ]),
-    )?;
+    let output = super::capture(Command::new("security").args([
+        "find-generic-password",
+        "-s",
+        service,
+        "-a",
+        account,
+        "-w",
+    ]))?;
     if !output.ok() {
         bail!(
             "cannot read macOS keychain entry {service}/{account}: run `agent login` on the host first ({})",
@@ -773,7 +768,8 @@ mod tests {
         assert!(codex_dir.path().join("config.toml").is_file());
         let mut zai = test_profile("codex");
         zai.model = "glm-5.3-flash".into();
-        zai.env_secret.insert("ZAI_API_KEY".into(), "file://zai-flash.token".into());
+        zai.env_secret
+            .insert("ZAI_API_KEY".into(), "file://zai-flash.token".into());
         let zai_dir = tempfile::tempdir().unwrap();
         preseed_agent_home(zai_dir.path(), &zai).unwrap();
         let zai_config = std::fs::read_to_string(zai_dir.path().join("config.toml")).unwrap();
@@ -937,13 +933,7 @@ mod tests {
         let profile = cfg.profile("p").unwrap().clone();
         let manifest = sample_manifest(&dir.path().join("runs/20260101-000000-p-TASK-001"));
         let plan = launch_plan(
-            &cfg,
-            &resolved,
-            &manifest,
-            &profile,
-            "claude",
-            "base",
-            &mut None,
+            &cfg, &resolved, &manifest, &profile, "claude", "base", &mut None,
         )
         .unwrap();
         let labels = plan.labels.iter().cloned().collect();
@@ -975,13 +965,7 @@ mod tests {
         let profile = cfg.profile("p").unwrap().clone();
         let manifest = sample_manifest(&dir.path().join("runs/20260101-000000-p-TASK-001"));
         let plan = launch_plan(
-            &cfg,
-            &resolved,
-            &manifest,
-            &profile,
-            "claude",
-            "base",
-            &mut None,
+            &cfg, &resolved, &manifest, &profile, "claude", "base", &mut None,
         )
         .unwrap();
         let label = |key: &str| {
@@ -1080,13 +1064,7 @@ mod tests {
         let profile = cfg.profile("p").unwrap().clone();
         let manifest = sample_manifest(&dir.path().join("runs/20260101-000000-p-TASK-001"));
         let plan = launch_plan(
-            &cfg,
-            &resolved,
-            &manifest,
-            &profile,
-            "codex",
-            "base",
-            &mut None,
+            &cfg, &resolved, &manifest, &profile, "codex", "base", &mut None,
         )
         .unwrap();
 

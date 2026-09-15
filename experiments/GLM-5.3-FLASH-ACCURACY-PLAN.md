@@ -1,6 +1,6 @@
 # GLM-5.3-Flash Task-Format Accuracy Campaign
 
-Launch the campaign with `taskfmt experiment --proof-corpus /path/to/pgtui-proof.git`; it runs the
+Launch the campaign with `taskfmt-host experiment --proof-corpus /path/to/pgtui-proof.git`; it runs the
 preflight before creating the runtime repository. The per-task agent prompt has one source at
 `harness/src/task-prompt.md`, embedded by the CLI; do not copy it into this plan. The prompt
 below is only the separate campaign-controller `/goal` prompt.
@@ -11,7 +11,7 @@ below is only the separate campaign-controller `/goal` prompt.
 
 Preconditions:
 1. Abort if corpus-preflight.sh fails.
-2. Record taskfmt version, harness fingerprint, image fingerprints,
+2. Record taskfmt-host version, harness fingerprint, image fingerprints,
    Claude version, model, image digest, repo commit, and runtime settings.
 3. Treat trusted gate results and workspace scope fingerprints as truth.
    GOAL_RESULT and model claims are secondary evidence.
@@ -52,7 +52,7 @@ Fix loop:
 1. Reproduce the failure from the saved artifact bundle.
 2. Fix the narrowest structural cause.
 3. Add a regression test.
-4. Run focused tests, full Rust tests, task lint, and selftest.
+4. Run focused tests, full Rust tests, `taskfmt-host lint`, and `taskfmt-host selftest`.
 5. Rebuild images and verify host/image fingerprints match.
 6. Rerun the failed task from a fresh clone.
 7. Only then update the task template, goal prompt, or harness.

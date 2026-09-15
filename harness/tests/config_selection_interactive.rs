@@ -1,7 +1,8 @@
 //! Config, selection, taskfile and CLI surface.
 
 use clap::Parser as _;
-use taskfmt::cli::Cli;
+use taskfmt::cli::container::Cli as ContainerCli;
+use taskfmt::cli::host::Cli;
 use taskfmt::config::{AgentAuth, ExperimentConfig};
 
 const MANIFEST: &str = r#"
@@ -60,12 +61,16 @@ fn manifest_matches_the_repo_root_file() {
     assert_eq!(codex.kind, "codex");
     assert_eq!(codex.auth, AgentAuth::Host);
     // only references are committed, never values
-    assert!(zai
-        .env_secret
-        .values()
-        .all(|v| v.starts_with("file://") || v.starts_with("op://")));
+    assert!(
+        zai.env_secret
+            .values()
+            .all(|v| v.starts_with("file://") || v.starts_with("op://"))
+    );
     let codex_zai = cfg.profile("codex-zai").unwrap();
-    assert_eq!(codex_zai.env_secret["ZAI_API_KEY"], "op://ChainArgos/Z.ai/Test");
+    assert_eq!(
+        codex_zai.env_secret["ZAI_API_KEY"],
+        "op://ChainArgos/Z.ai/Test"
+    );
     let codex_kimi = cfg.profile("codex-kimi").unwrap();
     assert_eq!(
         codex_kimi.env_secret["KIMI_API_KEY"],
@@ -139,26 +144,30 @@ fn selection_semantics() {
 #[test]
 fn every_cli_subcommand_parses() {
     let global = ["--config", "experiment.toml", "--auto"];
-    let cases: Vec<Vec<&str>> = vec![
-        vec!["taskfmt", "lint"],
-        vec!["taskfmt", "lint", "--json", "TASK-101"],
-        vec!["taskfmt", "lint", "TASK-101"],
+    let host_cases: Vec<Vec<&str>> = vec![
+        vec!["taskfmt-host", "lint"],
+        vec!["taskfmt-host", "lint", "--json", "TASK-101"],
+        vec!["taskfmt-host", "lint", "TASK-101"],
         vec![
-            "taskfmt",
+            "taskfmt-host",
             "progress-init",
             "TASK-101",
             "--out",
             "/tmp/progress.md",
         ],
-        vec!["taskfmt", "selftest"],
-        vec!["taskfmt", "verify"],
-        vec!["taskfmt", "verify", "--fail-fast", "--log-dir", "/tmp/logs"],
-        vec!["taskfmt", "build-images", "--agent", "all", "--no-cache"],
-        vec!["taskfmt", "preload"],
-        vec!["taskfmt", "repo", "create"],
-        vec!["taskfmt", "repo", "delete", "--yes"],
+        vec!["taskfmt-host", "selftest"],
         vec![
-            "taskfmt",
+            "taskfmt-host",
+            "build-images",
+            "--agent",
+            "all",
+            "--no-cache",
+        ],
+        vec!["taskfmt-host", "preload"],
+        vec!["taskfmt-host", "repo", "create"],
+        vec!["taskfmt-host", "repo", "delete", "--yes"],
+        vec![
+            "taskfmt-host",
             "run",
             "--task",
             "TASK-101",
@@ -166,38 +175,53 @@ fn every_cli_subcommand_parses() {
             "--kill-after",
             "30",
         ],
-        vec!["taskfmt", "gate", "20260101-000000-zai-flash-TASK-101"],
-        vec!["taskfmt", "promote", "some-run", "--yes"],
+        vec!["taskfmt-host", "gate", "20260101-000000-zai-flash-TASK-101"],
+        vec!["taskfmt-host", "promote", "some-run", "--yes"],
         vec![
-            "taskfmt",
+            "taskfmt-host",
             "status",
             "some-run",
             "--wait",
             "--kill-after",
             "30",
         ],
-        vec!["taskfmt", "attach", "some-run"],
+        vec!["taskfmt-host", "attach", "some-run"],
         vec![
-            "taskfmt",
+            "taskfmt-host",
             "experiment",
             "--tasks",
             "all,1-3,TASK-101",
             "--resume",
             "exp-1",
         ],
+    ];
+    for mut case in host_cases {
+        case.extend_from_slice(&global);
+        let parsed = Cli::try_parse_from(&case);
+        assert!(parsed.is_ok(), "{case:?}: {parsed:?}");
+    }
+    let container_cases: Vec<Vec<&str>> = vec![
+        vec!["taskfmt", "lint"],
+        vec!["taskfmt", "lint", "--json", "/task"],
         vec!["taskfmt", "container-entrypoint"],
         vec!["taskfmt", "prereqs"],
         vec!["taskfmt", "agent-launch"],
+        vec!["taskfmt", "verify", "--fail-fast"],
+        vec!["taskfmt", "fingerprint"],
+        vec!["taskfmt", "codex-login"],
     ];
-    for mut case in cases {
-        case.extend_from_slice(&global);
-        let parsed = Cli::try_parse_from(&case);
+    for case in container_cases {
+        let parsed = ContainerCli::try_parse_from(&case);
         assert!(parsed.is_ok(), "{case:?}: {parsed:?}");
     }
     // mutating commands demand an explicit answer: without --auto/--yes and a TTY they must
     // refuse (covered in the interactive tests); here only the parse surface matters
     assert!(
-        Cli::try_parse_from(["taskfmt"]).is_err(),
+        Cli::try_parse_from(["taskfmt-host"]).is_err(),
+        "bare taskfmt-host is not a command"
+    );
+    assert!(
+        ContainerCli::try_parse_from(["taskfmt"]).is_err(),
         "bare taskfmt is not a command"
     );
 }

@@ -1,20 +1,19 @@
-//! Binary entry point. Installs the secret redactor before anything else runs, parses the CLI,
-//! dispatches, and maps the returned code to the process exit status.
+//! Host operator `taskfmt-host` binary: dispatch, lint, experiment orchestration.
 
 use std::process::ExitCode;
 
 use clap::Parser as _;
-use taskfmt::cli::Cli;
+use taskfmt::cli::host::Cli;
 use taskfmt::cmds;
 use taskfmt::redact;
 
 fn main() -> ExitCode {
     redact::init();
     let cli = Cli::parse();
-    match cmds::dispatch(&cli) {
+    match cmds::dispatch_host(&cli) {
         Ok(code) => ExitCode::from(code as u8),
         Err(err) => {
-            redact::eemit(&format!("taskfmt: {err:#}"));
+            redact::eemit(&format!("taskfmt-host: {err:#}"));
             for cause in err.chain().skip(1) {
                 redact::eemit(&format!("  caused by: {cause}"));
             }

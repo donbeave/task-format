@@ -35,8 +35,8 @@ pub fn compare(host: &str, image: &str, image_value: &str) -> anyhow::Result<()>
     }
     anyhow::bail!(
         "the gate baked into {image} is a different build from this binary: host {host}, image \
-         {image_value}. Rebuild the image with `taskfmt build-images`, or reinstall the host \
-         binary with `cargo install --path harness` if the host is the stale side."
+         {image_value}. Rebuild the image with `taskfmt-host build-images`, or reinstall the host \
+         binary with `cargo install --path harness --bin taskfmt-host` if the host is the stale side."
     )
 }
 

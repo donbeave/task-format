@@ -2,7 +2,7 @@
 name = "taskfmt"
 version = "0.2.0"
 edition = "2024"
-default-run = "taskfmt"
+default-run = "taskfmt-host"
 rust-version = "1.98"
 description = "task-format harness: task lint, progress init, completion gate, container dispatch"
 license = "Apache-2.0"
@@ -13,7 +13,11 @@ path = "src/lib.rs"
 
 [[bin]]
 name = "taskfmt"
-path = "src/main.rs"
+path = "src/bin/taskfmt.rs"
+
+[[bin]]
+name = "taskfmt-host"
+path = "src/bin/taskfmt-host.rs"
 
 # Declared with an explicit `path` OUTSIDE `tests/`: this suite drives the dispatch-time
 # fingerprint check, and the build stage that produces the image never receives `checks/`, so

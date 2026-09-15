@@ -21,8 +21,9 @@ WORKDIR /build
 COPY Cargo.toml Cargo.lock build.rs ./
 # the script `include!`s the hashing algorithm, so the stub stage needs that one real source too
 COPY src/fingerprint.rs ./src/fingerprint.rs
-RUN echo "pub fn placeholder() {}" > src/lib.rs \
- && echo "fn main() {}" > src/main.rs \
+RUN mkdir -p src/bin \
+ && echo "pub fn placeholder() {}" > src/lib.rs \
+ && echo "fn main() {}" > src/bin/taskfmt.rs \
  && cargo build --release --bin taskfmt --locked \
  && rm -rf src
 

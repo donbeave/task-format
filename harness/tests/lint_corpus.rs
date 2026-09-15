@@ -348,7 +348,13 @@ fn lint_cli_keeps_batch_and_ndjson_reports_attributable() {
     .unwrap();
 
     let run = |json: bool| {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_taskfmt"));
+        let bin = std::env::var("CARGO_BIN_EXE_taskfmt_host")
+            .or_else(|_| std::env::var("CARGO_BIN_EXE_taskfmt-host"))
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/taskfmt-host")
+            });
+        let mut command = Command::new(&bin);
         command.arg("--config").arg(&manifest).arg("lint");
         if json {
             command.arg("--json");

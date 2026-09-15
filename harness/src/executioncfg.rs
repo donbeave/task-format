@@ -65,11 +65,13 @@ impl ExecutionConfig {
         if !path.is_file() {
             return Ok(None);
         }
-        Self::parse_located(&std::fs::read_to_string(&path).map_err(|error| ConfigDiagnostic {
-            message: error.to_string(),
-            line: 1,
-            column: 1,
-        })?)
+        Self::parse_located(
+            &std::fs::read_to_string(&path).map_err(|error| ConfigDiagnostic {
+                message: error.to_string(),
+                line: 1,
+                column: 1,
+            })?,
+        )
         .map(Some)
     }
 

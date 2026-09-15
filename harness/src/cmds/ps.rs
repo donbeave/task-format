@@ -172,13 +172,13 @@ pub fn run(json: bool) -> anyhow::Result<i32> {
     if !docker::available() {
         bail!(
             "cannot reach the docker daemon (`docker version` failed) — the run containers are \
-             what `taskfmt ps` lists, so there is nothing it can answer without it"
+             what `taskfmt-host ps` lists, so there is nothing it can answer without it"
         );
     }
     let rows = rows();
     if rows.is_empty() {
         redact::eemit(&format!(
-            "no {CONTAINER_PREFIX}* containers on this host (`taskfmt run --task <TASK>` \
+            "no {CONTAINER_PREFIX}* containers on this host (`taskfmt-host run --task <TASK>` \
              dispatches one)"
         ));
         return Ok(0);

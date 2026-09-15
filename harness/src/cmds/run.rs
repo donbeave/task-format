@@ -107,15 +107,15 @@ pub fn require_image_fingerprint_match(
 ) -> anyhow::Result<()> {
     let image_value = reader.image_fingerprint(image).with_context(|| {
         format!(
-            "cannot read the gate fingerprint baked into {image}; rebuild it with `taskfmt \
-             build-images`, or reinstall the host binary with `cargo install --path harness` if \
-             the host is the stale side"
+            "cannot read the gate fingerprint baked into {image}; rebuild it with `taskfmt-host \
+             build-images`, or reinstall the host binary with `cargo install --path harness \
+             --bin taskfmt-host` if the host is the stale side"
         )
     })?;
     crate::cmds::fingerprint::compare(crate::HARNESS_FINGERPRINT, image, &image_value)?;
     reader.image_prerequisites(image).with_context(|| {
         format!(
-            "cannot verify runtime prerequisites in {image}; rebuild it with `taskfmt preload --auto` then `taskfmt build-images --agent all --auto`"
+            "cannot verify runtime prerequisites in {image}; rebuild it with `taskfmt-host preload --auto` then `taskfmt-host build-images --agent all --auto`"
         )
     })
 }
@@ -128,8 +128,7 @@ pub fn plan_dispatch_for_task(
     model: Option<&str>,
     effort: Option<&str>,
 ) -> anyhow::Result<(String, String, String)> {
-    let location =
-        crate::cmds::source::TaskLocation::resolve(&resolved.tasks_dir(), task_id)?;
+    let location = crate::cmds::source::TaskLocation::resolve(&resolved.tasks_dir(), task_id)?;
     let execution = load_execution_for_task(&location.package_dir)?;
     let dispatch = resolve_dispatch(
         &resolved.cfg,
@@ -140,11 +139,7 @@ pub fn plan_dispatch_for_task(
             effort,
         },
     )?;
-    Ok((
-        dispatch.profile_name,
-        dispatch.model,
-        dispatch.effort,
-    ))
+    Ok((dispatch.profile_name, dispatch.model, dispatch.effort))
 }
 
 fn load_execution_for_task(
@@ -488,7 +483,7 @@ pub(crate) fn quiesce(manifest: &Manifest) -> anyhow::Result<()> {
     }
     if docker::stop(&manifest.container, QUIESCE_GRACE_S) {
         redact::emit(&format!(
-            "QUIESCED {} (stopped before gating; `taskfmt attach {}` restarts it)",
+            "QUIESCED {} (stopped before gating; `taskfmt-host attach {}` restarts it)",
             manifest.container, manifest.run
         ));
         Ok(())
@@ -804,7 +799,7 @@ fn confirm_acceptance(manifest: &Manifest, prompt: &str) -> anyhow::Result<()> {
         }
     }
     redact::eemit(&format!(
-        "warning: goal acceptance not confirmed within 30 s — attach and check: taskfmt attach {}",
+        "warning: goal acceptance not confirmed within 30 s — attach and check: taskfmt-host attach {}",
         manifest.run
     ));
     Ok(())
@@ -827,13 +822,13 @@ fn print_summary(manifest: &Manifest, run_dir: &Path, prompt: &str) {
             manifest.container, manifest.container
         ),
         format!(
-            "attach:     taskfmt attach {}   (detach: ctrl+b q — never ctrl+c)",
+            "attach:     taskfmt-host attach {}   (detach: ctrl+b q — never ctrl+c)",
             manifest.run
         ),
-        format!("status:     taskfmt status {} [--wait]", manifest.run),
-        format!("gate:       taskfmt gate {}", manifest.run),
+        format!("status:     taskfmt-host status {} [--wait]", manifest.run),
+        format!("gate:       taskfmt-host gate {}", manifest.run),
         format!(
-            "promote:    taskfmt promote {}  (only after GATE PASS)",
+            "promote:    taskfmt-host promote {}  (only after GATE PASS)",
             manifest.run
         ),
         "raw log:    <run>/out/tui.log   (script(1) stream, from the first byte)".to_string(),

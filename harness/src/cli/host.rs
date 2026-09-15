@@ -7,11 +7,12 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "taskfmt",
+    name = "taskfmt-host",
     version = crate::VERSION,
-    about = "Task contracts, verified execution, and container dispatch",
+    about = "Filesystem projects, groups, task contracts, and verified task execution",
     after_help = "Read-only commands never prompt. Mutating commands (run, experiment, repo, \
-                  promote, preload, build-images) need --auto or --yes when stdin is not a terminal."
+                  promote, preload, build-images) need --auto or --yes when stdin is not a terminal. \
+                  In-container runtime lives in the separate `taskfmt` binary baked into harness images."
 )]
 pub struct Cli {
     /// Path to the experiment manifest. Default: $TASKFMT_CONFIG, else the nearest
@@ -103,31 +104,6 @@ pub enum Command {
         image: Option<String>,
     },
 
-    /// The completion gate: exit 0 AND last stdout line "DONE" <=> pass.
-    Verify {
-        /// Repository root the gate runs in (default: TASKFMT_ROOT, git toplevel of cwd, cwd).
-        #[arg(long)]
-        root: Option<PathBuf>,
-        /// Directory holding README.md + verify.toml (default: TASKFMT_TASK_DIR, /task, cwd).
-        #[arg(long)]
-        task_dir: Option<PathBuf>,
-        /// Progress file. Empty string disables the progress check.
-        #[arg(long)]
-        progress: Option<String>,
-        /// Disable the progress check (same as --progress "").
-        #[arg(long, conflicts_with = "progress")]
-        no_progress: bool,
-        /// Scope base ref. Order: --base > TASKFMT_BASE > base_ref in verify.toml > "baseline".
-        #[arg(long)]
-        base: Option<String>,
-        /// Directory for per-check logs (default: a fresh temp dir).
-        #[arg(long)]
-        log_dir: Option<PathBuf>,
-        /// Stop at the first failing check.
-        #[arg(long)]
-        fail_fast: bool,
-    },
-
     /// Prove a task package's gate: RED on the untouched baseline, GREEN on the reference (D13).
     /// Exit 0 only on SELFCHECK RESULT PASS; 1 FAIL; 64 usage; 66 missing input; 69 no verdict
     /// (a focused command was not runnable: rc 126/127); 70 internal error.
@@ -204,14 +180,14 @@ pub enum Command {
     /// Host gate for one run: re-run verification in the caller-provided sandbox.
     Gate {
         /// Run id, its container name (`harness-<run id>`), its run directory, or the path of that
-        /// directory's manifest.json. `taskfmt ps` lists them.
+        /// directory's manifest.json. `taskfmt-host ps` lists them.
         run: String,
     },
 
     /// Push the exact tree recorded by a passing gate.
     Promote {
         /// Run id, its container name (`harness-<run id>`), its run directory, or the path of that
-        /// directory's manifest.json. `taskfmt ps` lists them.
+        /// directory's manifest.json. `taskfmt-host ps` lists them.
         run: String,
         /// Skip the confirmation (still refuses on gate FAIL).
         #[arg(long)]
@@ -221,7 +197,7 @@ pub enum Command {
     /// Completion detection for one run, from outside the container.
     Status {
         /// Run id, its container name (`harness-<run id>`), its run directory, or the path of that
-        /// directory's manifest.json. `taskfmt ps` lists them.
+        /// directory's manifest.json. `taskfmt-host ps` lists them.
         run: String,
         /// Poll until the run reaches a terminal state.
         #[arg(long)]
@@ -234,7 +210,7 @@ pub enum Command {
     /// Re-attach to a run's live agent TUI (detach: ctrl+b q — never ctrl+c).
     Attach {
         /// Run id, its container name (`harness-<run id>`), its run directory, or the path of that
-        /// directory's manifest.json. `taskfmt ps` lists them.
+        /// directory's manifest.json. `taskfmt-host ps` lists them.
         run: String,
     },
 
@@ -276,15 +252,6 @@ pub enum Command {
         #[arg(long)]
         selfcheck: bool,
     },
-
-    /// Container PID 1 (root): inner dockerd, agent seeding, prereqs, then the agent.
-    ContainerEntrypoint,
-
-    /// Container runtime prerequisites (root): inner postgres + seed restore.
-    Prereqs,
-
-    /// Agent supervisor (as user `agent`): herdr server + one /work workspace + the agent pane.
-    AgentLaunch,
 }
 
 #[derive(Subcommand, Debug)]

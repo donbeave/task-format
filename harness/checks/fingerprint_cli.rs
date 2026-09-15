@@ -136,7 +136,7 @@ fn mismatch_names_both_values_and_the_remedy() {
         .to_string();
     assert!(err.contains(taskfmt::HARNESS_FINGERPRINT), "{err}");
     assert!(err.contains(&other), "{err}");
-    assert!(err.contains("taskfmt build-images"), "{err}");
+    assert!(err.contains("taskfmt-host build-images"), "{err}");
     assert!(err.contains("harness-claude:latest"), "{err}");
 }
 
@@ -147,7 +147,7 @@ fn unreadable_image_value_is_refused() {
         .unwrap_err()
         .to_string();
     assert!(err.contains("harness-claude:latest"), "{err}");
-    assert!(err.contains("taskfmt build-images"), "{err}");
+    assert!(err.contains("taskfmt-host build-images"), "{err}");
     assert!(err.contains("cargo install"), "{err}");
 }
 
@@ -157,8 +157,8 @@ fn missing_image_prerequisites_are_refused() {
         .unwrap_err();
     let message = format!("{err:#}");
     assert!(message.contains("/opt/preload/postgres.tar"), "{message}");
-    assert!(message.contains("taskfmt preload"), "{message}");
-    assert!(message.contains("taskfmt build-images"), "{message}");
+    assert!(message.contains("taskfmt-host preload"), "{message}");
+    assert!(message.contains("taskfmt-host build-images"), "{message}");
 }
 
 /// The whole point, driven for real: `run::run` against a reader whose value differs from this
@@ -198,7 +198,7 @@ fn dispatch_refuses_before_creating_the_run_directory() {
 
     assert!(err.contains(taskfmt::HARNESS_FINGERPRINT), "{err}");
     assert!(err.contains(&other), "{err}");
-    assert!(err.contains("taskfmt build-images"), "{err}");
+    assert!(err.contains("taskfmt-host build-images"), "{err}");
     assert!(
         !err.contains("cloning"),
         "the refusal fires before the clone: {err}"

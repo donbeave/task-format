@@ -151,9 +151,6 @@ mod tests {
         package(root.path(), "nested/group/001");
         let dirs = super::super::all_task_dirs(root.path()).unwrap();
         assert_eq!(dirs.len(), 1);
-        assert_eq!(
-            dirs[0].file_name().unwrap().to_string_lossy(),
-            "TASK-001"
-        );
+        assert_eq!(dirs[0].file_name().unwrap().to_string_lossy(), "TASK-001");
     }
 }
