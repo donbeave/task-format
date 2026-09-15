@@ -9,9 +9,66 @@ use serde::Serialize;
 use crate::cmds::Ctx;
 use crate::ops::{herdr, transcript};
 use crate::runstate::Manifest;
+use taskfmt::progress_view::ChecklistView;
 use taskfmt::redact;
 
 pub const CODEX_TRANSCRIPT_NA: &str = "n/a (rollout jsonl not parsed)";
+
+/// The run's `progress/v1` position, compact enough for the one-line status. The full checklist
+/// (per-item done / in progress / failed) is [`checklist_view`], printed beneath the JSON line.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProgressSummary {
+    /// `IN_PROGRESS` | `DONE` | `BLOCKED` | `NEEDS_REPLAN`, or `None` when the progress file is
+    /// missing or invalid (see `error`).
+    pub state: Option<String>,
+    /// The checklist leaf the agent is on right now.
+    pub current: Option<String>,
+    /// Checklist leaves done / total.
+    pub done: usize,
+    pub total: usize,
+    pub latest_event: Option<u64>,
+    pub error: Option<String>,
+}
+
+impl From<&ChecklistView> for ProgressSummary {
+    fn from(view: &ChecklistView) -> Self {
+        Self {
+            state: view.state.clone(),
+            current: view.current.clone(),
+            done: view.done,
+            total: view.total,
+            latest_event: view.latest_event,
+            error: view.progress_error.clone(),
+        }
+    }
+}
+
+/// The task checklist joined with the run's `progress/progress.md`. The README is the frozen
+/// `task-snapshot` (what the agent sees at `/task`), the progress file the `/progress` bind mount,
+/// so this reads the agent's live position without entering the container. `None` when the run
+/// has no readable task snapshot (it failed before dispatch) — coordination evidence only, never
+/// completion evidence.
+pub fn checklist_view(run_dir: &Path) -> Option<ChecklistView> {
+    let readme = run_dir.join("task-snapshot").join("README.md");
+    if !readme.is_file() {
+        return None;
+    }
+    ChecklistView::load(&readme, &run_dir.join("progress").join("progress.md")).ok()
+}
+
+/// Print the checklist when it differs from the last one printed; returns the rendering that is
+/// now on screen. `--wait` polls every few seconds and the checklist moves rarely, so it is shown
+/// on change, not per poll.
+fn show_checklist_if_changed(run_dir: &Path, shown: &mut Option<Vec<String>>) {
+    let Some(view) = checklist_view(run_dir) else {
+        return;
+    };
+    let rendered = view.render();
+    if shown.as_ref() != Some(&rendered) {
+        redact::emit_lines(&rendered);
+        *shown = Some(rendered);
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Status {
@@ -38,6 +95,9 @@ pub struct Status {
     /// Does the agent-writable `baseline` tag in the run workspace still point at `base_sha`?
     /// `None` when the workspace is absent.
     pub base_tag_ok: Option<bool>,
+    /// Where the agent is in the task checklist (`progress/v1`), when the run has a task snapshot
+    /// to read it against. Coordination evidence only: it never decides `terminal_reason`.
+    pub progress: Option<ProgressSummary>,
 }
 
 impl Status {
@@ -70,6 +130,7 @@ impl Status {
             transcript: transcript_display(manifest),
             base_sha: manifest.base_sha.clone(),
             base_tag_ok: base_tag_ok(manifest, run_dir),
+            progress: checklist_view(run_dir).map(|view| ProgressSummary::from(&view)),
         }
     }
 }
@@ -171,6 +232,8 @@ pub fn run(ctx: &Ctx, run_id: &str, wait: bool, kill_after: Option<u64>) -> anyh
     let (resolved, run_dir) = crate::cmds::load_run(ctx, run_id)?;
     let manifest = Manifest::load(&run_dir)?;
 
+    // The checklist is printed beneath the JSON line: once, or in `--wait` whenever it moves.
+    let mut shown: Option<Vec<String>> = None;
     let status = if wait {
         let kill_after =
             Duration::from_secs(60 * kill_after.unwrap_or(resolved.cfg.runtime.kill_after_min));
@@ -179,6 +242,7 @@ pub fn run(ctx: &Ctx, run_id: &str, wait: bool, kill_after: Option<u64>) -> anyh
             herdr::wait_terminal(&manifest, 300_000);
             let status = check(&manifest, &run_dir)?;
             redact::emit(&json_line(&status));
+            show_checklist_if_changed(&run_dir, &mut shown);
             if status.terminal() {
                 break status;
             }
@@ -192,6 +256,7 @@ pub fn run(ctx: &Ctx, run_id: &str, wait: bool, kill_after: Option<u64>) -> anyh
     } else {
         let status = check(&manifest, &run_dir)?;
         redact::emit(&json_line(&status));
+        show_checklist_if_changed(&run_dir, &mut shown);
         status
     };
 
@@ -314,6 +379,7 @@ pub fn check(manifest: &Manifest, run_dir: &Path) -> anyhow::Result<Status> {
         transcript: transcript_display(manifest),
         base_sha: manifest.base_sha.clone(),
         base_tag_ok: base_tag_ok(manifest, run_dir),
+        progress: checklist_view(run_dir).map(|view| ProgressSummary::from(&view)),
     })
 }
 
@@ -378,9 +444,13 @@ pub fn wait_terminal_state(
     let started = Instant::now();
     let mut candidate: Option<(String, Duration)> = None;
     let mut announced: Option<String> = None;
+    // The checklist, printed when it moves, so `run --wait` shows which leaf the agent is on
+    // without the operator attaching.
+    let mut shown: Option<Vec<String>> = None;
     loop {
         herdr::wait_terminal(manifest, 300_000);
         let status = check(manifest, run_dir).context("status check failed")?;
+        show_checklist_if_changed(run_dir, &mut shown);
         let elapsed = started.elapsed();
         let (next, confirmed) = latch_decision(
             &candidate,
@@ -443,6 +513,7 @@ fn log_decision(
         "report_status": status.report_status,
         "terminal_reason": status.terminal_reason,
         "completion_evidence": status.completion_evidence(),
+        "progress": status.progress,
         "candidate": candidate.as_ref().map(|(state, _)| state),
         "candidate_since_s": candidate.as_ref().map(|(_, at)| at.as_secs()),
         "confirmed": confirmed,
@@ -568,6 +639,7 @@ mod tests {
             transcript: String::new(),
             base_sha: "abc".into(),
             base_tag_ok: None,
+            progress: None,
         }
     }
 
@@ -1007,6 +1079,74 @@ mod tests {
         assert!(json["report_status"].is_null());
         git(&["tag", "baseline", &base]);
         assert_eq!(base_tag_ok(&m, dir.path()), Some(true));
+    }
+
+    /// A run dir shaped like `taskfmt-host run` leaves it: the frozen task snapshot and the
+    /// `/progress` bind mount, read from the host without a container.
+    #[test]
+    fn checklist_view_reads_the_snapshot_and_the_progress_mount() {
+        let dir = tempfile::tempdir().unwrap();
+        let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../harness/testdata/example");
+        // no snapshot: the run failed before dispatch, and there is nothing to show
+        assert!(checklist_view(dir.path()).is_none());
+        let m = manifest("codex", dir.path(), "abc");
+        assert_eq!(Status::bare(RUNNING, &m, dir.path()).progress, None);
+
+        std::fs::create_dir_all(dir.path().join("task-snapshot")).unwrap();
+        std::fs::copy(
+            example.join("README.md"),
+            dir.path().join("task-snapshot/README.md"),
+        )
+        .unwrap();
+        // snapshot but no progress yet (the agent has not run `taskfmt init`): all pending, and
+        // the reason is named rather than the checklist withheld
+        let view = checklist_view(dir.path()).unwrap();
+        assert_eq!(view.state, None);
+        assert_eq!((view.done, view.total), (0, 5));
+        assert!(view.progress_error.is_some());
+
+        std::fs::create_dir_all(dir.path().join("progress")).unwrap();
+        std::fs::write(
+            dir.path().join("progress/progress.md"),
+            "---\nschema: progress/v1\ntask: TASK-042\nstate: IN_PROGRESS\ncurrent: 2.1\nlatest_event: 3\n---\n\n## Events\n- 1 | STARTED | 1.1\n- 2 | DONE | 1.1\n- 3 | STARTED | 2.1\n\n## Handoff\nCURRENT_FAILURE: none\n",
+        )
+        .unwrap();
+        let view = checklist_view(dir.path()).unwrap();
+        assert_eq!(view.state.as_deref(), Some("IN_PROGRESS"));
+        assert_eq!(view.current.as_deref(), Some("2.1"));
+        assert_eq!((view.done, view.total), (1, 5));
+        let rendered = view.render();
+        assert_eq!(
+            rendered[0],
+            "progress: IN_PROGRESS  done 1/5  current 2.1  latest_event 3"
+        );
+        assert!(rendered.iter().any(|l| l.starts_with("    [x] 1.1 ")));
+        assert!(
+            rendered
+                .iter()
+                .any(|l| l.starts_with("    [>] 2.1 ") && l.ends_with("<- in progress"))
+        );
+
+        // the same position rides along in the one-line status and its JSON
+        let bare = Status::bare(RUNNING, &m, dir.path());
+        let summary = bare.progress.clone().unwrap();
+        assert_eq!(summary.state.as_deref(), Some("IN_PROGRESS"));
+        assert_eq!(summary.current.as_deref(), Some("2.1"));
+        assert_eq!((summary.done, summary.total), (1, 5));
+        assert_eq!(summary.latest_event, Some(3));
+        assert_eq!(summary.error, None);
+        let json: serde_json::Value = serde_json::from_str(&json_line(&bare)).unwrap();
+        assert_eq!(json["progress"]["current"], "2.1");
+        assert_eq!(json["progress"]["done"], 1);
+        // progress is a position, not completion evidence
+        assert!(!bare.terminal());
+
+        // only the changed checklist is printed again
+        let mut shown = None;
+        show_checklist_if_changed(dir.path(), &mut shown);
+        assert_eq!(shown.as_ref(), Some(&rendered));
+        show_checklist_if_changed(dir.path(), &mut shown);
+        assert_eq!(shown.as_ref(), Some(&rendered));
     }
 
     #[test]

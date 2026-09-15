@@ -9,6 +9,7 @@ pub mod hash;
 pub mod lint;
 pub mod ops;
 pub mod progress;
+pub mod progress_view;
 pub mod redact;
 pub mod selfcheck;
 pub mod selftest;
