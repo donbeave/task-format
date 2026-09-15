@@ -236,15 +236,21 @@ taskfmt-host experiment \
 ### Use Cursor
 
 The `cursor-default` profile runs the headed Cursor Agent CLI under herdr with
-`model = "composer-2.5"`. Dispatch arms a native `/goal` for the task prompt (typed slash input,
-not bracketed paste), so the composer should show **`Goal active (...)`** after launch—not
-`[Pasted text]` or an idle slash-command menu.
+`model = "composer-2.5"`. Dispatch passes the full `/goal …` prompt as the cursor-agent launch
+argument (not herdr bracketed-paste), so the composer should show **`Goal active (...)`** after
+launch—not `[Pasted text]` or an idle slash-command menu. Dispatch waits up to three minutes for
+that line before warning.
 
 **Authentication.** Cursor uses the same login as your host `agent` CLI. Run `agent login` on the
 host before dispatch. The `cursor-default` profile sets `auth = "host"`; do not combine that with
 `CURSOR_API_KEY` in `env_secret`. On macOS the harness reads your Keychain session at dispatch
 time; on Linux it mounts `~/.cursor/auth.json` (or legacy `~/.config/cursor/auth.json`). Inside the
 Linux container the entrypoint installs credentials at `/home/agent/.config/cursor/auth.json`.
+
+**Yolo (Run Everything).** Dispatch matches a host `cursor-yolo` wrapper: the agent command uses
+`--trust --yolo --approve-mcps --sandbox disabled`, and the pre-seeded `cli-config.json` sets
+`approvalMode` to `unrestricted` with sandbox disabled — the same intent as Claude's
+`--dangerously-skip-permissions` and Codex's `--dangerously-bypass-approvals-and-sandbox`.
 
 Build the Cursor image, lint the task, and dispatch:
 

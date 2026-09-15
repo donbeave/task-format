@@ -327,6 +327,10 @@ taskfmt-host run --task TASK-001 --repo <repository-url> --agent cursor-default 
 The `cursor-default` profile sets `auth = "host"`. Do not combine that with
 `CURSOR_API_KEY` in `env_secret`.
 
+Yolo parity: the launch command uses `--trust --yolo --approve-mcps --sandbox disabled` (same
+flags as a host `cursor-yolo` wrapper), and `images/cursor/cursor-cli-config.json` pre-seeds
+`approvalMode: unrestricted` with sandbox disabled.
+
 ### Codex via Z.ai
 
 Use the `codex-zai` profile to run Codex against Z.ai with the ChainArgos API key from 1Password:

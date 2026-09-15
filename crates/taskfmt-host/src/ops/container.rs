@@ -561,8 +561,15 @@ pub fn codex_agent_cmd(model: &str, effort: &str) -> String {
     )
 }
 
-/// The agent command line for a cursor profile (`--model` only when a model is pinned).
-pub fn cursor_agent_cmd(model: &str, effort: &str) -> String {
+/// POSIX single-quoted word for embedding in the `script -qfec` wrapper (`agent-launch`).
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+/// The agent command line for a cursor profile. The full `/goal …` prompt is passed as the
+/// cursor-agent initial `prompt` argument so dispatch arms a native goal without herdr
+/// bracketed-paste (which leaves a `[Pasted text]` chip and never invokes `/goal`).
+pub fn cursor_agent_cmd(model: &str, effort: &str, prompt: &str) -> String {
     let model_flag = if model.trim().is_empty() {
         String::new()
     } else {
@@ -570,7 +577,8 @@ pub fn cursor_agent_cmd(model: &str, effort: &str) -> String {
     };
     let _ = effort;
     format!(
-        "agent --force --trust --sandbox disabled --workspace /work --add-dir /task --add-dir /progress{model_flag}"
+        "agent --trust --yolo --approve-mcps --sandbox disabled --workspace /work --add-dir /task --add-dir /progress{model_flag} {}",
+        shell_single_quote(prompt)
     )
 }
 
@@ -718,10 +726,21 @@ mod tests {
             "no model pin when the profile model is empty"
         );
         assert!(codex_agent_cmd("gpt-5", "high").contains(" -m gpt-5 "));
-        let cursor = cursor_agent_cmd("composer-2.5", "high");
-        assert!(cursor.starts_with("agent --force --trust --sandbox disabled"));
+        let cursor = cursor_agent_cmd("composer-2.5", "high", "/goal Implement the task.");
+        assert!(cursor.starts_with(
+            "agent --trust --yolo --approve-mcps --sandbox disabled"
+        ));
         assert!(cursor.contains("--workspace /work"));
         assert!(cursor.contains("--model composer-2.5"));
+        assert!(cursor.contains("'/goal Implement the task.'"));
+    }
+
+    #[test]
+    fn shell_single_quote_survives_embedded_quotes() {
+        assert_eq!(
+            shell_single_quote("claude -m 'sonnet'"),
+            r"'claude -m '\''sonnet'\'''"
+        );
     }
 
     fn test_profile(kind: &str) -> AgentProfile {
@@ -788,6 +807,12 @@ mod tests {
         let kimi_config = std::fs::read_to_string(kimi_dir.path().join("config.toml")).unwrap();
         assert!(kimi_config.contains("model_provider = \"kimi\""));
         assert!(kimi_config.contains("KIMI_API_KEY"));
+        let cursor_dir = tempfile::tempdir().unwrap();
+        preseed_agent_home(cursor_dir.path(), &test_profile("cursor")).unwrap();
+        let cursor_config =
+            std::fs::read_to_string(cursor_dir.path().join("cli-config.json")).unwrap();
+        assert!(cursor_config.contains("\"approvalMode\": \"unrestricted\""));
+        assert!(cursor_config.contains("\"mode\": \"disabled\""));
         assert!(preseed_agent_home(dir.path(), &test_profile("ghost")).is_err());
     }
 

@@ -239,7 +239,7 @@ pub fn dispatch_one(
     let agent_cmd = match profile.kind.as_str() {
         "claude" => container::claude_agent_cmd(&session_id, &model, &effort),
         "codex" => container::codex_agent_cmd(&model, &effort),
-        "cursor" => container::cursor_agent_cmd(&model, &effort),
+        "cursor" => container::cursor_agent_cmd(&model, &effort, &prompt),
         other => bail!("unsupported agent kind: {other}"),
     };
     let mut manifest = Manifest {
@@ -309,27 +309,33 @@ pub fn dispatch_one(
     manifest.save(&run_dir)?;
 
     // ---------- 13. readiness + prompt injection ----------
-    if !herdr::wait_idle(&manifest, 180_000)? {
-        redact::eemit("agent not idle after 180 s (dialog? auth?). Screen:");
-        if let Ok(screen) = herdr::pane_visible(&manifest) {
-            redact::eemit(&screen);
+    if manifest.agent_kind == "cursor" {
+        // The `/goal …` prompt is on the agent argv at launch — do not herdr-inject (bracketed
+        // paste never invokes the slash command). The agent may go straight to `working`.
+        confirm_acceptance(&manifest, &prompt)?;
+    } else {
+        if !herdr::wait_idle(&manifest, 180_000)? {
+            redact::eemit("agent not idle after 180 s (dialog? auth?). Screen:");
+            if let Ok(screen) = herdr::pane_visible(&manifest) {
+                redact::eemit(&screen);
+            }
+            bail!(
+                "agent never became idle — container {} left up",
+                manifest.container
+            );
         }
-        bail!(
-            "agent never became idle — container {} left up",
-            manifest.container
-        );
-    }
-    if let Err(err) = herdr::inject_goal_prompt(&manifest, &prompt) {
-        redact::eemit(&format!("prompt refused: {err:#}"));
-        if let Ok(screen) = herdr::pane_visible(&manifest) {
-            redact::eemit(&screen);
+        if let Err(err) = herdr::inject_goal_prompt(&manifest, &prompt) {
+            redact::eemit(&format!("prompt refused: {err:#}"));
+            if let Ok(screen) = herdr::pane_visible(&manifest) {
+                redact::eemit(&screen);
+            }
+            bail!(
+                "prompt was refused — container {} left up",
+                manifest.container
+            );
         }
-        bail!(
-            "prompt was refused — container {} left up",
-            manifest.container
-        );
+        confirm_acceptance(&manifest, &prompt)?;
     }
-    confirm_acceptance(&manifest, &prompt)?;
     manifest.save(&run_dir)?;
 
     print_summary(&manifest, &run_dir, &prompt);
@@ -770,18 +776,18 @@ fn wait_pane(manifest: &Manifest, timeout: Duration) -> anyhow::Result<String> {
     bail!("no pane id from the container");
 }
 
-/// Confirm the goal was accepted: transcript sentinel (claude) or the agent turning `working`
-/// (codex/cursor). Bracketed paste can leave a `[Pasted text]` chip without submitting — keep
-/// sending Enter until herdr reports `working`/`blocked` or the unsubmitted marker clears.
+/// Confirm the goal was accepted: transcript sentinel (claude), native `/goal` on screen (cursor),
+/// or the agent turning `working` (codex). Cursor must show `Goal active` — `working` alone means
+/// the prompt was pasted as chat, not armed as a goal.
 fn confirm_acceptance(manifest: &Manifest, prompt: &str) -> anyhow::Result<()> {
     let transcript = crate::ops::transcript::claude_transcript(manifest);
     let prefix: String = prompt.chars().take(40).collect();
     let claude = manifest.agent_kind == "claude";
     let cursor = manifest.agent_kind == "cursor";
-    let iterations = if claude { 15 } else { 30 };
+    let codex = manifest.agent_kind == "codex";
+    let iterations = if claude { 15 } else { 90 };
     const SLEEP: Duration = Duration::from_secs(2);
     const ENTER_RETRIES_CODEX: [u32; 3] = [2, 5, 8];
-    const ENTER_RETRIES_CURSOR: [u32; 6] = [1, 2, 3, 5, 8, 12];
     for iteration in 1..=iterations {
         std::thread::sleep(SLEEP);
         if claude
@@ -799,7 +805,7 @@ fn confirm_acceptance(manifest: &Manifest, prompt: &str) -> anyhow::Result<()> {
             redact::emit("goal accepted (/goal active on screen)");
             return Ok(());
         }
-        if !claude {
+        if codex {
             let unsubmitted = herdr::pane_visible(manifest)
                 .map(|screen| crate::cmds::status::screen_shows_unsubmitted_prompt(&screen))
                 .unwrap_or(false);
@@ -810,24 +816,26 @@ fn confirm_acceptance(manifest: &Manifest, prompt: &str) -> anyhow::Result<()> {
                 }
                 _ => {}
             }
+            if ENTER_RETRIES_CODEX.contains(&iteration)
+                && herdr::pane_visible(manifest)
+                    .map(|screen| {
+                        crate::cmds::status::screen_shows_unsubmitted_prompt(&screen)
+                            || screen.contains(&prefix)
+                    })
+                    .unwrap_or(false)
+            {
+                redact::eemit("prompt visible but not submitted — sending Enter");
+                herdr::send_enter(manifest);
+            }
         }
-        let enter_retries = if cursor {
-            &ENTER_RETRIES_CURSOR[..]
-        } else if !claude {
-            &ENTER_RETRIES_CODEX[..]
-        } else {
-            &[][..]
-        };
-        if enter_retries.contains(&iteration)
+        if cursor
             && herdr::pane_visible(manifest)
-                .map(|screen| {
-                    crate::cmds::status::screen_shows_unsubmitted_prompt(&screen)
-                        || screen.contains(&prefix)
-                })
+                .map(|screen| crate::cmds::status::screen_shows_unsubmitted_prompt(&screen))
                 .unwrap_or(false)
         {
-            redact::eemit("prompt visible but not submitted — sending Enter");
-            herdr::send_enter(manifest);
+            redact::eemit(
+                "cursor prompt pasted as chat, not /goal — re-dispatch after `cargo install`",
+            );
         }
     }
     let timeout_s = (iterations as u64) * SLEEP.as_secs();
