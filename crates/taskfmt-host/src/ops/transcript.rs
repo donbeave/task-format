@@ -5,8 +5,10 @@
 //! fallback — then herdr's own agent status.
 
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
+use walkdir::WalkDir;
 
 use crate::runstate::Manifest;
 
@@ -25,6 +27,74 @@ pub fn claude_transcript(manifest: &Manifest) -> PathBuf {
         .join("projects")
         .join("work")
         .join(format!("{}.jsonl", manifest.session_id))
+}
+
+/// `<agent-home>/sessions/**/rollout-*.jsonl` — Codex's durable session log.
+pub fn codex_sessions_dir(manifest: &Manifest) -> PathBuf {
+    manifest.run_dir_path().join("agent-home").join("sessions")
+}
+
+/// Newest matching Codex rollout under [`codex_sessions_dir`], preferring this run's
+/// `session_id` in the filename or the first-line `session_meta.id`.
+pub fn codex_rollout(manifest: &Manifest) -> Option<PathBuf> {
+    codex_rollout_in(&codex_sessions_dir(manifest), &manifest.session_id)
+}
+
+fn codex_rollout_in(sessions: &Path, session_id: &str) -> Option<PathBuf> {
+    if !sessions.is_dir() {
+        return None;
+    }
+    let mut matches = Vec::new();
+    for entry in WalkDir::new(sessions)
+        .follow_links(false)
+        .into_iter()
+        .flatten()
+    {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if name.starts_with("rollout-") && name.ends_with(".jsonl") {
+            matches.push(path.to_path_buf());
+        }
+    }
+    if matches.is_empty() {
+        return None;
+    }
+    if let Some(found) = matches
+        .iter()
+        .find(|path| path.to_string_lossy().contains(session_id))
+    {
+        return Some(found.clone());
+    }
+    if let Some(found) = matches
+        .iter()
+        .find(|path| rollout_session_id(path).is_some_and(|id| id == session_id))
+    {
+        return Some(found.clone());
+    }
+    matches.sort_by_key(|path| {
+        std::fs::metadata(path)
+            .and_then(|meta| meta.modified())
+            .unwrap_or(SystemTime::UNIX_EPOCH)
+    });
+    matches.pop()
+}
+
+fn rollout_session_id(path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let line = text.lines().next()?;
+    let value = serde_json::from_str::<serde_json::Value>(line).ok()?;
+    if value.get("type")?.as_str()? != "session_meta" {
+        return None;
+    }
+    value
+        .pointer("/payload/id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
 }
 
 /// Last non-sentinel `goal_status` verdict in the transcript.
@@ -145,17 +215,107 @@ pub fn strip_ansi(line: &str) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Why a `GOAL_RESULT` candidate is visible but not run-owned completion evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum GoalResultReject {
+    WrongTask { found: String, expected: String },
+    InvalidStatus,
+}
+
+impl GoalResultReject {
+    /// Operator-facing fragment for `wait_terminal_state` wait messages.
+    pub fn diagnostic(&self) -> String {
+        match self {
+            Self::WrongTask { found, expected } => {
+                format!("rejected(wrong-task {found}, expected {expected})")
+            }
+            Self::InvalidStatus => "rejected(invalid status)".to_string(),
+        }
+    }
+}
+
+/// Last rendered row in `tui.log` that begins with `GOAL_RESULT`, regardless of task ownership.
+pub fn last_goal_result_candidate(tui_log: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(tui_log).ok()?;
+    text.lines()
+        .rev()
+        .map(strip_ansi)
+        .find(|line| line.starts_with("GOAL_RESULT"))
+}
+
+/// Last assistant-text row in the transcript jsonl that begins with `GOAL_RESULT`, regardless of
+/// task ownership. Same final-row rule as [`goal_result_transcript`], but without anchoring.
+pub fn last_goal_result_candidate_transcript(transcript: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(transcript).ok()?;
+    let mut last = None;
+    for line in text.lines() {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if value.get("type").and_then(serde_json::Value::as_str) != Some("assistant") {
+            continue;
+        }
+        let Some(content) = value
+            .pointer("/message/content")
+            .and_then(serde_json::Value::as_array)
+        else {
+            continue;
+        };
+        let mut final_text_row = None;
+        for block in content {
+            if block.get("type").and_then(serde_json::Value::as_str) != Some("text") {
+                continue;
+            }
+            let Some(text) = block.get("text").and_then(serde_json::Value::as_str) else {
+                continue;
+            };
+            for row in text.lines() {
+                let row = row.trim();
+                if !row.is_empty() {
+                    final_text_row = Some(row);
+                }
+            }
+        }
+        if let Some(row) = final_text_row
+            && row.starts_with("GOAL_RESULT")
+        {
+            last = Some(row.to_string());
+        }
+    }
+    last
+}
+
+/// Classify a `GOAL_RESULT` candidate against this run's task id. `None` when the line is valid
+/// run-owned evidence; `Some` when the marker is present but fails task anchoring or protocol shape.
+pub fn classify_goal_result_reject(line: &str, task_id: &str) -> Option<GoalResultReject> {
+    if parse_goal_result(line, task_id).is_some() {
+        return None;
+    }
+    let mut tokens = line.split_whitespace();
+    if tokens.next()? != "GOAL_RESULT" {
+        return None;
+    }
+    let task_token = tokens.next()?;
+    let Some(found_task) = task_token.strip_prefix("task=") else {
+        return Some(GoalResultReject::InvalidStatus);
+    };
+    if found_task != task_id {
+        return Some(GoalResultReject::WrongTask {
+            found: found_task.to_string(),
+            expected: task_id.to_string(),
+        });
+    }
+    Some(GoalResultReject::InvalidStatus)
+}
+
 /// Last valid, run-owned `GOAL_RESULT` line in the raw tui log, as rendered (see [`strip_ansi`]).
 ///
 /// `tui.log` contains prompts, documentation, command output, and agent text. A line beginning
 /// with `GOAL_RESULT` is therefore only a candidate; it becomes evidence only when its task id
 /// matches this run and its status is one of the protocol values.
 pub fn goal_result_line(tui_log: &Path, task_id: &str) -> Option<String> {
-    let text = std::fs::read_to_string(tui_log).ok()?;
-    text.lines()
-        .rev()
-        .map(strip_ansi)
-        .find(|line| parse_goal_result(line, task_id).is_some())
+    last_goal_result_candidate(tui_log).filter(|line| parse_goal_result(line, task_id).is_some())
 }
 
 /// Last `GOAL_RESULT` line in the session transcript jsonl — the authoritative copy of the
@@ -205,6 +365,115 @@ pub fn goal_result_transcript(transcript: &Path, task_id: &str) -> Option<String
         }
     }
     last
+}
+
+/// Last assistant-text row in a Codex rollout that begins with `GOAL_RESULT`, regardless of task
+/// ownership. Same final-row rule as [`goal_result_codex_rollout`], but without anchoring.
+pub fn last_goal_result_candidate_codex_rollout(rollout: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(rollout).ok()?;
+    let mut last = None;
+    for line in text.lines() {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if let Some(row) = codex_assistant_final_row(&value)
+            && row.starts_with("GOAL_RESULT")
+        {
+            last = Some(row.to_string());
+        }
+    }
+    last
+}
+
+/// Last `GOAL_RESULT` line in a Codex rollout jsonl — authoritative over `tui.log` for codex
+/// runs. Assistant text lives in `response_item` messages and `event_msg` `agent_message` rows.
+pub fn goal_result_codex_rollout(rollout: &Path, task_id: &str) -> Option<String> {
+    let text = std::fs::read_to_string(rollout).ok()?;
+    let mut last = None;
+    for line in text.lines() {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if let Some(row) = codex_assistant_final_row(&value) {
+            last = parse_goal_result(&row, task_id).is_some().then_some(row);
+        }
+    }
+    last
+}
+
+fn codex_assistant_final_row(value: &serde_json::Value) -> Option<String> {
+    match value.get("type").and_then(serde_json::Value::as_str)? {
+        "response_item" => {
+            let payload = value.get("payload")?;
+            if payload.get("type").and_then(serde_json::Value::as_str)? != "message" {
+                return None;
+            }
+            if payload.get("role").and_then(serde_json::Value::as_str)? != "assistant" {
+                return None;
+            }
+            let content = payload
+                .get("content")
+                .and_then(serde_json::Value::as_array)?;
+            let mut merged = String::new();
+            for block in content {
+                if block.get("type").and_then(serde_json::Value::as_str)? != "output_text" {
+                    continue;
+                }
+                let Some(text) = block.get("text").and_then(serde_json::Value::as_str) else {
+                    continue;
+                };
+                if !merged.is_empty() {
+                    merged.push('\n');
+                }
+                merged.push_str(text);
+            }
+            final_text_row(&merged)
+        }
+        "event_msg" => {
+            let payload = value.get("payload")?;
+            if payload.get("type").and_then(serde_json::Value::as_str)? != "agent_message" {
+                return None;
+            }
+            if let Some(text) = payload.get("text").and_then(serde_json::Value::as_str) {
+                return final_text_row(text);
+            }
+            let content = payload
+                .get("content")
+                .and_then(serde_json::Value::as_array)?;
+            let mut merged = String::new();
+            for block in content {
+                if block.get("type").and_then(serde_json::Value::as_str)? != "output_text" {
+                    continue;
+                }
+                let Some(text) = block.get("text").and_then(serde_json::Value::as_str) else {
+                    continue;
+                };
+                if !merged.is_empty() {
+                    merged.push('\n');
+                }
+                merged.push_str(text);
+            }
+            final_text_row(&merged)
+        }
+        _ => None,
+    }
+}
+
+fn final_text_row(text: &str) -> Option<String> {
+    text.lines()
+        .rfind(|row| !row.trim().is_empty())
+        .map(|row| row.trim().to_string())
+}
+
+/// Codex TUI may show "Goal achieved" when its native goal completes. That banner is not harness
+/// completion evidence — this detects it in the raw `tui.log` capture.
+pub fn codex_native_goal_achieved(tui_log: &Path) -> bool {
+    std::fs::read_to_string(tui_log)
+        .map(|text| {
+            text.lines()
+                .any(|line| strip_ansi(line).contains("Goal achieved"))
+        })
+        .unwrap_or(false)
 }
 
 /// Did the goal evaluator's Stop hook crash? A `hook_non_blocking_error` attachment for the
@@ -345,10 +614,10 @@ pub fn recently_active(transcript: &Path, max_age: std::time::Duration) -> bool 
     false
 }
 
-/// True when a raw TUI capture was updated recently. Codex does not persist its rollout JSONL in
-/// the run directory when host auth is used, so the bound capture is the only durable activity
-/// signal available to rescue a false herdr `idle` classification. A future mtime is active by
-/// the same clock-skew rule as [`recently_active`].
+/// True when a raw TUI capture was updated recently. For Codex, rollout jsonl under
+/// `agent-home/sessions/` is the authoritative transcript, but its mtime may lag the live TUI;
+/// this mtime is still the conservative activity signal to rescue a false herdr `idle`
+/// classification. A future mtime is active by the same clock-skew rule as [`recently_active`].
 pub fn recently_updated(path: &Path, max_age: std::time::Duration) -> bool {
     let Ok(modified) = std::fs::metadata(path).and_then(|meta| meta.modified()) else {
         return false;
@@ -588,6 +857,75 @@ mod tests {
         );
     }
 
+    fn write_codex_rollout(dir: &Path, session_id: &str, body: &str) -> PathBuf {
+        let rollout_dir = dir.join("agent-home/sessions/2026/09/16");
+        std::fs::create_dir_all(&rollout_dir).unwrap();
+        let path = rollout_dir.join(format!("rollout-2026-09-16T00-00-00-{session_id}.jsonl"));
+        let meta = format!(
+            "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{session_id}\"}}}}\n{body}"
+        );
+        std::fs::write(&path, meta).unwrap();
+        path
+    }
+
+    #[test]
+    fn codex_rollout_prefers_the_run_session_id() {
+        let dir = tempfile::tempdir().unwrap();
+        write_codex_rollout(dir.path(), "sid-a", "");
+        write_codex_rollout(dir.path(), "sid-b", "");
+        assert!(
+            codex_rollout_in(&dir.path().join("agent-home/sessions"), "sid-b")
+                .unwrap()
+                .to_string_lossy()
+                .contains("sid-b")
+        );
+    }
+
+    #[test]
+    fn goal_result_codex_rollout_reads_the_last_assistant_message() {
+        let dir = tempfile::tempdir().unwrap();
+        let rollout = write_codex_rollout(
+            dir.path(),
+            "sid-1",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[\
+                {\"type\":\"output_text\",\"text\":\"STATUS: BLOCKED\\nGOAL_RESULT task=T-1 status=BLOCKED\"}]}}\n\
+             {\"type\":\"event_msg\",\"payload\":{\"type\":\"agent_message\",\"text\":\"final report\\nGOAL_RESULT task=T-1 status=DONE\"}}\n",
+        );
+        assert_eq!(
+            goal_result_codex_rollout(&rollout, "T-1").as_deref(),
+            Some("GOAL_RESULT task=T-1 status=DONE"),
+            "response_item and event_msg assistant rows; last anchored report wins"
+        );
+    }
+
+    #[test]
+    fn goal_result_codex_rollout_must_be_anchored_to_the_run_task() {
+        let dir = tempfile::tempdir().unwrap();
+        let rollout = write_codex_rollout(
+            dir.path(),
+            "sid-1",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[\
+                {\"type\":\"output_text\",\"text\":\"GOAL_RESULT task=T-999 status=DONE\"}]}}\n\
+             {\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[\
+                {\"type\":\"output_text\",\"text\":\"planning mention\\nGOAL_RESULT task=T-1 status=DONE\\nthen more work\"}]}}\n",
+        );
+        assert!(goal_result_codex_rollout(&rollout, "T-1").is_none());
+    }
+
+    #[test]
+    fn codex_native_goal_achieved_matches_the_rendered_banner() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("tui.log");
+        std::fs::write(
+            &log,
+            "\u{1b}[5GGoal\u{1b}[10Gachieved\u{1b}[20Gfor this task\r\n",
+        )
+        .unwrap();
+        assert!(codex_native_goal_achieved(&log));
+        std::fs::write(&log, "still working\n").unwrap();
+        assert!(!codex_native_goal_achieved(&log));
+    }
+
     #[test]
     fn goal_result_transcript_is_none_without_a_report() {
         let dir = write_tmp(
@@ -641,6 +979,77 @@ mod tests {
         assert_eq!(report_status("GOAL_RESULT task=TASK-101"), None);
         assert_eq!(report_status(""), None);
         assert_eq!(ReportStatus::NeedsReplan.as_str(), "NEEDS_REPLAN");
+    }
+
+    #[test]
+    fn last_goal_result_candidate_finds_the_last_row_regardless_of_task() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("tui.log");
+        std::fs::write(
+            &log,
+            "noise\nGOAL_RESULT task=TASK-000 status=<STATUS>\n\
+             GOAL_RESULT task=TASK-003 status=DONE\n",
+        )
+        .unwrap();
+        assert_eq!(
+            last_goal_result_candidate(&log).as_deref(),
+            Some("GOAL_RESULT task=TASK-003 status=DONE")
+        );
+        assert!(last_goal_result_candidate(dir.path().join("missing").as_path()).is_none());
+    }
+
+    #[test]
+    fn classify_goal_result_reject_distinguishes_absent_wrong_task_and_bad_status() {
+        assert_eq!(
+            classify_goal_result_reject("GOAL_RESULT task=TASK-002 status=DONE", "TASK-002"),
+            None,
+            "valid run-owned evidence is not a reject"
+        );
+        assert_eq!(
+            classify_goal_result_reject("GOAL_RESULT task=TASK-003 status=DONE", "TASK-002"),
+            Some(GoalResultReject::WrongTask {
+                found: "TASK-003".into(),
+                expected: "TASK-002".into(),
+            })
+        );
+        for line in [
+            "GOAL_RESULT task=TASK-002 status=MAYBE",
+            "GOAL_RESULT task=TASK-002 status=<STATUS>",
+            "GOAL_RESULT task=TASK-002 status=DONE extra=field",
+            "GOAL_RESULT status=DONE",
+        ] {
+            assert_eq!(
+                classify_goal_result_reject(line, "TASK-002"),
+                Some(GoalResultReject::InvalidStatus),
+                "{line}"
+            );
+        }
+        assert_eq!(
+            GoalResultReject::WrongTask {
+                found: "TASK-003".into(),
+                expected: "TASK-002".into(),
+            }
+            .diagnostic(),
+            "rejected(wrong-task TASK-003, expected TASK-002)"
+        );
+        assert_eq!(
+            GoalResultReject::InvalidStatus.diagnostic(),
+            "rejected(invalid status)"
+        );
+    }
+
+    #[test]
+    fn last_goal_result_candidate_transcript_tracks_unanchored_rows() {
+        let dir = write_tmp(
+            "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[\
+                {\"type\":\"text\",\"text\":\"GOAL_RESULT task=T-999 status=DONE\"}]}}\n\
+             {\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[\
+                {\"type\":\"text\",\"text\":\"final\\nGOAL_RESULT task=T-1 status=MAYBE\"}]}}\n",
+        );
+        assert_eq!(
+            last_goal_result_candidate_transcript(&dir.path().join("t.jsonl")).as_deref(),
+            Some("GOAL_RESULT task=T-1 status=MAYBE")
+        );
     }
 
     #[test]

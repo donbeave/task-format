@@ -612,20 +612,20 @@ pub fn cursor_cli_config_json() -> &'static str {
 
 /// codex `config.toml` pre-seed for OpenAI/default providers.
 pub fn codex_config_toml() -> &'static str {
-    "approval_policy = \"never\"\nsandbox_mode    = \"danger-full-access\"\n[features]\ngoals = true\n[projects.\"/work\"]\ntrust_level = \"trusted\"\n[notice]\nhide_full_access_warning = true\n[tui]\nshow_tooltips = false\nanimations = false\n"
+    "approval_policy = \"never\"\nsandbox_mode    = \"danger-full-access\"\n[features]\ngoals = false\n[projects.\"/work\"]\ntrust_level = \"trusted\"\n[notice]\nhide_full_access_warning = true\n[tui]\nshow_tooltips = false\nanimations = false\n"
 }
 
 /// codex `config.toml` pre-seed for Z.ai via `ZAI_API_KEY` in `env_secret`.
 pub fn codex_zai_config_toml(model: &str) -> String {
     format!(
-        "approval_policy = \"never\"\nsandbox_mode    = \"danger-full-access\"\nmodel = \"{model}\"\nmodel_provider = \"zai\"\n[features]\ngoals = true\n[model_providers.zai]\nname = \"Z.AI\"\nbase_url = \"https://api.z.ai/api/v1\"\nenv_key = \"ZAI_API_KEY\"\nwire_api = \"responses\"\n[projects.\"/work\"]\ntrust_level = \"trusted\"\n[notice]\nhide_full_access_warning = true\n[tui]\nshow_tooltips = false\nanimations = false\n"
+        "approval_policy = \"never\"\nsandbox_mode    = \"danger-full-access\"\nmodel = \"{model}\"\nmodel_provider = \"zai\"\n[features]\ngoals = false\n[model_providers.zai]\nname = \"Z.AI\"\nbase_url = \"https://api.z.ai/api/v1\"\nenv_key = \"ZAI_API_KEY\"\nwire_api = \"responses\"\n[projects.\"/work\"]\ntrust_level = \"trusted\"\n[notice]\nhide_full_access_warning = true\n[tui]\nshow_tooltips = false\nanimations = false\n"
     )
 }
 
 /// codex `config.toml` pre-seed for Kimi via `KIMI_API_KEY` in `env_secret`.
 pub fn codex_kimi_config_toml(model: &str) -> String {
     format!(
-        "approval_policy = \"never\"\nsandbox_mode    = \"danger-full-access\"\nmodel = \"{model}\"\nmodel_provider = \"kimi\"\nmodel_context_window = 1048576\n[features]\ngoals = true\n[model_providers.kimi]\nname = \"Kimi\"\nbase_url = \"https://api.moonshot.ai/v1\"\nenv_key = \"KIMI_API_KEY\"\nwire_api = \"responses\"\n[projects.\"/work\"]\ntrust_level = \"trusted\"\n[notice]\nhide_full_access_warning = true\n[tui]\nshow_tooltips = false\nanimations = false\n"
+        "approval_policy = \"never\"\nsandbox_mode    = \"danger-full-access\"\nmodel = \"{model}\"\nmodel_provider = \"kimi\"\nmodel_context_window = 1048576\n[features]\ngoals = false\n[model_providers.kimi]\nname = \"Kimi\"\nbase_url = \"https://api.moonshot.ai/v1\"\nenv_key = \"KIMI_API_KEY\"\nwire_api = \"responses\"\n[projects.\"/work\"]\ntrust_level = \"trusted\"\n[notice]\nhide_full_access_warning = true\n[tui]\nshow_tooltips = false\nanimations = false\n"
     )
 }
 

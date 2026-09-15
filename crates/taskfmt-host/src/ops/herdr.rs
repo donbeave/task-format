@@ -71,10 +71,44 @@ pub fn wait_terminal(manifest: &Manifest, timeout_ms: u64) {
     let _ = docker::exec(&manifest.container, Some("agent"), &env(), &args, false);
 }
 
-/// `herdr agent rename <pane> task` — the stable target name attach/status use. The pane exists
-/// before herdr registers the agent record for it, so poll until the rename lands.
-pub fn rename_to_task(manifest: &Manifest) -> anyhow::Result<()> {
+/// herdr errors that mean the agent record is not ready yet — safe to retry rename/get.
+pub(crate) fn is_transient_agent_error(err: &anyhow::Error) -> bool {
+    is_transient_agent_message(&err.to_string())
+}
+
+fn is_transient_agent_message(msg: &str) -> bool {
+    msg.contains("agent_not_found") || msg.contains("agent_not_running")
+}
+
+/// `herdr agent get <pane>` — has herdr registered the process on this pane yet?
+fn agent_get_pane(manifest: &Manifest) -> anyhow::Result<()> {
     let args = vec![
+        HERDR.to_string(),
+        "agent".to_string(),
+        "get".to_string(),
+        manifest.pane.clone(),
+    ];
+    let out = docker::exec(&manifest.container, Some("agent"), &env(), &args, false)?;
+    if out.ok() {
+        return Ok(());
+    }
+    let msg = format!(
+        "herdr agent get {} failed (rc={}): {}",
+        manifest.pane,
+        out.status,
+        out.stderr.trim()
+    );
+    if is_transient_agent_message(&msg) {
+        anyhow::bail!("{msg}")
+    }
+    anyhow::bail!("{msg}")
+}
+
+/// `herdr agent rename <pane> task` — the stable target name attach/status use. The pane exists
+/// before herdr registers the agent record for it, so wait for `agent get` then rename; retry only
+/// on `agent_not_found` / `agent_not_running` with exponential backoff.
+pub fn rename_to_task(manifest: &Manifest) -> anyhow::Result<()> {
+    let rename_args = vec![
         HERDR.to_string(),
         "agent".to_string(),
         "rename".to_string(),
@@ -82,15 +116,28 @@ pub fn rename_to_task(manifest: &Manifest) -> anyhow::Result<()> {
         "task".to_string(),
     ];
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    let mut backoff = std::time::Duration::from_millis(200);
     loop {
-        match docker::exec_ok(&manifest.container, Some("agent"), &env(), &args) {
-            Ok(_) => return Ok(()),
-            Err(err) if std::time::Instant::now() < deadline => {
-                redact::eemit(&format!("rename not yet possible ({err:#}); retrying"));
-                std::thread::sleep(std::time::Duration::from_secs(5));
+        if std::time::Instant::now() >= deadline {
+            anyhow::bail!("herdr agent rename timed out after 120 s");
+        }
+        match agent_get_pane(manifest) {
+            Ok(()) => {
+                match docker::exec_ok(&manifest.container, Some("agent"), &env(), &rename_args) {
+                    Ok(_) => return Ok(()),
+                    Err(err) if is_transient_agent_error(&err) => {
+                        redact::eemit(&format!("rename not yet possible ({err:#}); retrying"));
+                    }
+                    Err(err) => return Err(err),
+                }
+            }
+            Err(err) if is_transient_agent_error(&err) => {
+                redact::eemit(&format!("agent not registered yet ({err:#}); retrying"));
             }
             Err(err) => return Err(err),
         }
+        std::thread::sleep(backoff);
+        backoff = (backoff * 2).min(std::time::Duration::from_secs(5));
     }
 }
 
@@ -227,5 +274,12 @@ mod tests {
         for state in HERDR_AGENT_STATES {
             assert_eq!(wait_returns_for(Some(state)), state != "working", "{state}");
         }
+    }
+
+    #[test]
+    fn transient_agent_errors_are_retryable() {
+        assert!(is_transient_agent_message("agent_not_found: w1:p1"));
+        assert!(is_transient_agent_message("agent_not_running"));
+        assert!(!is_transient_agent_message("permission denied"));
     }
 }

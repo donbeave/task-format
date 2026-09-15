@@ -21,6 +21,8 @@ use crate::runstate::{
 use taskfmt::executioncfg;
 use taskfmt::redact;
 use taskfmt::selfcheck::{self, Report, SelfcheckOpts};
+use taskfmt::taskfile::TaskFile;
+use taskfmt::verifycfg::{self, VerifyConfig};
 
 pub const BASE_TAG: &str = "baseline";
 /// `runs/<ID>/selfcheck.log`: the full D13 selfcheck report of the (opt-in) dispatch precondition.
@@ -70,11 +72,7 @@ pub fn run(
     if wait {
         let mut manifest = outcome.manifest;
         let status = wait_and_gate(&mut manifest, &outcome.run_dir, &resolved, kill_after)?;
-        return Ok(if status.state == crate::cmds::status::GOAL_MET {
-            0
-        } else {
-            1
-        });
+        return Ok(run_wait_exit_code(&status, &manifest));
     }
     Ok(0)
 }
@@ -353,6 +351,18 @@ pub const STATUS_FILE: &str = "status.json";
 /// `<run>/out/` — the workspace fingerprint taken either side of the gate.
 pub const GATE_FINGERPRINT_FILE: &str = "gate-fingerprint.json";
 
+/// Exit code for `run --wait`: terminal completion evidence plus a passing gate — not `GOAL_MET`
+/// alone (Claude-specific). Aligns with `status::is_promotable` and the gate verdict.
+pub(crate) fn run_wait_exit_code(status: &crate::cmds::status::Status, manifest: &Manifest) -> i32 {
+    if crate::cmds::status::is_promotable(status)
+        && manifest.gate.as_ref().is_some_and(|gate| gate.passed())
+    {
+        0
+    } else {
+        1
+    }
+}
+
 /// `--wait`: poll until the run is terminal, **stop the agent**, then gate and record the verdict.
 /// The gate record lands in the caller's manifest (and on disk) — the caller gates promotion on it.
 ///
@@ -596,10 +606,43 @@ fn record_selfcheck(run_dir: &Path, report: &Report) -> anyhow::Result<&'static 
     Ok(status)
 }
 
+/// Replace template task-id placeholders with the canonical id for this snapshot.
+pub fn substitute_task_id(content: &str, task_id: &str) -> String {
+    content
+        .replace("TASK-000", task_id)
+        .replace("<id-from-README>", task_id)
+}
+
+/// Resolve the task id from README frontmatter, falling back to an existing `verify.toml`.
+pub fn resolve_snapshot_task_id(snapshot: &Path) -> anyhow::Result<String> {
+    let readme = snapshot.join("README.md");
+    if readme.is_file() {
+        let text = std::fs::read_to_string(&readme)
+            .with_context(|| format!("reading {}", readme.display()))?;
+        if let Ok(tf) = TaskFile::parse(text, &readme) {
+            return Ok(tf.frontmatter.id);
+        }
+    }
+    let verify = snapshot.join(verifycfg::FILE_NAME);
+    if verify.is_file() {
+        let text = std::fs::read_to_string(&verify)
+            .with_context(|| format!("reading {}", verify.display()))?;
+        let cfg = VerifyConfig::parse_located(&text).map_err(|error| {
+            anyhow::anyhow!("{}:{}: {}", verifycfg::FILE_NAME, error.line, error.message)
+        })?;
+        return Ok(cfg.task_id);
+    }
+    bail!(
+        "cannot resolve task id from README.md frontmatter or {}",
+        verifycfg::FILE_NAME
+    )
+}
+
 /// Copy `AGENTS.md` and `verify.toml` from the template when the task package lacks them, plus the
 /// `CLAUDE.md` → `AGENTS.md` sibling symlink (hard rule: never a real CLAUDE.md).
 pub fn top_up_snapshot(snapshot: &Path, template_dir: &Path) -> anyhow::Result<()> {
-    for file in ["AGENTS.md", "verify.toml"] {
+    let task_id = resolve_snapshot_task_id(snapshot)?;
+    for file in ["AGENTS.md", verifycfg::FILE_NAME] {
         if snapshot.join(file).exists() {
             continue;
         }
@@ -607,8 +650,11 @@ pub fn top_up_snapshot(snapshot: &Path, template_dir: &Path) -> anyhow::Result<(
         if !source.is_file() {
             bail!("template is missing {file} ({})", source.display());
         }
-        std::fs::copy(&source, snapshot.join(file))
-            .with_context(|| format!("copying {} into the snapshot", source.display()))?;
+        let template = std::fs::read_to_string(&source)
+            .with_context(|| format!("reading template {}", source.display()))?;
+        let materialized = substitute_task_id(&template, &task_id);
+        crate::ops::write_file(&snapshot.join(file), &materialized)
+            .with_context(|| format!("writing {} into the snapshot", file))?;
     }
     if !snapshot.join("CLAUDE.md").exists() {
         crate::ops::symlink(Path::new("AGENTS.md"), &snapshot.join("CLAUDE.md"))?;
@@ -727,13 +773,16 @@ fn wait_pane(manifest: &Manifest, timeout: Duration) -> anyhow::Result<String> {
 }
 
 /// Confirm the goal was accepted: transcript sentinel (claude) or the agent turning `working`
-/// (codex). A prompt visible but unsubmitted gets an extra Enter at the 5th iteration.
+/// (codex). A prompt visible but unsubmitted gets an extra Enter at iterations 2, 5, and 8.
 fn confirm_acceptance(manifest: &Manifest, prompt: &str) -> anyhow::Result<()> {
     let transcript = crate::ops::transcript::claude_transcript(manifest);
     let prefix: String = prompt.chars().take(40).collect();
     let claude = manifest.agent_kind == "claude";
-    for iteration in 1..=15 {
-        std::thread::sleep(Duration::from_secs(2));
+    let iterations = if claude { 15 } else { 30 };
+    const SLEEP: Duration = Duration::from_secs(2);
+    const ENTER_RETRIES: [u32; 3] = [2, 5, 8];
+    for iteration in 1..=iterations {
+        std::thread::sleep(SLEEP);
         if claude
             && transcript.is_file()
             && crate::ops::transcript::has_any_goal_status(&transcript)
@@ -741,11 +790,20 @@ fn confirm_acceptance(manifest: &Manifest, prompt: &str) -> anyhow::Result<()> {
             redact::emit("goal accepted (transcript sentinel)");
             return Ok(());
         }
-        if !claude && herdr::agent_status(manifest).as_deref() == Some("working") {
-            redact::emit("prompt consumed (agent working)");
-            return Ok(());
+        if !claude {
+            match herdr::agent_status(manifest).as_deref() {
+                Some("working") | Some("blocked") => {
+                    redact::emit("prompt consumed (agent working or blocked)");
+                    return Ok(());
+                }
+                _ => {}
+            }
+            if crate::cmds::status::codex_recently_active(manifest) {
+                redact::emit("prompt consumed (codex screen or tui.log activity)");
+                return Ok(());
+            }
         }
-        if iteration == 5
+        if ENTER_RETRIES.contains(&iteration)
             && herdr::pane_visible(manifest)
                 .map(|screen| screen.contains(&prefix))
                 .unwrap_or(false)
@@ -754,23 +812,16 @@ fn confirm_acceptance(manifest: &Manifest, prompt: &str) -> anyhow::Result<()> {
             herdr::send_enter(manifest);
         }
     }
+    let timeout_s = (iterations as u64) * SLEEP.as_secs();
     redact::eemit(&format!(
-        "warning: goal acceptance not confirmed within 30 s — attach and check: taskfmt-host attach {}",
+        "warning: goal acceptance not confirmed within {timeout_s} s — attach and check: taskfmt-host attach {}",
         manifest.run
     ));
     Ok(())
 }
 
 fn print_summary(manifest: &Manifest, run_dir: &Path, prompt: &str) {
-    let transcript_display = if manifest.agent_kind == "claude" {
-        format!(
-            "{}/agent-home/projects/work/{}.jsonl",
-            run_dir.display(),
-            manifest.session_id
-        )
-    } else {
-        crate::cmds::status::CODEX_TRANSCRIPT_NA.to_string()
-    };
+    let transcript_display = crate::cmds::status::transcript_display(manifest);
     redact::emit_lines([
         format!("run:        {}", run_dir.display()),
         format!(
@@ -1041,21 +1092,96 @@ mod tests {
     fn embedded_goal_prompt_serves_claude_and_codex_under_the_cap() {
         let claude = build_prompt("claude").unwrap();
         let codex = build_prompt("codex").unwrap();
-        assert_eq!(claude, codex);
+        assert_ne!(claude, codex);
         assert!(claude.starts_with("/goal "));
+        assert!(!codex.starts_with("/goal "));
         assert!(claude.contains("`/task/README.md`"));
         assert!(claude.contains("`/task/AGENTS.md`"));
+        assert!(codex.contains("`/task/README.md`"));
+        assert!(codex.contains("GOAL_RESULT"));
         assert!(!claude.contains("@/task/README.md"));
         assert!(!claude.contains("@/task/AGENTS.md"));
         assert!(claude.contains("`taskfmt verify`"));
         assert!(claude.contains("after the last file change"));
+        assert!(codex.contains("Goal achieved"));
+        assert!(codex.contains("GOAL_RESULT task="));
         assert!(claude.contains("STATUS: INCOMPLETE"));
         assert!(
             claude.chars().count() <= 4_000,
             "{}",
             claude.chars().count()
         );
+        assert!(codex.chars().count() <= 4_000, "{}", codex.chars().count());
+        assert!(build_prompt("cursor").unwrap().starts_with("/goal "));
         assert!(build_prompt("ghost").is_err());
+    }
+
+    #[test]
+    fn substitute_task_id_replaces_template_placeholders() {
+        let input = "GOAL_PROGRESS task=TASK-000\nTASK: <id-from-README>\ntask_id = \"TASK-000\"";
+        let out = substitute_task_id(input, "TASK-042");
+        assert_eq!(
+            out,
+            "GOAL_PROGRESS task=TASK-042\nTASK: TASK-042\ntask_id = \"TASK-042\""
+        );
+    }
+
+    #[test]
+    fn top_up_snapshot_materializes_template_ids() {
+        let root = tempfile::tempdir().unwrap();
+        let snapshot = root.path().join("snapshot");
+        let template = root.path().join("template");
+        std::fs::create_dir_all(&snapshot).unwrap();
+        std::fs::create_dir_all(&template).unwrap();
+        std::fs::write(
+            snapshot.join("README.md"),
+            "---\nschema: task/v5\nid: TASK-042\ntitle: t\nkind: bugfix\n---\n",
+        )
+        .unwrap();
+        std::fs::write(
+            template.join("AGENTS.md"),
+            "GOAL_PROGRESS task=<id-from-README>\nTASK: TASK-000\n",
+        )
+        .unwrap();
+        std::fs::write(
+            template.join("verify.toml"),
+            "schema = \"verify/v2\"\ntask_id = \"TASK-000\"\nwritable_paths = [\"src\"]\n[[checks]]\nid = \"CHK-001\"\nphase = \"gate\"\nargv = [\"true\"]\nrequirements = [\"R-001\"]\nacceptance = [\"AC-001\"]\n",
+        )
+        .unwrap();
+
+        top_up_snapshot(&snapshot, &template).unwrap();
+
+        let agents = std::fs::read_to_string(snapshot.join("AGENTS.md")).unwrap();
+        assert!(agents.contains("GOAL_PROGRESS task=TASK-042"));
+        assert!(agents.contains("TASK: TASK-042"));
+        assert!(!agents.contains("TASK-000"));
+        assert!(!agents.contains("<id-from-README>"));
+
+        let verify = std::fs::read_to_string(snapshot.join("verify.toml")).unwrap();
+        assert!(verify.contains("task_id = \"TASK-042\""));
+        assert!(!verify.contains("TASK-000"));
+
+        assert!(snapshot.join("CLAUDE.md").exists());
+    }
+
+    #[test]
+    fn top_up_snapshot_resolves_task_id_from_verify_when_readme_missing() {
+        let root = tempfile::tempdir().unwrap();
+        let snapshot = root.path().join("snapshot");
+        let template = root.path().join("template");
+        std::fs::create_dir_all(&snapshot).unwrap();
+        std::fs::create_dir_all(&template).unwrap();
+        std::fs::write(
+            snapshot.join("verify.toml"),
+            "schema = \"verify/v2\"\ntask_id = \"TASK-007\"\nwritable_paths = [\"src\"]\n[[checks]]\nid = \"CHK-001\"\nphase = \"gate\"\nargv = [\"true\"]\nrequirements = [\"R-001\"]\nacceptance = [\"AC-001\"]\n",
+        )
+        .unwrap();
+        std::fs::write(template.join("AGENTS.md"), "TASK: TASK-000\n").unwrap();
+
+        top_up_snapshot(&snapshot, &template).unwrap();
+
+        let agents = std::fs::read_to_string(snapshot.join("AGENTS.md")).unwrap();
+        assert_eq!(agents, "TASK: TASK-007\n");
     }
 
     /// `fail_prereqs` returns its failure instead of ending the process. The assertion is the
@@ -1064,6 +1190,86 @@ mod tests {
     ///
     /// No docker is needed. `docker::read_file` shells out and yields `None` when the exec fails,
     /// so the marker dump runs its whole body against a container no daemon knows.
+    #[test]
+    fn run_wait_exit_code_requires_promotable_status_and_gate_pass() {
+        use crate::cmds::status::{GOAL_MET, IDLE, KILLED_TIMEOUT, REASON_GOAL_VERDICT};
+        use crate::runstate::GateRecord;
+
+        fn gate(verdict: &str) -> GateRecord {
+            GateRecord {
+                verdict: verdict.to_string(),
+                exit: 0,
+                last_line: "RESULT PASS".into(),
+                head: "head".into(),
+                log: "/tmp/gate.log".into(),
+                finished: "2026-08-29T19:57:59Z".into(),
+                ..GateRecord::default()
+            }
+        }
+        fn manifest(gate: Option<GateRecord>) -> Manifest {
+            Manifest {
+                run: "r".into(),
+                run_dir: "/tmp/r".into(),
+                container: "c".into(),
+                agent: "p".into(),
+                agent_kind: "codex".into(),
+                model: "m".into(),
+                effort: "low".into(),
+                task: "TASK-001".into(),
+                repo_url: "u".into(),
+                base_sha: "abc".into(),
+                clone_sha: String::new(),
+                lifecycle_predecessor_sha: None,
+                session_id: "sid".into(),
+                pane: "w1:p1".into(),
+                agent_name: "task".into(),
+                start: String::new(),
+                selfcheck: SELFCHECK_NOT_RUN.into(),
+                experiment: None,
+                gate,
+                status_state: String::new(),
+                result_sha: None,
+                pending_promotion_sha: None,
+            }
+        }
+        fn status(state: &str, report_status: Option<&str>) -> crate::cmds::status::Status {
+            crate::cmds::status::Status {
+                state: state.to_string(),
+                herdr_status: String::new(),
+                goal_reason: String::new(),
+                goal_result_line: report_status
+                    .map(|_| "GOAL_RESULT task=TASK-001 status=DONE".into())
+                    .unwrap_or_default(),
+                report_status: report_status.map(str::to_string),
+                goal_result_reject: None,
+                goal_verdicts: None,
+                terminal_reason: report_status.map(|_| REASON_GOAL_VERDICT.to_string()),
+                transcript: String::new(),
+                base_sha: "abc".into(),
+                base_tag_ok: None,
+                progress: None,
+                native_goal_only: None,
+            }
+        }
+
+        let passed = manifest(Some(gate("pass")));
+        assert_eq!(
+            run_wait_exit_code(&status(IDLE, Some("DONE")), &passed),
+            0,
+            "IDLE + anchored GOAL_RESULT + gate pass"
+        );
+        assert_eq!(
+            run_wait_exit_code(&status(GOAL_MET, None), &manifest(Some(gate("fail")))),
+            1,
+            "GOAL_MET alone is not enough when the gate failed"
+        );
+        assert_eq!(
+            run_wait_exit_code(&status(KILLED_TIMEOUT, None), &passed),
+            1,
+            "timeout is never success"
+        );
+    }
+
     #[test]
     fn fail_prereqs_returns_an_error() {
         let dir = tempfile::tempdir().unwrap();

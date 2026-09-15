@@ -209,6 +209,7 @@ fn lint(
             }
         }
         lint_execution(&mut out, dir, experiment);
+        lint_agents(&mut out, dir, &tf.frontmatter.id);
     };
     annotate_locations(&mut out, &tf);
     out
@@ -603,5 +604,123 @@ fn graph(
         if !cu.contains(*c) {
             fail(out, "graph", format!("unused/uncovered check {c}"));
         }
+    }
+}
+
+fn lint_agents(out: &mut Vec<Finding>, dir: &Path, expected_id: &str) {
+    let path = dir.join("AGENTS.md");
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    if content.contains("TASK-000") {
+        fail_at(
+            out,
+            "agents",
+            path.clone(),
+            1,
+            1,
+            "AGENTS.md still contains template id TASK-000",
+        );
+    }
+    if expected_id != "TASK-000" && content.contains("<id-from-README>") {
+        fail_at(
+            out,
+            "agents",
+            path.clone(),
+            1,
+            1,
+            "AGENTS.md still contains template placeholder <id-from-README>",
+        );
+    }
+    let goal_progress =
+        Regex::new(r"(?m)^GOAL_PROGRESS task=([^\s]+)").expect("goal_progress pattern");
+    let goal_result = Regex::new(r"(?m)^GOAL_RESULT task=([^\s]+)").expect("goal_result pattern");
+    let task_line = Regex::new(r"(?m)^TASK: ([^\s]+)").expect("task line pattern");
+    for (line_number, line) in content.lines().enumerate() {
+        let line_number = line_number + 1;
+        for (regex, label) in [
+            (&goal_progress, "GOAL_PROGRESS"),
+            (&goal_result, "GOAL_RESULT"),
+            (&task_line, "TASK"),
+        ] {
+            if let Some(captures) = regex.captures(line) {
+                let found = captures[1].trim();
+                if found == "<id-from-README>" {
+                    continue;
+                }
+                if found != expected_id {
+                    fail_at(
+                        out,
+                        "agents",
+                        path.clone(),
+                        line_number,
+                        1,
+                        format!("{label} uses {found}, README frontmatter id is {expected_id}"),
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn agents_lint_rejects_task_000_and_mismatched_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        let readme = dir.path().join("README.md");
+        fs::write(
+            &readme,
+            "---\nschema: task/v5\nid: TASK-042\ntitle: t\nkind: bugfix\n---\n# TASK-042 — t\n## Goal\nx\n## Context\nx\n## Preconditions\n- **P-001:** x\n## Scope\nIn scope:\n- x\nOut of scope:\n- x\n## Requirements\n- **R-001:** x\n## Acceptance criteria\n### AC-001\n```gherkin\nGiven x\nWhen y\nThen z\n```\nVerification:\n- Type: focused\n- Covers: R-001\n- Check: CHK-001\n## Decisions\n- **D-001:** x\n## Checklist\n- [ ] 1.0 x R-001 AC-001 CHK-001\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("AGENTS.md"),
+            "GOAL_PROGRESS task=TASK-000 state=IDLE\nTASK: TASK-001\nGOAL_RESULT task=TASK-042 status=DONE\n",
+        )
+        .unwrap();
+        let report = lint_path(dir.path());
+        let rules: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|f| f.rule == "agents")
+            .map(|f| f.message.as_str())
+            .collect();
+        assert!(
+            rules.iter().any(|m| m.contains("template id TASK-000")),
+            "{rules:?}"
+        );
+        assert!(
+            rules
+                .iter()
+                .any(|m| { m.contains("TASK uses TASK-001") && m.contains("TASK-042") }),
+            "{rules:?}"
+        );
+        assert!(!report.passed());
+    }
+
+    #[test]
+    fn agents_lint_allows_template_placeholders_for_task_000_template() {
+        let template = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../reference/task-template");
+        if !template.is_dir() {
+            return;
+        }
+        let report = lint_path(&template);
+        let agent_findings: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|f| f.rule == "agents")
+            .collect();
+        assert!(
+            agent_findings.is_empty(),
+            "{:?}",
+            agent_findings
+                .iter()
+                .map(|f| &f.message)
+                .collect::<Vec<_>>()
+        );
     }
 }

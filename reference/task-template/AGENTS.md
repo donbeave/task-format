@@ -13,6 +13,14 @@ Your goal is to fully implement this task: `/task/README.md`.
 | `/progress/progress.md` | read-write | Coordination event stream and handoff. |
 | `/work/` | read-write | The repository. All code changes happen here. |
 
+## Task identity
+
+The canonical task id is the `id` field in `/task/README.md` YAML frontmatter. It must match
+`task_id` in `/task/verify.toml` and the `task` field in `/progress/progress.md`. Every
+`GOAL_PROGRESS` and `GOAL_RESULT` line, and the `TASK:` field in the final report, must use this
+id — not placeholder ids from this protocol file. Examples below use `<id-from-README>` to mean
+that value.
+
 The completion gate is `taskfmt verify` (binary baked into the image, read-only). Run it from `/work`; never modify or bypass it. `$TASKFMT_BASE` is the scope base commit.
 
 The task README uses canonical typed acceptance blocks. Each non-gate `AC-*` block has one exact
@@ -58,7 +66,7 @@ Cucumber feature files, and have no runtime step definitions.
 At the end of every turn EXCEPT the one that carries the final report, print one line:
 
 ```text
-GOAL_PROGRESS task=TASK-000 state=<derived-state> current=<ID|NONE> done_this_turn=<IDs|none> blocked=<ID|none>
+GOAL_PROGRESS task=<id-from-README> state=<derived-state> current=<ID|NONE> done_this_turn=<IDs|none> blocked=<ID|none>
 ```
 
 On the turn that carries the final report, print this line immediately BEFORE the report and print nothing after the report's `GOAL_RESULT` line. `GOAL_RESULT` is the last line of the session, in every terminal state, without exception.
@@ -69,7 +77,7 @@ Last thing you print. Exactly this shape:
 
 ```text
 STATUS: DONE | BLOCKED | NEEDS_REPLAN | INCOMPLETE
-TASK: TASK-000
+TASK: <id-from-README>
 SUMMARY: <what changed, or why execution stopped and what was tried>
 ACCEPTANCE:
 - AC-001: PASS | FAIL | NOT_RUN — <command and observed result>
@@ -79,5 +87,5 @@ CHANGED:
 <verbatim `git diff --no-renames --name-status $TASKFMT_BASE`, then the untracked lines of `git status --porcelain --untracked-files=all`; not recall>
 DEVIATIONS: none | <list>
 FOLLOW_UP: none | <smallest decision, dependency, or split needed>
-GOAL_RESULT task=TASK-000 status=<STATUS>
+GOAL_RESULT task=<id-from-README> status=<STATUS>
 ```

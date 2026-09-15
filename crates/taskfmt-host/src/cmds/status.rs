@@ -79,6 +79,9 @@ pub struct Status {
     /// Agent-authored `status=` of `goal_result_line` (DONE|BLOCKED|NEEDS_REPLAN|INCOMPLETE); a
     /// label only, never load-bearing.
     pub report_status: Option<String>,
+    /// A visible `GOAL_RESULT` marker that failed task anchoring or protocol shape — diagnostic
+    /// only, never completion evidence.
+    pub goal_result_reject: Option<transcript::GoalResultReject>,
     /// Real (non-sentinel) evaluator verdicts; `None` for non-claude agents (rollout jsonl is not
     /// parsed).
     pub goal_verdicts: Option<usize>,
@@ -88,8 +91,12 @@ pub struct Status {
     /// This is the field that makes `terminal()` answerable by an operator instead of inferred
     /// from a state name whose meaning depends on which signal produced it.
     pub terminal_reason: Option<String>,
-    /// Claude session transcript path, or `n/a (rollout jsonl not parsed)` for codex.
+    /// Claude session transcript path; Codex rollout jsonl when present, else
+    /// `n/a (rollout jsonl not parsed)`.
     pub transcript: String,
+    /// Codex only: native TUI showed "Goal achieved" but no anchored `GOAL_RESULT` was found.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_goal_only: Option<bool>,
     /// The trusted base commit recorded at dispatch (the scope base of record).
     pub base_sha: String,
     /// Does the agent-writable `baseline` tag in the run workspace still point at `base_sha`?
@@ -124,10 +131,12 @@ impl Status {
             goal_reason: String::new(),
             goal_result_line: String::new(),
             report_status: None,
+            goal_result_reject: None,
             goal_verdicts: None,
             // no transcript was read, so the only reasons available are the hard events
             terminal_reason: terminal_reason_for(state, false).map(str::to_string),
             transcript: transcript_display(manifest),
+            native_goal_only: None,
             base_sha: manifest.base_sha.clone(),
             base_tag_ok: base_tag_ok(manifest, run_dir),
             progress: checklist_view(run_dir).map(|view| ProgressSummary::from(&view)),
@@ -135,14 +144,16 @@ impl Status {
     }
 }
 
-/// Where the authoritative transcript is (claude) or why there is none (codex).
+/// Where the authoritative transcript lives for this agent kind.
 pub fn transcript_display(manifest: &Manifest) -> String {
-    if manifest.agent_kind == "claude" {
-        transcript::claude_transcript(manifest)
+    match manifest.agent_kind.as_str() {
+        "claude" => transcript::claude_transcript(manifest)
             .display()
-            .to_string()
-    } else {
-        CODEX_TRANSCRIPT_NA.to_string()
+            .to_string(),
+        "codex" => transcript::codex_rollout(manifest)
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| CODEX_TRANSCRIPT_NA.to_string()),
+        _ => CODEX_TRANSCRIPT_NA.to_string(),
     }
 }
 
@@ -288,16 +299,44 @@ pub fn check(manifest: &Manifest, run_dir: &Path) -> anyhow::Result<Status> {
         evaluator_error = transcript::evaluator_hook_error(&tr);
     }
 
-    // 2. agent-side signal (both agents): the GOAL_RESULT line. The transcript jsonl is
-    //    authoritative — `tui.log` is a rendering and loses the final report to redraw and
-    //    compaction (the 2026-08-31 TASK-002 run) — so the log is only a fallback.
+    // 2. agent-side signal (both agents): the GOAL_RESULT line. Session jsonl is authoritative —
+    //    Claude's assistant transcript, Codex's rollout jsonl — and `tui.log` is only a fallback.
     let result = if claude {
         transcript::goal_result_transcript(&tr, &manifest.task)
+            .or_else(|| transcript::goal_result_line(&manifest.tui_log(), &manifest.task))
+    } else if manifest.agent_kind == "codex" {
+        transcript::codex_rollout(manifest)
+            .and_then(|rollout| transcript::goal_result_codex_rollout(&rollout, &manifest.task))
             .or_else(|| transcript::goal_result_line(&manifest.tui_log(), &manifest.task))
     } else {
         transcript::goal_result_line(&manifest.tui_log(), &manifest.task)
     }
     .unwrap_or_default();
+
+    let native_goal_only = if manifest.agent_kind == "codex"
+        && result.trim().is_empty()
+        && transcript::codex_native_goal_achieved(&manifest.tui_log())
+    {
+        Some(true)
+    } else {
+        None
+    };
+
+    let goal_result_reject = if result.is_empty() {
+        let candidate = if claude {
+            transcript::last_goal_result_candidate_transcript(&tr)
+                .or_else(|| transcript::last_goal_result_candidate(&manifest.tui_log()))
+        } else if manifest.agent_kind == "codex" {
+            transcript::codex_rollout(manifest)
+                .and_then(|rollout| transcript::last_goal_result_candidate_codex_rollout(&rollout))
+                .or_else(|| transcript::last_goal_result_candidate(&manifest.tui_log()))
+        } else {
+            transcript::last_goal_result_candidate(&manifest.tui_log())
+        };
+        candidate.and_then(|line| transcript::classify_goal_result_reject(&line, &manifest.task))
+    } else {
+        None
+    };
 
     let evidence = verdicts.is_some_and(|count| count >= 1) || !result.trim().is_empty();
 
@@ -374,9 +413,11 @@ pub fn check(manifest: &Manifest, run_dir: &Path) -> anyhow::Result<Status> {
         goal_reason: reason,
         report_status: transcript::report_status(&result).map(|status| status.as_str().to_string()),
         goal_result_line: result,
+        goal_result_reject,
         goal_verdicts: verdicts,
         terminal_reason,
         transcript: transcript_display(manifest),
+        native_goal_only,
         base_sha: manifest.base_sha.clone(),
         base_tag_ok: base_tag_ok(manifest, run_dir),
         progress: checklist_view(run_dir).map(|view| ProgressSummary::from(&view)),
@@ -409,17 +450,17 @@ fn downgrade_if_active(state: &str, transcript_active: bool) -> &str {
     }
 }
 
-/// Codex's native rollout files live in an isolated in-container home when host auth is used.
-/// Read the current pane first, then use the bound TUI capture's mtime as a conservative fallback.
+/// Codex rollout jsonl lives under the run's `agent-home/sessions/` bind mount. Read the current
+/// pane first, then use the bound TUI capture's mtime as a conservative fallback.
 /// This is only activity evidence: it can turn a false `IDLE` into `RUNNING`, never into terminal.
-fn codex_recently_active(manifest: &Manifest) -> bool {
+pub(crate) fn codex_recently_active(manifest: &Manifest) -> bool {
     let screen_active = herdr::pane_visible(manifest)
         .map(|screen| screen_shows_working(&screen))
         .unwrap_or(false);
     screen_active || transcript::recently_updated(&manifest.tui_log(), ACTIVE_WINDOW)
 }
 
-fn screen_shows_working(screen: &str) -> bool {
+pub(crate) fn screen_shows_working(screen: &str) -> bool {
     screen
         .lines()
         .map(transcript::strip_ansi)
@@ -428,6 +469,17 @@ fn screen_shows_working(screen: &str) -> bool {
 
 fn json_line(status: &Status) -> String {
     serde_json::to_string(status).unwrap_or_else(|_| "{{}}".to_string())
+}
+
+/// Operator-facing `GOAL_RESULT` fragment for wait messages and logs.
+fn goal_result_diagnostic(status: &Status) -> String {
+    if !status.goal_result_line.is_empty() {
+        "present".to_string()
+    } else if let Some(reject) = &status.goal_result_reject {
+        reject.diagnostic()
+    } else {
+        "absent".to_string()
+    }
 }
 
 /// Used by `run --wait` and `experiment`: poll until terminal or the deadline.
@@ -444,6 +496,8 @@ pub fn wait_terminal_state(
     let started = Instant::now();
     let mut candidate: Option<(String, Duration)> = None;
     let mut announced: Option<String> = None;
+    let mut done_idle_since: Option<Instant> = None;
+    let mut done_idle_warned = false;
     // The checklist, printed when it moves, so `run --wait` shows which leaf the agent is on
     // without the operator attaching.
     let mut shown: Option<Vec<String>> = None;
@@ -472,13 +526,30 @@ pub fn wait_terminal_state(
                     manifest.run,
                     status.state,
                     status.goal_verdicts,
-                    if status.goal_result_line.is_empty() {
-                        "absent"
-                    } else {
-                        "present"
-                    },
+                    goal_result_diagnostic(&status),
                 ));
             }
+        }
+        let progress_done_idle = !status.completion_evidence()
+            && status.herdr_status == "idle"
+            && status
+                .progress
+                .as_ref()
+                .and_then(|progress| progress.state.as_deref())
+                == Some("DONE");
+        if progress_done_idle {
+            let since = done_idle_since.get_or_insert_with(Instant::now);
+            if !done_idle_warned && since.elapsed() >= Duration::from_secs(300) {
+                redact::eemit(&format!(
+                    "warning: {} progress.state=DONE and herdr idle with no completion evidence for 5m (goal_verdicts={:?}, GOAL_RESULT {}) — still polling",
+                    manifest.run,
+                    status.goal_verdicts,
+                    goal_result_diagnostic(&status),
+                ));
+                done_idle_warned = true;
+            }
+        } else {
+            done_idle_since = None;
         }
         if confirmed {
             return Ok(status);
@@ -510,6 +581,7 @@ fn log_decision(
         "herdr_status": status.herdr_status,
         "goal_verdicts": status.goal_verdicts,
         "goal_result_line": status.goal_result_line,
+        "goal_result_reject": status.goal_result_reject,
         "report_status": status.report_status,
         "terminal_reason": status.terminal_reason,
         "completion_evidence": status.completion_evidence(),
@@ -628,15 +700,26 @@ mod tests {
         let report_status = transcript::parse_goal_result(goal_result_line, "TASK-002")
             .map(|status| status.as_str().to_string());
         let evidence = verdicts.is_some_and(|count| count >= 1) || report_status.is_some();
+        let goal_result_reject = if goal_result_line.is_empty() || report_status.is_some() {
+            None
+        } else {
+            transcript::classify_goal_result_reject(goal_result_line, "TASK-002")
+        };
         Status {
             state: state.to_string(),
             herdr_status: "idle".into(),
             goal_reason: String::new(),
-            goal_result_line: goal_result_line.to_string(),
+            goal_result_line: if report_status.is_some() {
+                goal_result_line.to_string()
+            } else {
+                String::new()
+            },
             report_status,
+            goal_result_reject,
             goal_verdicts: verdicts,
             terminal_reason: terminal_reason_for(state, evidence).map(str::to_string),
             transcript: String::new(),
+            native_goal_only: None,
             base_sha: "abc".into(),
             base_tag_ok: None,
             progress: None,
@@ -742,6 +825,51 @@ mod tests {
         );
         // RUNNING is never terminal
         assert_eq!(terminal_reason_for(RUNNING, true), None);
+    }
+
+    #[test]
+    fn goal_result_diagnostic_names_absent_reject_and_present() {
+        assert_eq!(goal_result_diagnostic(&status(IDLE, None, "")), "absent");
+        assert_eq!(
+            goal_result_diagnostic(&status(IDLE, None, "GOAL_RESULT task=TASK-002 status=DONE")),
+            "present"
+        );
+        let wrong = status(IDLE, None, "GOAL_RESULT task=TASK-003 status=DONE");
+        assert_eq!(
+            goal_result_diagnostic(&wrong),
+            "rejected(wrong-task TASK-003, expected TASK-002)"
+        );
+        assert_eq!(
+            wrong.goal_result_reject,
+            Some(transcript::GoalResultReject::WrongTask {
+                found: "TASK-003".into(),
+                expected: "TASK-002".into(),
+            })
+        );
+        assert!(!wrong.completion_evidence());
+        assert_eq!(
+            goal_result_diagnostic(&status(
+                IDLE,
+                None,
+                "GOAL_RESULT task=TASK-002 status=MAYBE"
+            )),
+            "rejected(invalid status)"
+        );
+    }
+
+    #[test]
+    fn decisions_log_records_goal_result_reject() {
+        let dir = tempfile::tempdir().unwrap();
+        let rejected = status(IDLE, Some(0), "GOAL_RESULT task=TASK-003 status=DONE");
+        log_decision(dir.path(), Duration::from_secs(10), &rejected, &None, false);
+        let text =
+            std::fs::read_to_string(dir.path().join("out").join(STATUS_DECISIONS_LOG)).unwrap();
+        let record: serde_json::Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+        assert_eq!(record["goal_result_reject"]["kind"], "wrong-task");
+        assert_eq!(record["goal_result_reject"]["found"], "TASK-003");
+        assert_eq!(record["goal_result_reject"]["expected"], "TASK-002");
+        assert_eq!(record["goal_result_line"], "");
+        assert_eq!(record["completion_evidence"], false);
     }
 
     #[test]
@@ -946,6 +1074,36 @@ mod tests {
     }
 
     #[test]
+    fn native_goal_only_flags_codex_banner_without_goal_result() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("out/tui.log");
+        std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+        std::fs::write(&log, "Goal achieved\n").unwrap();
+        let mut m = manifest("codex", dir.path(), "abc");
+        m.run_dir = dir.path().display().to_string();
+        // exercise the helper directly; check() needs docker/herdr
+        assert!(transcript::codex_native_goal_achieved(&m.tui_log()));
+        let bare = Status {
+            state: IDLE.into(),
+            herdr_status: "idle".into(),
+            goal_reason: String::new(),
+            goal_result_line: String::new(),
+            report_status: None,
+            goal_result_reject: None,
+            goal_verdicts: None,
+            terminal_reason: None,
+            transcript: transcript_display(&m),
+            native_goal_only: Some(true),
+            base_sha: m.base_sha.clone(),
+            base_tag_ok: None,
+            progress: None,
+        };
+        let json: serde_json::Value = serde_json::from_str(&json_line(&bare)).unwrap();
+        assert_eq!(json["native_goal_only"], true);
+        assert!(!bare.completion_evidence());
+    }
+
+    #[test]
     fn codex_working_screen_is_activity_not_completion() {
         assert!(screen_shows_working("Working (2m 28s • esc to interrupt)"));
         assert!(screen_shows_working(
@@ -1006,6 +1164,15 @@ mod tests {
         assert!(transcript_display(&claude).ends_with("agent-home/projects/work/sid.jsonl"));
         let codex = manifest("codex", dir.path(), "abc");
         assert_eq!(transcript_display(&codex), CODEX_TRANSCRIPT_NA);
+        let rollout_dir = dir.path().join("agent-home/sessions/2026/09/16");
+        std::fs::create_dir_all(&rollout_dir).unwrap();
+        let rollout = rollout_dir.join("rollout-2026-09-16T00-00-00-sid.jsonl");
+        std::fs::write(
+            &rollout,
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"sid\"}}\n",
+        )
+        .unwrap();
+        assert_eq!(transcript_display(&codex), rollout.display().to_string());
     }
 
     #[test]

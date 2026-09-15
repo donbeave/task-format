@@ -3,7 +3,7 @@
 approval_policy = "never"
 sandbox_mode    = "danger-full-access"   # Docker is the sandbox
 [features]
-goals = true
+goals = false
 [projects."/work"]
 trust_level = "trusted"
 [notice]

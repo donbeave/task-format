@@ -49,9 +49,6 @@ pub fn run() -> anyhow::Result<i32> {
             return Ok(1);
         }
     };
-    std::fs::write(format!("{OUT}/pane-id"), format!("{pane}\n"))
-        .context("writing /out/pane-id")?;
-
     // 3. agent under script(1): /out/tui.log = raw stream from byte 0; HERDR_AGENT tells herdr
     //    which screen manifest to use behind the wrapper
     let wrapped = format!(
@@ -66,7 +63,20 @@ pub fn run() -> anyhow::Result<i32> {
         "herdr pane run",
     )?;
 
-    // 4. supervise: SIGTERM (docker stop) → graceful server stop, then clean exit
+    // 4. defer pane-id until herdr registers the agent — the host renames pane → `task` and every
+    //    `agent`-targeted call assumes that record exists; publishing the id early races rename.
+    if !wait_agent_registered(&pane, Duration::from_secs(120)) {
+        redact::eemit(
+            "agent-launch: herdr never registered the agent on the pane — see /out/herdr-server.log",
+        );
+        let _ = Command::new("herdr").arg("server").arg("stop").status();
+        let _ = server.kill();
+        return Ok(1);
+    }
+    std::fs::write(format!("{OUT}/pane-id"), format!("{pane}\n"))
+        .context("writing /out/pane-id")?;
+
+    // 5. supervise: SIGTERM (docker stop) → graceful server stop, then clean exit
     loop {
         if signals::sleep_until_terminate(Duration::from_secs(1)) {
             let _ = Command::new("herdr")
@@ -141,11 +151,48 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', r"'\''"))
 }
 
+/// Poll `herdr agent get <pane>` until herdr registers the process launched by `pane run`.
+fn wait_agent_registered(pane: &str, timeout: Duration) -> bool {
+    let started = Instant::now();
+    let mut backoff = Duration::from_millis(200);
+    while started.elapsed() < timeout {
+        if agent_get_ok(pane) {
+            return true;
+        }
+        std::thread::sleep(backoff);
+        backoff = (backoff * 2).min(Duration::from_secs(5));
+    }
+    false
+}
+
+fn agent_get_ok(pane: &str) -> bool {
+    capture(
+        Command::new("herdr")
+            .args(["agent", "get", pane])
+            .env("HERDR_SESSION", "agent"),
+    )
+    .ok()
+    .is_some_and(|captured| captured.ok())
+}
+
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     #[test]
     fn shell_quote_survives_embedded_quotes() {
         let quoted = super::shell_quote("claude -m 'sonnet' --add-dir /task");
         assert_eq!(quoted, r"'claude -m '\''sonnet'\'' --add-dir /task'");
+    }
+
+    #[test]
+    fn backoff_doubles_until_the_cap() {
+        let mut backoff = Duration::from_millis(200);
+        backoff = (backoff * 2).min(Duration::from_secs(5));
+        assert_eq!(backoff, Duration::from_millis(400));
+        for _ in 0..8 {
+            backoff = (backoff * 2).min(Duration::from_secs(5));
+        }
+        assert_eq!(backoff, Duration::from_secs(5));
     }
 }

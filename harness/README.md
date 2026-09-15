@@ -109,6 +109,14 @@ Use the `codex-default` profile and the image built by `--agent all`:
 taskfmt-host run --task TASK-001 --repo <repository-url> --agent codex-default --wait
 ```
 
+Codex native goals are disabled (`[features] goals = false` in the pre-seeded
+`config.toml` and the image template). The harness prompt is plain task text, not `/goal`, and
+completion is anchored only on a canonical `GOAL_RESULT task=<id> status=<valid status>` line
+(parsed from `<run>/agent-home/sessions/**/rollout-*.jsonl`, with `tui.log` as fallback). Re-enabling
+native goals would surface Codex's "Goal achieved" banner in the TUI, which is not harness completion
+evidence and can mislead operators; `taskfmt-host status` sets `native_goal_only: true` when that
+banner appears without an anchored `GOAL_RESULT`.
+
 ## Run one task
 
 Lint first, then dispatch to a fresh container:
