@@ -1,28 +1,19 @@
-//! Command-line surface (clap derive). Global flags are `global = true` so they can be given
-//! before or after the subcommand.
+//! Command-line surface (clap derive). Global flags live in [`GlobalArgs`] and flatten into [`Cli`].
 
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
+use taskfmt::cli_common::{ConfigArg, ConfirmArgs, VerboseArgs};
 
-/// Global flags shared by the host CLI.
-#[derive(Debug, Clone)]
-pub struct GlobalOpts {
-    pub config: Option<PathBuf>,
-    pub auto: bool,
-    pub yes: bool,
-    pub verbose: bool,
-}
-
-impl GlobalOpts {
-    pub fn from_host(cli: &Cli) -> Self {
-        Self {
-            config: cli.config.clone(),
-            auto: cli.auto,
-            yes: cli.yes,
-            verbose: cli.verbose,
-        }
-    }
+/// Global flags shared by every host subcommand.
+#[derive(Args, Debug, Clone, Default)]
+pub struct GlobalArgs {
+    #[command(flatten)]
+    pub config: ConfigArg,
+    #[command(flatten)]
+    pub confirm: ConfirmArgs,
+    #[command(flatten)]
+    pub verbose: VerboseArgs,
 }
 
 #[derive(Parser, Debug)]
@@ -30,49 +21,18 @@ impl GlobalOpts {
     name = "taskfmt-host",
     version = taskfmt::VERSION,
     about = "Filesystem projects, groups, task contracts, and verified task execution",
+    long_about = None,
+    arg_required_else_help = true,
     after_help = "Read-only commands never prompt. Mutating commands (run, experiment, repo, \
                   promote, preload, build-images) need --auto or --yes when stdin is not a terminal. \
-                  In-container runtime lives in the separate `taskfmt` binary baked into harness images."
+                  In-container validation lives in the separate `taskfmt` binary baked into harness images."
 )]
 pub struct Cli {
-    /// Path to the experiment manifest. Default: $TASKFMT_CONFIG, else the nearest
-    /// `experiment.toml` at or above the current directory.
-    #[arg(long, global = true)]
-    pub config: Option<PathBuf>,
-
-    /// Assume yes for every confirmation and print the plan line.
-    #[arg(long, global = true)]
-    pub auto: bool,
-
-    /// Alias of --auto: skip confirmations.
-    #[arg(long, global = true)]
-    pub yes: bool,
-
-    /// Verbose: echo every external command invocation (scrubbed).
-    #[arg(short = 'v', long, global = true)]
-    pub verbose: bool,
+    #[command(flatten)]
+    pub global: GlobalArgs,
 
     #[command(subcommand)]
     pub command: Command,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use clap::CommandFactory;
-
-    #[test]
-    fn version_contains_package_version_and_commit_sha() {
-        assert_eq!(Cli::command().get_version(), Some(taskfmt::VERSION));
-        assert_eq!(
-            taskfmt::VERSION,
-            format!(
-                "{} (git {})",
-                env!("CARGO_PKG_VERSION"),
-                taskfmt::GIT_COMMIT_SHA
-            )
-        );
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -95,9 +55,10 @@ pub enum Command {
     /// Lint task packages under the configured tasks dir.
     Lint {
         /// Emit one stable JSON report per package (NDJSON).
-        #[arg(long)]
+        #[arg(long, action = clap::ArgAction::SetTrue)]
         json: bool,
         /// Task IDs or directories. Empty = every task dir in tasks_dir.
+        #[arg(value_name = "TASK")]
         tasks: Vec<String>,
     },
 
@@ -109,19 +70,21 @@ pub enum Command {
     /// (a focused command was not runnable: rc 126/127); 70 internal error.
     Selfcheck {
         /// Task package dir holding verify.toml (+ README.md).
+        #[arg(value_name = "TASK")]
         task: PathBuf,
         /// Git repository checked out at the trusted base commit (never mutated: phases run in a
         /// scratch copy under TMPDIR).
+        #[arg(value_name = "WORKSPACE")]
         workspace: PathBuf,
         /// Scope base ref. Order: --base > TASKFMT_BASE > base_ref in verify.toml > "baseline".
-        #[arg(long)]
+        #[arg(long, env = "TASKFMT_BASE")]
         base: Option<String>,
         /// Reference solution: a directory mirrored over the tree, or a .patch/.diff file.
         /// Absent: the oracle phase is SKIPPED.
-        #[arg(long)]
+        #[arg(long, value_name = "PATH")]
         reference: Option<PathBuf>,
         /// Retain the scratch copy (its path is printed).
-        #[arg(long)]
+        #[arg(long, action = clap::ArgAction::SetTrue)]
         keep: bool,
     },
 
@@ -131,7 +94,7 @@ pub enum Command {
         #[arg(long, value_enum, default_value = "all")]
         agent: AgentFilter,
         /// Pass --no-cache to every docker build.
-        #[arg(long)]
+        #[arg(long, action = clap::ArgAction::SetTrue)]
         no_cache: bool,
     },
 
@@ -162,7 +125,7 @@ pub enum Command {
         #[arg(long)]
         effort: Option<String>,
         /// Stay attached: poll status, then gate and report.
-        #[arg(long)]
+        #[arg(long, action = clap::ArgAction::SetTrue)]
         wait: bool,
         /// Minutes after which a still-running run is killed (default: runtime.kill_after_min).
         #[arg(long)]
@@ -173,34 +136,34 @@ pub enum Command {
         /// Run the D13 gate selfcheck (nop + polarity) on the built workspace after lint; refuse
         /// to dispatch on FAIL or NOVERDICT. Off by default: it runs the fixture's toolchain on
         /// the host (container-mode selfcheck is pending).
-        #[arg(long)]
+        #[arg(long, action = clap::ArgAction::SetTrue)]
         selfcheck: bool,
     },
 
     /// Host gate for one run: re-run verification in the caller-provided sandbox.
     Gate {
-        /// Run id, its container name (`harness-<run id>`), its run directory, or the path of that
-        /// directory's manifest.json. `taskfmt-host ps` lists them.
+        /// Run id, container name, run directory, or manifest.json path.
+        #[arg(value_name = "RUN")]
         run: String,
     },
 
     /// Push the exact tree recorded by a passing gate.
     Promote {
-        /// Run id, its container name (`harness-<run id>`), its run directory, or the path of that
-        /// directory's manifest.json. `taskfmt-host ps` lists them.
+        /// Run id, container name, run directory, or manifest.json path.
+        #[arg(value_name = "RUN")]
         run: String,
         /// Skip the confirmation (still refuses on gate FAIL).
-        #[arg(long)]
+        #[arg(long, action = clap::ArgAction::SetTrue)]
         yes: bool,
     },
 
     /// Completion detection for one run, from outside the container.
     Status {
-        /// Run id, its container name (`harness-<run id>`), its run directory, or the path of that
-        /// directory's manifest.json. `taskfmt-host ps` lists them.
+        /// Run id, container name, run directory, or manifest.json path.
+        #[arg(value_name = "RUN")]
         run: String,
         /// Poll until the run reaches a terminal state.
-        #[arg(long)]
+        #[arg(long, action = clap::ArgAction::SetTrue)]
         wait: bool,
         /// Minutes before a still-running agent is killed with `/goal clear`.
         #[arg(long)]
@@ -209,15 +172,15 @@ pub enum Command {
 
     /// Re-attach to a run's live agent TUI (detach: ctrl+b q — never ctrl+c).
     Attach {
-        /// Run id, its container name (`harness-<run id>`), its run directory, or the path of that
-        /// directory's manifest.json. `taskfmt-host ps` lists them.
+        /// Run id, container name, run directory, or manifest.json path.
+        #[arg(value_name = "RUN")]
         run: String,
     },
 
     /// List the run containers on this host. Read-only, and needs no manifest: it asks docker.
     Ps {
         /// One JSON object per line instead of the table.
-        #[arg(long)]
+        #[arg(long, action = clap::ArgAction::SetTrue)]
         json: bool,
     },
 
@@ -249,7 +212,7 @@ pub enum Command {
         kill_after: Option<u64>,
         /// Run the D13 gate selfcheck (nop + polarity) before each dispatch; refuse on FAIL or
         /// NOVERDICT. Off by default (host toolchain; container-mode selfcheck is pending).
-        #[arg(long)]
+        #[arg(long, action = clap::ArgAction::SetTrue)]
         selfcheck: bool,
     },
 }
@@ -266,7 +229,31 @@ pub enum RepoCmd {
     Delete {
         #[arg(long)]
         name: Option<String>,
-        #[arg(long)]
+        #[arg(long, action = clap::ArgAction::SetTrue)]
         yes: bool,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn cli_definition_is_valid() {
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn version_contains_package_version_and_commit_sha() {
+        assert_eq!(Cli::command().get_version(), Some(taskfmt::VERSION));
+        assert_eq!(
+            taskfmt::VERSION,
+            format!(
+                "{} (git {})",
+                env!("CARGO_PKG_VERSION"),
+                taskfmt::GIT_COMMIT_SHA
+            )
+        );
+    }
 }

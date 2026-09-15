@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, anyhow, bail};
 
-use crate::cli::{Cli, Command, GlobalOpts, RepoCmd};
+use crate::cli::{Cli, Command, GlobalArgs, RepoCmd};
 use crate::config::{ExperimentConfig, MANIFEST_NAME, Resolved, discover_upward};
 use crate::interactive::Interaction;
 use crate::ops::container::{self, CONTAINER_PREFIX};
@@ -33,36 +33,45 @@ pub struct Ctx {
     pub interaction: Interaction,
 }
 
-/// The manifest to read: `--config` > `$TASKFMT_CONFIG` > the repo-relative default.
+/// The manifest to read: `--config` / `$TASKFMT_CONFIG` (via clap) > the repo-relative default.
 ///
 /// An explicit choice is made absolute here, so `Ctx::load` reads an absolute `config_path` as
 /// "the operator named this file" (original semantics: relative to the cwd at the time it was
-/// given) and a relative one as "discover it by walking up from the cwd". `TASKFMT_CONFIG` joins
-/// the `TASKFMT_ROOT` / `TASKFMT_TASK_DIR` / `TASKFMT_BASE` convention already used by `verify`,
-/// and lets an operator pin one manifest for a whole session without a flag on every command.
-fn config_path(explicit: Option<PathBuf>, env: Option<PathBuf>) -> PathBuf {
-    match explicit.or(env) {
+/// given) and a relative one as "discover it by walking up from the cwd".
+fn config_path(explicit: Option<PathBuf>) -> PathBuf {
+    match explicit {
         Some(path) => std::path::absolute(&path).unwrap_or(path),
         None => PathBuf::from(crate::config::MANIFEST_NAME),
     }
 }
 
 impl Ctx {
-    pub fn from_opts(opts: &GlobalOpts) -> Self {
-        let env = std::env::var_os("TASKFMT_CONFIG")
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from);
+    pub fn new(cli: &Cli) -> Self {
+        Self::from(&cli.global)
+    }
+
+    pub fn from_global(global: &GlobalArgs) -> Self {
         Self {
-            config_path: config_path(opts.config.clone(), env),
-            verbose: opts.verbose,
-            interaction: Interaction::new(opts.auto, opts.yes),
+            config_path: config_path(global.config.config.clone()),
+            verbose: global.verbose.verbose,
+            interaction: Interaction::new(global.confirm.auto, global.confirm.yes),
         }
     }
+}
 
-    pub fn from_host(cli: &Cli) -> Self {
-        Self::from_opts(&GlobalOpts::from_host(cli))
+impl From<&GlobalArgs> for Ctx {
+    fn from(global: &GlobalArgs) -> Self {
+        Self::from_global(global)
     }
+}
 
+impl From<&Cli> for Ctx {
+    fn from(cli: &Cli) -> Self {
+        Self::new(cli)
+    }
+}
+
+impl Ctx {
     /// Load the experiment manifest and the path resolver rooted at its directory. A relative
     /// `config_path` is discovered by walking up from the cwd (`ExperimentConfig::resolve_path`).
     pub fn load(&self) -> anyhow::Result<Resolved> {
@@ -206,7 +215,7 @@ fn locate_run_dir_with(
 
 /// Dispatch the host operator CLI. Returns the process exit code.
 pub fn dispatch(cli: &Cli) -> anyhow::Result<i32> {
-    let ctx = Ctx::from_host(cli);
+    let ctx = Ctx::new(cli);
     match &cli.command {
         Command::Lint { json, tasks } => lint::run(&ctx, *json, tasks),
         Command::Selftest => selftest::run(&ctx),
@@ -398,33 +407,32 @@ pub fn all_task_dirs(tasks_dir: &std::path::Path) -> anyhow::Result<Vec<PathBuf>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser as _;
 
     #[test]
     fn config_precedence_is_flag_then_env_then_discovery() {
         let cwd = std::env::current_dir().unwrap();
         // no choice at all: the relative default, which `Ctx::load` discovers by walking up
         assert_eq!(
-            config_path(None, None),
+            config_path(None),
             PathBuf::from(crate::config::MANIFEST_NAME)
         );
-        // the env var is a choice, and is absolutized so discovery is bypassed
+        // an explicit path is absolutized so discovery is bypassed
         assert_eq!(
-            config_path(None, Some(PathBuf::from("env.toml"))),
+            config_path(Some(PathBuf::from("env.toml"))),
             cwd.join("env.toml")
         );
-        // the flag wins over the env var
+        // clap merges $TASKFMT_CONFIG into --config before `Ctx` is built; flag wins at parse time
+        let cli = Cli::try_parse_from(["taskfmt-host", "--config", "/flag/experiment.toml", "ps"])
+            .unwrap();
         assert_eq!(
-            config_path(
-                Some(PathBuf::from("/flag/experiment.toml")),
-                Some(PathBuf::from("/env/experiment.toml"))
-            ),
+            Ctx::new(&cli).config_path,
             PathBuf::from("/flag/experiment.toml")
         );
     }
 
     #[test]
     fn an_explicit_config_flag_bypasses_discovery() {
-        use clap::Parser as _;
         let dir = tempfile::tempdir().unwrap();
         let root = std::fs::canonicalize(dir.path()).unwrap();
         let named = root.join("elsewhere.toml");
@@ -436,7 +444,7 @@ mod tests {
             "some-run",
         ])
         .unwrap();
-        let ctx = Ctx::from_host(&cli);
+        let ctx = Ctx::new(&cli);
         assert_eq!(ctx.config_path, named);
         // and it is read as named: no ancestor of the cwd is consulted
         let err = ctx

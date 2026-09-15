@@ -1,6 +1,7 @@
 //! Shared taskfmt library: lint, progress, gate, and parsers.
 
 pub mod acceptance;
+pub mod cli_common;
 pub mod config;
 pub mod executioncfg;
 pub mod gate;
