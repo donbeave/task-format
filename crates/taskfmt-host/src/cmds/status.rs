@@ -1120,11 +1120,11 @@ mod tests {
             rendered[0],
             "progress: IN_PROGRESS  done 1/5  current 2.1  latest_event 3"
         );
-        assert!(rendered.iter().any(|l| l.starts_with("    [x] 1.1 ")));
+        assert!(rendered.iter().any(|l| l.starts_with("    - [x] **1.1** ")));
         assert!(
             rendered
                 .iter()
-                .any(|l| l.starts_with("    [>] 2.1 ") && l.ends_with("<- in progress"))
+                .any(|l| l.starts_with("    - [>] **2.1** ") && l.ends_with("<- in progress"))
         );
 
         // the same position rides along in the one-line status and its JSON

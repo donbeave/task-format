@@ -193,21 +193,22 @@ taskfmt-host attach <run-id>
 Run records and evidence live under `experiments/runs/`.
 
 `status` prints one JSON line (run state, completion evidence, and a `progress` summary), then the
-task checklist read from the run's `progress/progress.md`: `[x]` done, `[>]` in progress, `[!]`
-failed or blocked, `[ ]` pending, with the active leaf marked `<- in progress`. With `--wait` the
+task checklist read from the run's `progress/progress.md` — the README rows with only the checkbox
+changed: `[x]` done, `[>]` in progress, `[!]` failed or blocked, `[?]` needs replan, `[ ]` pending.
+Parents roll up from their leaves; the active leaf is marked `<- in progress`. With `--wait` the
 checklist is reprinted whenever it moves. It is coordination evidence only — the gate decides
 completion.
 
 ```text
 progress: IN_PROGRESS  done 2/5  current 2.2  latest_event 7
-[x] 1 Bootstrap workspace.
-    [x] 1.1 Establish the workspace and pins for R-001; prove AC-001 via CHK-001.
-    [x] 1.2 Configure member and toolchain for R-002 and R-003; prove AC-002 via CHK-002.
-[>] 2 Preserve bootstrap behavior.
-    [!] 2.1 Keep render and stub contracts for R-004 and R-005; prove AC-003 via CHK-003.  <- failed, not retried
-    [>] 2.2 Keep scope protected for R-006 and R-007; prove AC-004 via CHK-004.  <- in progress
-[ ] 3 Complete package verification.
-    [ ] 3.1 Complete the package gate for R-006 and R-007; prove AC-005 via CHK-005.
+- [x] **1** Bootstrap workspace.
+    - [x] **1.1** Establish the workspace and pins for R-001; prove AC-001 via CHK-001.
+    - [x] **1.2** Configure member and toolchain for R-002 and R-003; prove AC-002 via CHK-002.
+- [>] **2** Preserve bootstrap behavior.
+    - [!] **2.1** Keep render and stub contracts for R-004 and R-005; prove AC-003 via CHK-003.  <- failed, not retried
+    - [>] **2.2** Keep scope protected for R-006 and R-007; prove AC-004 via CHK-004.  <- in progress
+- [ ] **3** Complete package verification.
+    - [ ] **3.1** Complete the package gate for R-006 and R-007; prove AC-005 via CHK-005.
 ```
 
 ## Task validation and gates
@@ -222,7 +223,8 @@ taskfmt-host lint --json
 In-container progress (agents): `taskfmt init` (once), `taskfmt status`, then `taskfmt verify`.
 The runtime entrypoint calls `taskfmt init` when `/progress/progress.md` is missing. `taskfmt
 status` prints the derived header (`task= state= current= latest_event= done=`) followed by the
-same per-item checklist as `taskfmt-host status`; `--json` carries it under `checklist`.
+same per-item checklist as `taskfmt-host status`; `--json` carries it under `checklist` (one object
+per row: `id`, `text`, `depth`, `leaf`, `status`, and the formatted `line`).
 
 Re-run the host gate for a dispatched run:
 

@@ -62,6 +62,10 @@ pub struct ItemView {
     pub depth: usize,
     pub leaf: bool,
     pub status: ItemStatus,
+    /// The README checklist row with its checkbox replaced by [`ItemStatus::marker`]:
+    /// `    - [>] **1.2** Configure …`. Same indent and shape as the task file, so it reads
+    /// (and diffs) against the README the agent is working from.
+    pub line: String,
 }
 
 /// The whole checklist plus the progress header it was joined with.
@@ -138,6 +142,7 @@ impl ChecklistView {
                     depth: item.depth,
                     leaf,
                     status,
+                    line: String::new(), // filled once every status is final
                 }
             })
             .collect();
@@ -155,6 +160,15 @@ impl ChecklistView {
                 .map(|item| item.status)
                 .collect();
             items[index].status = parent_status(&children);
+        }
+        for (item, parsed) in items.iter_mut().zip(&parsed) {
+            item.line = format!(
+                "{}- {} **{}** {}",
+                " ".repeat(parsed.indent),
+                item.status.marker(),
+                item.id,
+                item.text
+            );
         }
 
         let total = items.iter().filter(|item| item.leaf).count();
@@ -211,19 +225,14 @@ impl ChecklistView {
         out
     }
 
-    /// The checklist, one line per item, four spaces per depth, checkbox first. Leaves that are
-    /// neither pending nor done carry a trailing `<- in progress` / `<- failed, not retried` /
-    /// `<- blocked` / `<- needs replan` so the eye lands on them.
+    /// The checklist as it stands in the README, one row per item with the checkbox replaced by
+    /// the status marker. Leaves that are neither pending nor done carry a trailing
+    /// `<- in progress` / `<- failed, not retried` / `<- blocked` / `<- needs replan` so the eye
+    /// lands on them.
     pub fn render(&self) -> Vec<String> {
         let mut lines = vec![self.summary()];
         for item in &self.items {
-            let mut line = format!(
-                "{}{} {} {}",
-                " ".repeat(item.depth * 4),
-                item.status.marker(),
-                item.id,
-                item.text
-            );
+            let mut line = item.line.clone();
             if item.leaf
                 && let Some(note) = item.status.annotation()
             {
@@ -294,10 +303,14 @@ mod tests {
         assert_eq!(status_of(&view, "2.1"), ItemStatus::Pending);
         let rendered = view.render();
         assert!(rendered[0].starts_with("progress: IN_PROGRESS  done 0/5  current 1.1"));
-        let leaf = rendered.iter().find(|l| l.contains("[>] 1.1 ")).unwrap();
-        assert!(leaf.starts_with("    [>] 1.1 "), "{leaf}");
+        let leaf = rendered
+            .iter()
+            .find(|l| l.contains("[>] **1.1** "))
+            .unwrap();
+        assert!(leaf.starts_with("    - [>] **1.1** "), "{leaf}");
         assert!(leaf.ends_with("<- in progress"), "{leaf}");
-        let parent = rendered.iter().find(|l| l.contains("[>] 1 ")).unwrap();
+        let parent = rendered.iter().find(|l| l.contains("[>] **1** ")).unwrap();
+        assert!(parent.starts_with("- [>] **1** "), "{parent}");
         assert!(
             !parent.contains("<-"),
             "parents carry no annotation: {parent}"
@@ -329,7 +342,7 @@ mod tests {
         let line = view
             .render()
             .into_iter()
-            .find(|l| l.contains("[!] 1.1 "))
+            .find(|l| l.contains("[!] **1.1** "))
             .unwrap();
         assert!(line.ends_with("<- failed, not retried"), "{line}");
         // once restarted it is simply in progress again
@@ -417,6 +430,39 @@ mod tests {
         assert_eq!(json["items"][1]["id"], "1.1");
         assert_eq!(json["items"][1]["status"], "in_progress");
         assert_eq!(json["items"][2]["status"], "pending");
+        assert_eq!(json["items"][0]["line"], "- [>] **1** Reproduce.");
+        assert!(
+            json["items"][1]["line"]
+                .as_str()
+                .unwrap()
+                .starts_with("    - [>] **1.1** ")
+        );
+    }
+
+    /// Every row keeps the README's shape and indent; only the checkbox byte moves. A `DONE`
+    /// stream therefore renders as the README with every box ticked.
+    fn readme_rows() -> Vec<String> {
+        taskfile::parse_checklist(&task().checklist)
+            .into_iter()
+            .map(|item| item.raw)
+            .collect()
+    }
+
+    #[test]
+    fn lines_are_the_readme_rows_with_only_the_checkbox_changed() {
+        let events = "- 1 | STARTED | 1.1\n- 2 | DONE | 1.1\n- 3 | STARTED | 2.1\n- 4 | DONE | 2.1\n- 5 | STARTED | 2.2\n- 6 | DONE | 2.2\n- 7 | STARTED | 2.3\n- 8 | DONE | 2.3\n- 9 | STARTED | 3.1\n- 10 | DONE | 3.1";
+        let view =
+            ChecklistView::build(&task(), Some(&progress(events, "DONE", "NONE", 10))).unwrap();
+        let lines: Vec<&str> = view.items.iter().map(|item| item.line.as_str()).collect();
+        let ticked: Vec<String> = readme_rows()
+            .iter()
+            .map(|raw| raw.replacen("- [ ]", "- [x]", 1))
+            .collect();
+        assert_eq!(lines, ticked);
+        // and with nothing done, the rows are the README verbatim
+        let view = ChecklistView::build(&task(), None).unwrap();
+        let lines: Vec<&str> = view.items.iter().map(|item| item.line.as_str()).collect();
+        assert_eq!(lines, readme_rows());
     }
 
     #[test]
