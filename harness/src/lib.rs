@@ -8,7 +8,6 @@ pub mod cli;
 pub mod cmds;
 pub mod config;
 pub mod executioncfg;
-pub mod fingerprint;
 pub mod gate;
 pub mod hash;
 pub mod interactive;
@@ -34,12 +33,3 @@ pub const VERSION: &str = concat!(
     env!("TASKFMT_GIT_COMMIT_SHA"),
     ")"
 );
-
-/// The content fingerprint of the hash input set this binary was compiled from — `Cargo.toml`,
-/// `Cargo.lock`, `build.rs` and every file under `src/` — as 64 lowercase hex digits, baked in by
-/// `build.rs`.
-///
-/// It is the comparand `taskfmt run` checks against the gate baked into the agent image. The
-/// `VERSION` string separately identifies the producing Git commit, while this digest remains the
-/// source-based host/image compatibility check.
-pub const HARNESS_FINGERPRINT: &str = env!("TASKFMT_HARNESS_FINGERPRINT");

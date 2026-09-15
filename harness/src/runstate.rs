@@ -108,8 +108,6 @@ pub struct GateRecord {
     #[serde(default)]
     pub verifier_sha256: String,
     #[serde(default)]
-    pub harness_fingerprint: String,
-    #[serde(default)]
     pub evidence_sha256: String,
     /// Digest and location of canonical per-check matcher evidence.
     #[serde(default)]
@@ -137,7 +135,6 @@ impl Default for GateRecord {
             parent: String::new(),
             task_sha256: String::new(),
             verifier_sha256: String::new(),
-            harness_fingerprint: String::new(),
             evidence_sha256: String::new(),
             matcher_evidence_sha256: String::new(),
             matcher_evidence: String::new(),
@@ -163,7 +160,6 @@ impl GateRecord {
             && !self.parent.is_empty()
             && !self.task_sha256.is_empty()
             && !self.verifier_sha256.is_empty()
-            && !self.harness_fingerprint.is_empty()
             && !self.evidence_sha256.is_empty()
             && !self.matcher_evidence_sha256.is_empty()
             && !self.matcher_evidence.is_empty()

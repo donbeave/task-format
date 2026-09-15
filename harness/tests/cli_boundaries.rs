@@ -9,7 +9,6 @@ use taskfmt::cli::host::Cli as HostCli;
 const CONTAINER_COMMANDS: &[&str] = &[
     "lint",
     "verify",
-    "fingerprint",
     "container-entrypoint",
     "prereqs",
     "agent-launch",
@@ -20,7 +19,6 @@ const HOST_COMMANDS: &[&str] = &[
     "lint",
     "progress-init",
     "selftest",
-    "fingerprint",
     "selfcheck",
     "build-images",
     "preload",

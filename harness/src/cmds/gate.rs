@@ -127,7 +127,6 @@ pub fn gate_run(
         parent,
         task_sha256,
         verifier_sha256,
-        harness_fingerprint: crate::HARNESS_FINGERPRINT.to_string(),
         evidence_sha256,
         matcher_evidence_sha256,
         matcher_evidence: matcher_evidence.display().to_string(),

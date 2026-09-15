@@ -7,7 +7,7 @@ AI agents can change a repository quickly. A run record is promotion evidence on
 The Rust crate ships two binaries from this directory:
 
 - **`taskfmt-host`** — operator CLI on the host: lint, dispatch, gate, promote, experiment, images.
-- **`taskfmt`** — in-container validation and runtime: `lint`, `verify`, `fingerprint`, `container-entrypoint`, `prereqs`, `agent-launch`, `codex-login`.
+- **`taskfmt`** — in-container validation and runtime: `lint`, `verify`, `container-entrypoint`, `prereqs`, `agent-launch`, `codex-login`.
 
 Repository-level settings live in [`experiment.toml`](../experiment.toml).
 
@@ -258,24 +258,14 @@ Precedence (one resolver for `run`, `experiment`, and lint cross-checks):
 
 `taskfmt-host experiment` accepts optional `--model` and `--effort` to override every selected task;
 `--agent` overrides all tasks as well. The confirmation plan shows the resolved profile, model,
-and effort per task. `execution.toml` is not part of the gate fingerprint (`README.md` and
-`verify.toml` only).
+and effort per task. Task-package verification covers `README.md` and `verify.toml` only;
+`execution.toml` does not affect those checks.
 
 See [`reference/task-template/execution.toml`](../reference/task-template/execution.toml) for a
 commented template and [`harness/testdata/execution-template.toml`](testdata/execution-template.toml)
 for a parseable example.
 
 ## Inspection and repository lifecycle
-
-Compare the host binary fingerprint with an image:
-
-```sh
-taskfmt-host fingerprint
-taskfmt-host fingerprint --image harness-claude:latest
-taskfmt-host fingerprint --image harness-codex:latest
-taskfmt-host fingerprint --image harness-cursor:latest
-taskfmt-host fingerprint --path harness
-```
 
 Manage disposable GitHub repositories explicitly when needed:
 
@@ -315,8 +305,7 @@ taskfmt-host run --task TASK-001 --repo <repository-url> --agent codex-kimi --wa
 
 ## Development and release checks
 
-After changing Rust code, the host binary and image-baked binary must match. Reinstall and rebuild
-all affected images before dispatch:
+After changing Rust code, reinstall the binaries and rebuild all affected images before dispatch:
 
 ```sh
 cargo install --path harness --locked --bin taskfmt-host --bin taskfmt
@@ -349,7 +338,6 @@ evidence.
 harness/
   src/                 taskfmt implementation
   tests/               integration and behavior tests
-  checks/              fingerprint command checks
   images/              taskfmt, base, Claude, Codex, and Cursor image definitions
   testdata/            bundled lint and gate corpus; do not edit as documentation
   goal-prompt.md       runtime prompt documentation; task prompt is embedded from src/task-prompt.md

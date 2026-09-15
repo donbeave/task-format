@@ -11,8 +11,8 @@ below is only the separate campaign-controller `/goal` prompt.
 
 Preconditions:
 1. Abort if corpus-preflight.sh fails.
-2. Record taskfmt-host version, harness fingerprint, image fingerprints,
-   Claude version, model, image digest, repo commit, and runtime settings.
+2. Record taskfmt-host version, Claude version, model, image digest, repo commit,
+   and runtime settings.
 3. Treat trusted gate results and workspace scope fingerprints as truth.
    GOAL_RESULT and model claims are secondary evidence.
 4. Separate infrastructure failures from model, protocol, format, verifier,
@@ -25,7 +25,7 @@ Execution:
 4. Run TASK-007 separately as artifact/PTY stratum.
 5. Use a fresh repo clone and fresh task run for every trial.
 6. Preserve manifest, prompt, progress log, Claude transcript, TUI log,
-   gate log, gate evidence, fingerprints, final diff, and promotion record.
+   gate log, gate evidence, final diff, and promotion record.
 
 After every task:
 1. Spawn four reviewers:
@@ -53,7 +53,7 @@ Fix loop:
 2. Fix the narrowest structural cause.
 3. Add a regression test.
 4. Run focused tests, full Rust tests, `taskfmt-host lint`, and `taskfmt-host selftest`.
-5. Rebuild images and verify host/image fingerprints match.
+5. Rebuild images before rerunning the failed task.
 6. Rerun the failed task from a fresh clone.
 7. Only then update the task template, goal prompt, or harness.
 8. Rerun the affected stratum and final all-task campaign.

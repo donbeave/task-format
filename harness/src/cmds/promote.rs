@@ -239,7 +239,6 @@ mod tests {
         gate.parent = parent.clone();
         gate.task_sha256 = "task-digest".into();
         gate.verifier_sha256 = "verifier-digest".into();
-        gate.harness_fingerprint = "harness-digest".into();
         gate.evidence_sha256 = "evidence-digest".into();
         gate.matcher_evidence_sha256 = "matcher-evidence-digest".into();
         gate.matcher_evidence = "/tmp/run/out/gate-evidence.json".into();

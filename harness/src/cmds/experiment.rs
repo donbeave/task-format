@@ -190,8 +190,6 @@ pub fn run_with_proof_corpus(
             predecessor.as_ref().map(|p| p.commit.as_str()),
             Some(&experiment_id),
             selfcheck,
-            // the one image reader in the crate; a dispatch compares whatever it returns
-            &crate::ops::docker::DockerImageFingerprint,
         ) {
             Ok(outcome) => outcome,
             Err(err) => {

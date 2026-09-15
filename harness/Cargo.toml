@@ -19,13 +19,6 @@ path = "src/bin/taskfmt.rs"
 name = "taskfmt-host"
 path = "src/bin/taskfmt-host.rs"
 
-# Declared with an explicit `path` OUTSIDE `tests/`: this suite drives the dispatch-time
-# fingerprint check, and the build stage that produces the image never receives `checks/`, so
-# nothing here is part of the hash input set the fingerprint covers.
-[[test]]
-name = "fingerprint_cli"
-path = "checks/fingerprint_cli.rs"
-
 # Docker integration checks own their reporting. libtest cannot represent a runtime SKIP: a
 # returning test is reported PASS, which would let an unavailable Docker daemon look covered.
 [[test]]
@@ -46,11 +39,6 @@ tempfile = "3"
 toml = "1.1.5"
 uuid = { version = "1", features = ["v4"] }
 walkdir = "2"
-
-# The build script hashes the crate's sources with the same `sha2` the library uses; the digest is
-# neither hand-rolled nor shelled out to a host `sha256sum`.
-[build-dependencies]
-sha2 = "0.11"
 
 [profile.release]
 strip = true

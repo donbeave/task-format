@@ -93,17 +93,6 @@ pub enum Command {
     /// Prove lint, progress-init and the gate on the bundled corpus.
     Selftest,
 
-    /// Print the content fingerprint of the harness crate a `taskfmt` was built from.
-    Fingerprint {
-        /// Recompute the digest over a crate directory instead of printing the compiled-in value.
-        /// Inspection only: it feeds no dispatch decision.
-        #[arg(long)]
-        path: Option<PathBuf>,
-        /// Report the value baked into a docker image, by executing its /usr/local/bin/taskfmt.
-        #[arg(long, conflicts_with = "path")]
-        image: Option<String>,
-    },
-
     /// Prove a task package's gate: RED on the untouched baseline, GREEN on the reference (D13).
     /// Exit 0 only on SELFCHECK RESULT PASS; 1 FAIL; 64 usage; 66 missing input; 69 no verdict
     /// (a focused command was not runnable: rc 126/127); 70 internal error.

@@ -12,8 +12,6 @@ Verified on 2026-09-07 after migrating the catalog to `projects/`:
   formatting, release builds, installation, and `taskfmt selftest` pass.
   The new project/group CLI integration suite passes all 12 tests.
 - All four Docker images rebuilt successfully; the enabled Docker proof passes.
-  Host, live source, and all four image fingerprints match:
-  `52c960db74b3b288ce93211c82e5703a338ba5ddfd40c92d6054ef93cfcd94e4`.
 - The old run store had no executions or artifacts and was archived before
   creating the store bound to `projects/`. No paid agent tasks were launched.
 
@@ -21,21 +19,18 @@ Verified on 2026-09-07 after migrating the catalog to `projects/`:
 
 This record describes verification of the monitoring implementation on 2026-09-07,
 before the catalog-root rename and first-class project/group CLI extension.
-Counts and fingerprints below are historical evidence, not a verification claim
-for subsequent changes.
+Counts below are historical evidence, not a verification claim for subsequent changes.
 Commands are reproducible in `monitoring.md`; generated build directories and
 temporary execution fixtures are not committed.
 
 Final gates passed: 302 Rust unit tests plus the existing integration/doctest
 suites, taskfmt selftest, strict Clippy, formatting, 20 frontend tests, frontend
 lint/typecheck/build, Rust release builds, and the enabled Docker proof runner.
-All four taskfmt/base/Claude/Codex images were rebuilt. Host binary, live source,
-and all four image binaries have the same source fingerprint:
-`b3f207916991e1f99985b3bcadca3b8e1e3f24ba2d3dd5ad2f81e9423b9d0243`.
+All four taskfmt/base/Claude/Codex images were rebuilt.
 
 | Requirement | Evidence |
 | --- | --- |
-| Preserve flat taskfmt contracts and commands | Existing Rust corpus, resume, run-resolution, fingerprint, consent, gate-tamper, selfcheck, and lifecycle suites; `taskfmt selftest`. Source resolution has separate location and contract identity tests. |
+| Preserve flat taskfmt contracts and commands | Existing Rust corpus, resume, run-resolution, consent, gate-tamper, selfcheck, and lifecycle suites; `taskfmt selftest`. Source resolution has separate location and contract identity tests. |
 | Canonical filesystem discovery and strict metadata | `harness/src/monitor/tests.rs`: hierarchy, normalized IDs, duplicate/missing/self/cyclic dependencies, strict verifier and metadata validation. |
 | Representative real task packages | Initial four projects and four groups under the former `tasks/` root (now `projects/`); ten unchanged original task contracts and trusted assets. All ten packages linted clean. Initial totals: one draft, nine pending, six blocked, three ready, zero done. Demo subsequently added seven packages; see `monitoring-demo.md`. |
 | Domain-owned status, readiness, progress and aggregation | Domain tests cover draft exclusion, transitions, external dependencies, scope validation, aggregate arithmetic, partial progress, reopened leaves, failure and latest event. |

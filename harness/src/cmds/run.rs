@@ -48,7 +48,6 @@ pub fn run(
     kill_after: Option<u64>,
     exp: Option<&str>,
     selfcheck: bool,
-    image_fingerprint: &dyn docker::ImageFingerprint,
 ) -> anyhow::Result<i32> {
     let resolved = ctx.load()?;
 
@@ -65,16 +64,7 @@ pub fn run(
         })?;
 
     let outcome = dispatch_one(
-        &resolved,
-        agent,
-        model,
-        effort,
-        task,
-        &repo_url,
-        None,
-        exp,
-        selfcheck,
-        image_fingerprint,
+        &resolved, agent, model, effort, task, &repo_url, None, exp, selfcheck,
     )?;
 
     if wait {
@@ -87,37 +77,6 @@ pub fn run(
         });
     }
     Ok(0)
-}
-
-/// Refuse to dispatch when the gate baked into `image` is a different build from this binary.
-///
-/// The `taskfmt verify` an agent runs is the copy baked into the image, never the host binary, so
-/// an operator who edits the harness and forgets `taskfmt build-images` gets a verdict from a judge
-/// that no longer exists on the host — and `--version` reads the same on both sides while it
-/// happens. `reader` supplies the image's value and nothing else: the comparison below runs
-/// unconditionally on whatever comes back, and there is no flag, environment variable or manifest
-/// key that admits a mismatch.
-///
-/// Defined above [`dispatch_one`] on purpose, and the reason is mechanical rather than stylistic:
-/// the criterion that checks this call precedes the run directory takes the LAST line naming this
-/// function, so the idiomatic placement at the end of the file would fail it on correct code.
-pub fn require_image_fingerprint_match(
-    reader: &dyn docker::ImageFingerprint,
-    image: &str,
-) -> anyhow::Result<()> {
-    let image_value = reader.image_fingerprint(image).with_context(|| {
-        format!(
-            "cannot read the gate fingerprint baked into {image}; rebuild it with `taskfmt-host \
-             build-images`, or reinstall the host binary with `cargo install --path harness \
-             --bin taskfmt-host` if the host is the stale side"
-        )
-    })?;
-    crate::cmds::fingerprint::compare(crate::HARNESS_FINGERPRINT, image, &image_value)?;
-    reader.image_prerequisites(image).with_context(|| {
-        format!(
-            "cannot verify runtime prerequisites in {image}; rebuild it with `taskfmt-host preload --auto` then `taskfmt-host build-images --agent all --auto`"
-        )
-    })
 }
 
 /// Resolve profile/model/effort for one task without dispatching. Used by experiment confirmation.
@@ -161,7 +120,6 @@ pub fn dispatch_one(
     expected_predecessor: Option<&str>,
     exp: Option<&str>,
     selfcheck: bool,
-    image_fingerprint: &dyn docker::ImageFingerprint,
 ) -> anyhow::Result<RunOutcome> {
     let cfg = &resolved.cfg;
 
@@ -181,10 +139,12 @@ pub fn dispatch_one(
     let model = dispatch.model;
     let effort = dispatch.effort;
 
-    // Before anything is created, cloned or launched: the image that will judge this run must be
-    // the build this binary is. A mismatched dispatch would record a verdict from an engine the
-    // run record does not describe.
-    require_image_fingerprint_match(image_fingerprint, &profile.image)?;
+    docker::image_prerequisites(&profile.image).with_context(|| {
+        format!(
+            "cannot verify runtime prerequisites in {}; rebuild it with `taskfmt-host preload --auto` then `taskfmt-host build-images --agent all --auto`",
+            profile.image
+        )
+    })?;
 
     // ---------- run dir ----------
     let run_id = run_dir_name(&timestamp_compact(), profile_name, &location.run_key);

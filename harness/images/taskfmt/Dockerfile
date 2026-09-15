@@ -16,11 +16,8 @@ ENV TASKFMT_GIT_COMMIT_SHA=${TASKFMT_GIT_COMMIT_SHA}
 
 WORKDIR /build
 # manifests and the build script first, so the dependency layer caches independently of the
-# sources. The script bakes the crate's content fingerprint and Git commit into the binary, and it
-# must be the same script the host ran or the two values could never agree.
+# sources. The script bakes the Git commit into the binary.
 COPY Cargo.toml Cargo.lock build.rs ./
-# the script `include!`s the hashing algorithm, so the stub stage needs that one real source too
-COPY src/fingerprint.rs ./src/fingerprint.rs
 RUN mkdir -p src/bin \
  && echo "pub fn placeholder() {}" > src/lib.rs \
  && echo "fn main() {}" > src/bin/taskfmt.rs \

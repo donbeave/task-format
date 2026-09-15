@@ -5,7 +5,6 @@ pub mod attach;
 pub mod build_images;
 pub mod container_entrypoint;
 pub mod experiment;
-pub mod fingerprint;
 pub mod gate;
 pub mod lint;
 pub mod preload;
@@ -217,7 +216,6 @@ pub fn dispatch_host(cli: &host::Cli) -> anyhow::Result<i32> {
         Command::Lint { json, tasks } => lint::run(&ctx, *json, tasks),
         Command::ProgressInit { task, out } => progress_init::run(&ctx, task, out.as_deref()),
         Command::Selftest => selftest::run(&ctx),
-        Command::Fingerprint { path, image } => fingerprint::run(path.as_deref(), image.as_deref()),
         Command::Selfcheck {
             task,
             workspace,
@@ -254,8 +252,6 @@ pub fn dispatch_host(cli: &host::Cli) -> anyhow::Result<i32> {
             *kill_after,
             exp.as_deref(),
             *selfcheck,
-            // the one image reader in the crate; a dispatch compares whatever it returns
-            &crate::ops::docker::DockerImageFingerprint,
         ),
         Command::Gate { run: run_id } => gate::run(&ctx, run_id),
         Command::Promote { run: run_id, yes } => promote::run(&ctx, run_id, *yes),
@@ -317,7 +313,6 @@ pub fn dispatch_container(cli: &cli_container::Cli) -> anyhow::Result<i32> {
             log_dir.as_deref(),
             *fail_fast,
         ),
-        Command::Fingerprint { path } => fingerprint::run(path.as_deref(), None),
         Command::ContainerEntrypoint => container_entrypoint::run(),
         Command::Prereqs => container_entrypoint::prereqs_only(),
         Command::AgentLaunch => agent_launch::run(),

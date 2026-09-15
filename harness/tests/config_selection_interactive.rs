@@ -207,7 +207,6 @@ fn every_cli_subcommand_parses() {
         vec!["taskfmt", "prereqs"],
         vec!["taskfmt", "agent-launch"],
         vec!["taskfmt", "verify", "--fail-fast"],
-        vec!["taskfmt", "fingerprint"],
         vec!["taskfmt", "codex-login"],
     ];
     for case in container_cases {

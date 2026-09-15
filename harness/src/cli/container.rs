@@ -56,13 +56,6 @@ pub enum Command {
         fail_fast: bool,
     },
 
-    /// Print the content fingerprint baked into this binary.
-    Fingerprint {
-        /// Recompute the digest over a crate directory instead of printing the compiled-in value.
-        #[arg(long)]
-        path: Option<PathBuf>,
-    },
-
     /// Container PID 1 (root): inner dockerd, agent seeding, prereqs, then the agent.
     ContainerEntrypoint,
 

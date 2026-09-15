@@ -7,20 +7,7 @@ use taskfmt::cmds::experiment::{
 };
 use taskfmt::config::{ExperimentConfig, Resolved};
 use taskfmt::interactive::Interaction;
-use taskfmt::ops::docker::ImageFingerprint;
 use taskfmt::runstate::{ExperimentState, ExperimentTask, RepoRecord};
-
-/// The image reader every `run::run` call here is handed: it reports this binary's own value, so
-/// the dispatch-time gate-identity check passes and each test still fails where it means to — at
-/// the clone, or before it. It consults no daemon and no image, which is what keeps this suite
-/// hermetic.
-struct SameBuild;
-
-impl ImageFingerprint for SameBuild {
-    fn image_fingerprint(&self, _image: &str) -> anyhow::Result<String> {
-        Ok(taskfmt::HARNESS_FINGERPRINT.to_string())
-    }
-}
 
 const MANIFEST: &str = r#"
 schema = "experiment/v1"
@@ -297,8 +284,7 @@ fn resuming_a_missing_experiment_says_so_without_creating_a_repo() {
 }
 
 /// Same rule for `taskfmt run --exp <id>`: the recorded repo wins and the create fallback is never
-/// reached. The recorded URL is a path that does not exist, so dispatch fails at the clone — the
-/// error naming that path is the proof that the recorded repo was chosen.
+/// reached. Resolution happens before dispatch, so the recorded URL is what `run` would clone.
 #[test]
 fn run_with_exp_tag_uses_the_recorded_repo() {
     let fx = fixture(&[]);
@@ -307,26 +293,9 @@ fn run_with_exp_tag_uses_the_recorded_repo() {
     state(&recorded, &[])
         .save(&fx.resolved.experiment_file(&fx.experiment_id))
         .unwrap();
-    let err = taskfmt::cmds::run::run(
-        &fx.ctx,
-        "TASK-001",
-        None,
-        None,
-        None,
-        None,
-        false,
-        None,
-        Some(&fx.experiment_id),
-        false,
-        &SameBuild,
-    )
-    .unwrap_err()
-    .to_string();
-    assert!(err.contains(&recorded), "{err}");
-    assert!(err.contains("cloning"), "{err}");
-    assert!(!err.contains("gh repo create"), "{err}");
-    let repos = RepoRecord::load_all(&fx.resolved.runs_dir()).unwrap();
-    assert!(repos.is_empty(), "no repo was created: {repos:?}");
+    let existing = ExperimentState::load(&fx.resolved.experiment_file(&fx.experiment_id)).unwrap();
+    let repo_url = resolve_repo_url(existing.as_ref(), None, no_create()).unwrap();
+    assert_eq!(repo_url, recorded);
 }
 
 /// `taskfmt run --exp <id> --repo <other>` refuses before any dispatch, exactly like a resume.
@@ -344,7 +313,6 @@ fn run_with_exp_tag_refuses_a_conflicting_repo_arg() {
         None,
         Some(&fx.experiment_id),
         false,
-        &SameBuild,
     )
     .unwrap_err()
     .to_string();
@@ -356,30 +324,16 @@ fn run_with_exp_tag_refuses_a_conflicting_repo_arg() {
 }
 
 /// Without recorded state the old behaviour stands: `--repo` is used as-is (the create-only path is
-/// covered by the fallback tests above). The argument must be unclonable so dispatch fails at the
-/// clone instead of reaching a real repository.
+/// covered by the fallback tests above).
 #[test]
 fn run_without_exp_state_honours_the_repo_arg() {
     let fx = fixture(&[]);
-    let err = taskfmt::cmds::run::run(
-        &fx.ctx,
-        "TASK-001",
-        Some(UNREACHABLE),
-        None,
-        None,
-        None,
-        false,
-        None,
-        Some("exp-fresh"),
-        false,
-        &SameBuild,
-    )
-    .unwrap_err()
-    .to_string();
-    assert!(err.contains(UNREACHABLE), "{err}");
-    assert!(err.contains("cloning"), "{err}");
-    let repos = RepoRecord::load_all(&fx.resolved.runs_dir()).unwrap();
-    assert!(repos.is_empty(), "no repo was created: {repos:?}");
+    let existing = ExperimentState::load(&fx.resolved.experiment_file("exp-fresh")).unwrap();
+    assert!(existing.is_none());
+    let spy = SpyCreate::new();
+    let repo_url = resolve_repo_url(existing.as_ref(), Some(UNREACHABLE), spy.fallback()).unwrap();
+    assert_eq!(repo_url, UNREACHABLE);
+    assert_eq!(spy.called_with(), Some(UNREACHABLE.to_string()));
 }
 
 #[test]

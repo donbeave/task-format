@@ -200,7 +200,7 @@ repository. Execution uses the installed `taskfmt-host` binary, an existing
 experiment configuration, and an explicit repository chosen by the operator.
 The normal taskfmt Docker images, prerequisites, and selected profile credentials
 must be configured as described in `harness/README.md`.
-After harness source changes, rebuild images so host/image fingerprints match.
+After harness source changes, rebuild images before dispatch.
 
 Runs call the existing wait-and-gate lifecycle. The monitor does not promote or
 push candidate code. Original sequential task contracts retain their predecessor

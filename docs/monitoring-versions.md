@@ -196,5 +196,4 @@ The [sha2 0.11 API](https://docs.rs/sha2/0.11.0/sha2/) retains the
 `Sha256::new`, `update`, and `finalize` interface used by the existing harness.
 The [signal-hook 0.4 flag API](https://docs.rs/signal-hook/0.4.4/signal_hook/flag/fn.register.html)
 retains `register(c_int, Arc<AtomicBool>) -> Result<SigId, Error>`. Existing
-digest vectors, fingerprint tests, and supervisor tests remain the behavioral
-checks for these upgrades.
+digest vectors and supervisor tests remain the behavioral checks for these upgrades.
