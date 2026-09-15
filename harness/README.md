@@ -316,7 +316,9 @@ taskfmt-host repo delete --name <repository-name> --auto
 
 Cursor uses the same login as your host `agent` CLI. Run `agent login` on the host first.
 On macOS the harness reads your Keychain session at dispatch time; on Linux it mounts
-`~/.config/cursor/auth.json` (or `~/.cursor/auth.json`).
+`~/.cursor/auth.json` (or legacy `~/.config/cursor/auth.json`). Inside the Linux container the
+entrypoint installs credentials at `/home/agent/.config/cursor/auth.json` — the path the Cursor
+Agent CLI reads when `AGENT_CLI_CREDENTIAL_STORE=file` (macOS uses `~/.cursor/auth.json` instead).
 
 ```sh
 taskfmt-host run --task TASK-001 --repo <repository-url> --agent cursor-default --wait

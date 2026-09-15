@@ -319,7 +319,7 @@ pub fn dispatch_one(
             manifest.container
         );
     }
-    if let Err(err) = herdr::prompt(&manifest, &prompt) {
+    if let Err(err) = herdr::inject_goal_prompt(&manifest, &prompt) {
         redact::eemit(&format!("prompt refused: {err:#}"));
         if let Ok(screen) = herdr::pane_visible(&manifest) {
             redact::eemit(&screen);
@@ -444,9 +444,7 @@ pub(crate) fn quiesce(manifest: &Manifest) -> anyhow::Result<()> {
             manifest.container
         );
     }
-    if let Err(err) = herdr::prompt(manifest, "/goal clear") {
-        redact::eemit(&format!("could not clear the goal before gating: {err:#}"));
-    }
+    herdr::clear_goal(manifest);
     if docker::stop(&manifest.container, QUIESCE_GRACE_S) {
         redact::emit(&format!(
             "QUIESCED {} (stopped before gating; `taskfmt-host attach {}` restarts it)",
@@ -773,14 +771,17 @@ fn wait_pane(manifest: &Manifest, timeout: Duration) -> anyhow::Result<String> {
 }
 
 /// Confirm the goal was accepted: transcript sentinel (claude) or the agent turning `working`
-/// (codex). A prompt visible but unsubmitted gets an extra Enter at iterations 2, 5, and 8.
+/// (codex/cursor). Bracketed paste can leave a `[Pasted text]` chip without submitting — keep
+/// sending Enter until herdr reports `working`/`blocked` or the unsubmitted marker clears.
 fn confirm_acceptance(manifest: &Manifest, prompt: &str) -> anyhow::Result<()> {
     let transcript = crate::ops::transcript::claude_transcript(manifest);
     let prefix: String = prompt.chars().take(40).collect();
     let claude = manifest.agent_kind == "claude";
+    let cursor = manifest.agent_kind == "cursor";
     let iterations = if claude { 15 } else { 30 };
     const SLEEP: Duration = Duration::from_secs(2);
-    const ENTER_RETRIES: [u32; 3] = [2, 5, 8];
+    const ENTER_RETRIES_CODEX: [u32; 3] = [2, 5, 8];
+    const ENTER_RETRIES_CURSOR: [u32; 6] = [1, 2, 3, 5, 8, 12];
     for iteration in 1..=iterations {
         std::thread::sleep(SLEEP);
         if claude
@@ -790,25 +791,42 @@ fn confirm_acceptance(manifest: &Manifest, prompt: &str) -> anyhow::Result<()> {
             redact::emit("goal accepted (transcript sentinel)");
             return Ok(());
         }
+        if cursor
+            && herdr::pane_visible(manifest)
+                .map(|screen| crate::cmds::status::screen_shows_active_goal(&screen))
+                .unwrap_or(false)
+        {
+            redact::emit("goal accepted (/goal active on screen)");
+            return Ok(());
+        }
         if !claude {
+            let unsubmitted = herdr::pane_visible(manifest)
+                .map(|screen| crate::cmds::status::screen_shows_unsubmitted_prompt(&screen))
+                .unwrap_or(false);
             match herdr::agent_status(manifest).as_deref() {
-                Some("working") | Some("blocked") => {
+                Some("working") | Some("blocked") if !unsubmitted => {
                     redact::emit("prompt consumed (agent working or blocked)");
                     return Ok(());
                 }
                 _ => {}
             }
-            if crate::cmds::status::codex_recently_active(manifest) {
-                redact::emit("prompt consumed (codex screen or tui.log activity)");
-                return Ok(());
-            }
         }
-        if ENTER_RETRIES.contains(&iteration)
+        let enter_retries = if cursor {
+            &ENTER_RETRIES_CURSOR[..]
+        } else if !claude {
+            &ENTER_RETRIES_CODEX[..]
+        } else {
+            &[][..]
+        };
+        if enter_retries.contains(&iteration)
             && herdr::pane_visible(manifest)
-                .map(|screen| screen.contains(&prefix))
+                .map(|screen| {
+                    crate::cmds::status::screen_shows_unsubmitted_prompt(&screen)
+                        || screen.contains(&prefix)
+                })
                 .unwrap_or(false)
         {
-            redact::eemit("prompt visible but not submitted — resending Enter");
+            redact::eemit("prompt visible but not submitted — sending Enter");
             herdr::send_enter(manifest);
         }
     }

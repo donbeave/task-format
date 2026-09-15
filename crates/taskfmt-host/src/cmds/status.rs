@@ -259,7 +259,7 @@ pub fn run(ctx: &Ctx, run_id: &str, wait: bool, kill_after: Option<u64>) -> anyh
             }
             if started.elapsed() >= kill_after {
                 // `/goal clear` stops the loop; the operator inspects the live container after.
-                let _ = herdr::prompt(&manifest, "/goal clear");
+                herdr::clear_goal(&manifest);
                 redact::emit(&format!("{{\"state\":\"{KILLED_TIMEOUT}\"}}"));
                 break Status::bare(KILLED_TIMEOUT, &manifest, &run_dir);
             }
@@ -467,6 +467,22 @@ pub(crate) fn screen_shows_working(screen: &str) -> bool {
         .any(|line| line.contains("Working (") || line.contains("Waiting for background terminal"))
 }
 
+/// Bracketed-paste injection left the goal in the input area but did not submit it.
+pub(crate) fn screen_shows_unsubmitted_prompt(screen: &str) -> bool {
+    screen
+        .lines()
+        .map(transcript::strip_ansi)
+        .any(|line| line.contains("[Pasted text") || line.contains("→ [Pasted text"))
+}
+
+/// Cursor native `/goal` armed — the status line appears once the slash command is accepted.
+pub(crate) fn screen_shows_active_goal(screen: &str) -> bool {
+    screen
+        .lines()
+        .map(transcript::strip_ansi)
+        .any(|line| line.contains("Goal active") || line.contains("Goal paused"))
+}
+
 fn json_line(status: &Status) -> String {
     serde_json::to_string(status).unwrap_or_else(|_| "{{}}".to_string())
 }
@@ -555,7 +571,7 @@ pub fn wait_terminal_state(
             return Ok(status);
         }
         if elapsed >= deadline {
-            let _ = herdr::prompt(manifest, "/goal clear");
+            herdr::clear_goal(manifest);
             let killed = Status::bare(KILLED_TIMEOUT, manifest, run_dir);
             log_decision(run_dir, elapsed, &killed, &None, true);
             return Ok(killed);
@@ -1114,6 +1130,25 @@ mod tests {
         assert!(
             !status(IDLE, None, "GOAL_RESULT task=TASK-000 status=<STATUS>").completion_evidence()
         );
+    }
+
+    #[test]
+    fn unsubmitted_prompt_chip_is_detected_on_cursor_and_codex() {
+        assert!(screen_shows_unsubmitted_prompt(
+            "  → [Pasted text #1 +1 lines]"
+        ));
+        assert!(!screen_shows_unsubmitted_prompt(
+            "Working (12s • esc to interrupt)"
+        ));
+    }
+
+    #[test]
+    fn active_goal_status_line_is_detected_on_cursor() {
+        assert!(screen_shows_active_goal(
+            "                                                                                                                                                         Goal active (2m 1s)"
+        ));
+        assert!(screen_shows_active_goal("Goal paused (manual)"));
+        assert!(!screen_shows_active_goal("  → [Pasted text #1 +1 lines]"));
     }
 
     #[test]

@@ -197,6 +197,19 @@ pub fn exec(
     args: &[String],
     tty: bool,
 ) -> anyhow::Result<Captured> {
+    exec_with_timeout(container, user, env, args, tty, CONTROL_TIMEOUT)
+}
+
+/// Like [`exec`] with an explicit wall-clock bound. herdr `agent wait` and cold-start exec on
+/// Docker Desktop can exceed the 500 ms control-plane default.
+pub fn exec_with_timeout(
+    container: &str,
+    user: Option<&str>,
+    env: &[(String, String)],
+    args: &[String],
+    tty: bool,
+    timeout: Duration,
+) -> anyhow::Result<Captured> {
     let mut cmd = Command::new("docker");
     cmd.arg("exec");
     if tty {
@@ -213,7 +226,7 @@ pub fn exec(
         cmd.arg("-e").arg(format!("{key}={value}"));
     }
     cmd.arg(container).args(args);
-    capture_docker(&mut cmd).context("cannot spawn docker exec")
+    capture_with_timeout(&mut cmd, timeout).context("cannot spawn docker exec")
 }
 
 /// Same as [`exec`] but errors on a non-zero exit.
@@ -223,7 +236,18 @@ pub fn exec_ok(
     env: &[(String, String)],
     args: &[String],
 ) -> anyhow::Result<Captured> {
-    let captured = exec(container, user, env, args, false)?;
+    exec_ok_with_timeout(container, user, env, args, CONTROL_TIMEOUT)
+}
+
+/// Same as [`exec_with_timeout`] but errors on a non-zero exit.
+pub fn exec_ok_with_timeout(
+    container: &str,
+    user: Option<&str>,
+    env: &[(String, String)],
+    args: &[String],
+    timeout: Duration,
+) -> anyhow::Result<Captured> {
+    let captured = exec_with_timeout(container, user, env, args, false, timeout)?;
     if !captured.ok() {
         anyhow::bail!(
             "docker exec {} failed (rc={}):\n{}",

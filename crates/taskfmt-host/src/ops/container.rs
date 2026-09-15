@@ -228,7 +228,7 @@ pub struct LaunchPlan {
 /// `CARGO_TARGET_DIR=/out/cargo-target`, and the `taskfmt.*` labels that let every later command
 /// find this run from the container alone. `auth = "host"` mounts the operator's host credentials
 /// read-only into the run container; the entrypoint copies them into the agent home with safe
-/// ownership (Codex `auth.json`, Cursor `~/.config/cursor/auth.json`).
+/// ownership (Codex `auth.json`, Cursor `~/.cursor/auth.json`).
 pub(crate) fn launch_plan(
     cfg: &ExperimentConfig,
     resolved: &Resolved,
@@ -300,8 +300,10 @@ pub(crate) fn launch_plan(
             env.push(("CODEX_HOME".to_string(), home.to_string()));
         }
         "cursor" => {
+            // Config/auth live under CURSOR_CONFIG_DIR; do not set HOME=/agent-home — gosu
+            // agent-launch keeps passwd home (/home/agent) for herdr, and host docker exec must
+            // match (see herdr.rs AGENT_HOME).
             env.push(("CURSOR_CONFIG_DIR".to_string(), "/agent-home".to_string()));
-            env.push(("HOME".to_string(), "/agent-home".to_string()));
             if profile.auth == AgentAuth::Host {
                 env.push(("AGENT_CLI_CREDENTIAL_STORE".to_string(), "file".to_string()));
             }
@@ -376,8 +378,8 @@ fn host_cursor_auth_file_path() -> anyhow::Result<PathBuf> {
         .map(PathBuf::from)
         .unwrap_or_else(|| home.join(".config"));
     for candidate in [
-        config_home.join("cursor/auth.json"),
         home.join(".cursor/auth.json"),
+        config_home.join("cursor/auth.json"),
     ] {
         if candidate.is_file() {
             return validate_private_auth_file(&candidate, "run `agent login` on the host first");
@@ -385,8 +387,8 @@ fn host_cursor_auth_file_path() -> anyhow::Result<PathBuf> {
     }
     Err(anyhow::anyhow!(
         "host Cursor auth file not found under {} or {}",
-        config_home.join("cursor/auth.json").display(),
-        home.join(".cursor/auth.json").display()
+        home.join(".cursor/auth.json").display(),
+        config_home.join("cursor/auth.json").display()
     ))
 }
 
@@ -654,6 +656,7 @@ pub fn preseed_agent_home(agent_home: &Path, profile: &AgentProfile) -> anyhow::
             )?;
         }
         "cursor" => {
+            // `CURSOR_CONFIG_DIR=/agent-home` → cli-config.json at the mount root.
             super::write_file(
                 &agent_home.join("cli-config.json"),
                 cursor_cli_config_json(),

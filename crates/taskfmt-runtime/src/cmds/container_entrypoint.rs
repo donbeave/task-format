@@ -28,6 +28,9 @@ const OUT: &str = "/out";
 const PARK: Duration = Duration::from_secs(86400);
 const CODEX_AUTH_STAGING: &str = "/tmp/taskfmt-host-codex-auth.json";
 const CURSOR_AUTH_STAGING: &str = "/tmp/taskfmt-host-cursor-auth.json";
+/// Passwd home for user `agent`. Cursor Agent CLI reads `~/.cursor/auth.json` here when
+/// `AGENT_CLI_CREDENTIAL_STORE=file`; it does not follow `CURSOR_CONFIG_DIR=/agent-home`.
+const AGENT_PASSWD_HOME: &str = "/home/agent";
 
 pub fn run() -> anyhow::Result<i32> {
     let _flags = signals::install_terminate_flag();
@@ -108,28 +111,9 @@ pub fn run() -> anyhow::Result<i32> {
     {
         let _ = chown_agent_recursive(&Path::new(&claude_home).join("plugins").to_string_lossy());
     }
-    let cursor_home = std::env::var("CURSOR_CONFIG_DIR").unwrap_or_default();
-    if !cursor_home.is_empty() {
-        let _ = std::fs::create_dir_all(&cursor_home);
-        if Path::new("/etc/cursor-cli-config.json").is_file()
-            && !Path::new(&cursor_home).join("cli-config.json").is_file()
-        {
-            let _ = std::fs::copy(
-                "/etc/cursor-cli-config.json",
-                Path::new(&cursor_home).join("cli-config.json"),
-            );
-        }
-        if Path::new(CURSOR_AUTH_STAGING).is_file() {
-            let auth_dir = Path::new("/agent-home/.config/cursor");
-            let _ = std::fs::create_dir_all(auth_dir);
-            let auth = auth_dir.join("auth.json");
-            std::fs::copy(CURSOR_AUTH_STAGING, &auth)
-                .with_context(|| format!("copying host Cursor auth to {}", auth.display()))?;
-            set_private_agent_file(&auth)?;
-            let _ = chown_agent_recursive(&auth_dir.to_string_lossy());
-            let _ = Command::new("umount").arg(CURSOR_AUTH_STAGING).status();
-        }
-        let _ = chown_agent(&cursor_home);
+    if std::env::var("CURSOR_CONFIG_DIR").is_ok() {
+        setup_cursor_cli()?;
+        let _ = chown_agent("/agent-home");
     }
     for dir in ["/work", "/out", "/agent-home", "/progress"] {
         let _ = chown_agent(dir);
@@ -178,11 +162,66 @@ pub fn run() -> anyhow::Result<i32> {
         park();
     }
 
-    // (c) agent supervision as user `agent`; TERM/INT handled there (graceful herdr server stop)
+    // (c) agent supervision as user `agent`; TERM/INT handled there (graceful herdr server stop).
+    // Pin HOME to the passwd home so herdr session paths match host-side docker exec (cursor
+    // profiles set CURSOR_CONFIG_DIR=/agent-home but must not relocate the herdr socket).
     let err = Command::new("gosu")
-        .args(["agent", "taskfmt-runtime", "agent-launch"])
+        .args([
+            "agent",
+            "env",
+            "HOME=/home/agent",
+            "taskfmt-runtime",
+            "agent-launch",
+        ])
         .exec();
     Err(err).context("exec gosu agent taskfmt-runtime agent-launch")
+}
+
+/// Install Cursor CLI host auth and config for user `agent`.
+///
+/// Auth with `AGENT_CLI_CREDENTIAL_STORE=file` is platform-specific in the Cursor Agent CLI:
+/// macOS reads `~/.cursor/auth.json`; Linux reads `$HOME/.config/cursor/auth.json`. Harness
+/// containers are Linux, so auth lands under the passwd home `.config/cursor/` tree.
+///
+/// `cli-config.json` follows `CURSOR_CONFIG_DIR` when set (`/agent-home/cli-config.json` at
+/// dispatch); otherwise `$XDG_CONFIG_HOME/cursor/cli-config.json` or `~/.cursor/cli-config.json`.
+fn setup_cursor_cli() -> anyhow::Result<()> {
+    let auth_dir = Path::new(AGENT_PASSWD_HOME).join(".config/cursor");
+    std::fs::create_dir_all(&auth_dir).context("creating ~/.config/cursor for the agent user")?;
+    let config_dest = Path::new("/agent-home/cli-config.json");
+    if !config_dest.is_file() {
+        for source in [
+            Path::new("/agent-home/.cursor/cli-config.json"),
+            Path::new("/etc/cursor-cli-config.json"),
+        ] {
+            if source.is_file() {
+                if let Some(parent) = config_dest.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::copy(source, config_dest).with_context(|| {
+                    format!(
+                        "copying Cursor cli-config from {} to {}",
+                        source.display(),
+                        config_dest.display()
+                    )
+                })?;
+                break;
+            }
+        }
+    }
+    if Path::new(CURSOR_AUTH_STAGING).is_file() {
+        let auth = auth_dir.join("auth.json");
+        std::fs::copy(CURSOR_AUTH_STAGING, &auth)
+            .with_context(|| format!("copying host Cursor auth to {}", auth.display()))?;
+        set_private_agent_file(&auth)?;
+        let _ = Command::new("umount").arg(CURSOR_AUTH_STAGING).status();
+    }
+    chown_agent_recursive(&auth_dir.to_string_lossy())?;
+    if config_dest.is_file() {
+        set_private_agent_file(config_dest)?;
+        chown_agent(&config_dest.to_string_lossy())?;
+    }
+    Ok(())
 }
 
 fn set_private_agent_file(path: &Path) -> anyhow::Result<()> {
