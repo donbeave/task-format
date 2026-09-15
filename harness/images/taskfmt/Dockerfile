@@ -16,13 +16,19 @@ COPY crates/taskfmt-core/Cargo.toml crates/taskfmt-core/Cargo.toml
 COPY crates/taskfmt-core/build.rs crates/taskfmt-core/build.rs
 COPY crates/taskfmt/Cargo.toml crates/taskfmt/Cargo.toml
 COPY crates/taskfmt-runtime/Cargo.toml crates/taskfmt-runtime/Cargo.toml
-RUN mkdir -p crates/taskfmt-core/src crates/taskfmt/src crates/taskfmt-runtime/src \
+COPY crates/taskfmt-host/Cargo.toml crates/taskfmt-host/Cargo.toml
+COPY harness/Cargo.toml harness/Cargo.toml
+RUN mkdir -p crates/taskfmt-core/src crates/taskfmt/src crates/taskfmt-runtime/src crates/taskfmt-host/src harness/src \
  && echo "pub fn placeholder() {}" > crates/taskfmt-core/src/lib.rs \
+ && echo "pub fn placeholder() {}" > crates/taskfmt/src/lib.rs \
  && echo "fn main() {}" > crates/taskfmt/src/main.rs \
- && echo "pub mod cli; pub mod cmds; pub mod ops; fn main() {}" > crates/taskfmt-runtime/src/lib.rs \
+ && echo "pub fn placeholder() {}" > crates/taskfmt-runtime/src/lib.rs \
  && echo "fn main() {}" > crates/taskfmt-runtime/src/main.rs \
+ && echo "pub fn placeholder() {}" > crates/taskfmt-host/src/lib.rs \
+ && echo "fn main() {}" > crates/taskfmt-host/src/main.rs \
+ && echo "pub fn placeholder() {}" > harness/src/lib.rs \
  && cargo build --release -p taskfmt -p taskfmt-runtime --locked \
- && rm -rf crates/*/src
+ && rm -rf crates/*/src harness/src
 
 COPY crates/taskfmt-core/src crates/taskfmt-core/src
 COPY crates/taskfmt/src crates/taskfmt/src

@@ -15,7 +15,7 @@ RUN case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
  && mkdir -p /opt/cursor-agent \
  && curl -fsSL "https://downloads.cursor.com/lab/${CURSOR_AGENT_VERSION}/${OS}/${ARCH}/agent-cli-package.tar.gz" \
     | tar --strip-components=1 -xzf - -C /opt/cursor-agent \
- && install -m 755 /opt/cursor-agent/cursor-agent /usr/local/bin/agent \
+ && ln -sf /opt/cursor-agent/cursor-agent /usr/local/bin/agent \
  && ln -sf /usr/local/bin/agent /usr/local/bin/cursor-agent \
  && agent --version
 
