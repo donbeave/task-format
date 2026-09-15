@@ -38,7 +38,7 @@ pub fn run(ctx: &Ctx, json: bool, tasks: &[String]) -> anyhow::Result<i32> {
 
     let mut failed = 0usize;
     for target in &targets {
-        let report = lint::lint_path(target);
+        let report = lint::lint_path_with_experiment(target, Some(&resolved.cfg));
         if json {
             redact::emit(&report.render_json());
         } else {

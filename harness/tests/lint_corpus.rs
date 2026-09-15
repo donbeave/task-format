@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
+use taskfmt::config::ExperimentConfig;
 use taskfmt::lint::{self, Finding, Severity};
 use taskfmt::ops;
 use taskfmt::taskfile::TaskFile;
@@ -30,11 +31,39 @@ fn example_verify() -> String {
 }
 
 fn lint_with_verify(readme: &str, verify: &str) -> Vec<Finding> {
+    lint_with_verify_and_execution(readme, verify, None)
+}
+
+fn lint_with_verify_and_execution(
+    readme: &str,
+    verify: &str,
+    execution: Option<&str>,
+) -> Vec<Finding> {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("README.md");
     std::fs::write(&path, readme).unwrap();
     std::fs::write(dir.path().join("verify.toml"), verify).unwrap();
+    if let Some(text) = execution {
+        std::fs::write(dir.path().join("execution.toml"), text).unwrap();
+    }
     lint::lint_text(readme, &path)
+}
+
+fn lint_with_verify_and_manifest(
+    readme: &str,
+    verify: &str,
+    execution: Option<&str>,
+    manifest: &str,
+) -> Vec<Finding> {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("README.md");
+    std::fs::write(&path, readme).unwrap();
+    std::fs::write(dir.path().join("verify.toml"), verify).unwrap();
+    if let Some(text) = execution {
+        std::fs::write(dir.path().join("execution.toml"), text).unwrap();
+    }
+    let exp = ExperimentConfig::parse(manifest).unwrap();
+    lint::lint_text_with_experiment(readme, &path, Some(&exp))
 }
 
 fn has(findings: &[Finding], rule: &str, needle: &str) -> bool {
@@ -209,6 +238,47 @@ fn graph_unknown_unused_and_missing_references_are_fatal() {
     let findings = lint_with_verify(&text, &missing);
     assert!(
         has(&findings, "graph", "CHK-002 has no requirements"),
+        "{findings:?}"
+    );
+}
+
+#[test]
+fn invalid_execution_toml_reports_execution_rule() {
+    let (text, _) = example_text();
+    let verify = example_verify();
+    let execution = r#"
+schema = "execution/v1"
+profile = "codex-kimi"
+effort = "turbo"
+"#;
+    let findings = lint_with_verify_and_execution(&text, &verify, Some(execution));
+    let finding = findings
+        .iter()
+        .find(|finding| finding.rule == "execution")
+        .expect("execution rule finding");
+    assert!(finding.message.contains("effort"), "{}", finding.message);
+    assert_eq!(finding.path.file_name().unwrap(), "execution.toml");
+}
+
+#[test]
+fn execution_profile_unknown_against_manifest_is_fatal() {
+    let (text, _) = example_text();
+    let verify = example_verify();
+    let execution = r#"
+schema = "execution/v1"
+profile = "missing-profile"
+"#;
+    let manifest = r#"
+schema = "experiment/v1"
+[agents.default]
+profile = "p"
+[agents.profiles.p]
+kind = "claude"
+image = "i"
+"#;
+    let findings = lint_with_verify_and_manifest(&text, &verify, Some(execution), manifest);
+    assert!(
+        has(&findings, "execution", "missing-profile"),
         "{findings:?}"
     );
 }

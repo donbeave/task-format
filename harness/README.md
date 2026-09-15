@@ -230,6 +230,38 @@ default profile is `zai-flash`; `codex-default` is also available.
 Profile secrets are references, not values. They resolve only at dispatch, pass through a temporary
 mode-0600 environment file, and are redacted from output and records.
 
+### Per-task dispatch (`execution.toml`)
+
+Each task package may optionally declare which agent profile, model, and effort level runs it.
+Auth and secrets stay in `experiment.toml` profiles only; `execution.toml` names dispatch intent,
+not credentials. When the file is absent, dispatch uses the experiment default profile unchanged.
+
+Schema `execution/v1`:
+
+```toml
+schema = "execution/v1"
+profile = "codex-kimi"   # required when the file exists
+model = "kimi-k3"        # optional
+effort = "high"          # optional: low | medium | high | max
+```
+
+Precedence (one resolver for `run`, `experiment`, and lint cross-checks):
+
+| Field | Order (highest first) |
+|-------|------------------------|
+| profile | CLI `--agent` > `execution.toml` profile > `[agents.default].profile` |
+| model | CLI `--model` > `execution.toml` model > profile.model |
+| effort | CLI `--effort` > `execution.toml` effort > profile.effort |
+
+`taskfmt experiment` accepts optional `--model` and `--effort` to override every selected task;
+`--agent` overrides all tasks as well. The confirmation plan shows the resolved profile, model,
+and effort per task. `execution.toml` is not part of the gate fingerprint (`README.md` and
+`verify.toml` only).
+
+See [`reference/task-template/execution.toml`](../reference/task-template/execution.toml) for a
+commented template and [`harness/testdata/execution-template.toml`](testdata/execution-template.toml)
+for a parseable example.
+
 ## Inspection and repository lifecycle
 
 Compare the host binary fingerprint with an image:

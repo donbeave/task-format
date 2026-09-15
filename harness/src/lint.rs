@@ -1,5 +1,7 @@
 //! Strict task/v5 + verify/v2 package lint. Markdown states behavior; TOML states execution.
 use crate::acceptance;
+use crate::config::ExperimentConfig;
+use crate::executioncfg::{self, ExecutionConfig};
 use crate::taskfile::{self, TaskFile};
 use crate::verifycfg::{self, VerifyConfig};
 use regex::Regex;
@@ -106,6 +108,13 @@ fn fail_at(
     })
 }
 pub fn lint_path(target: &Path) -> LintReport {
+    lint_path_with_experiment(target, None)
+}
+
+pub fn lint_path_with_experiment(
+    target: &Path,
+    experiment: Option<&ExperimentConfig>,
+) -> LintReport {
     let dir = if target.is_dir() {
         target.to_path_buf()
     } else {
@@ -130,14 +139,28 @@ pub fn lint_path(target: &Path) -> LintReport {
     };
     LintReport {
         target: readme.clone(),
-        findings: lint(&text, &readme, Some(&dir)),
+        findings: lint(&text, &readme, Some(&dir), experiment),
     }
 }
 /// In-memory entry point. It validates Markdown; file-backed lint additionally validates TOML.
 pub fn lint_text(text: &str, readme: &Path) -> Vec<Finding> {
-    lint(text, readme, readme.parent())
+    lint(text, readme, readme.parent(), None)
 }
-fn lint(text: &str, readme: &Path, dir: Option<&Path>) -> Vec<Finding> {
+
+pub fn lint_text_with_experiment(
+    text: &str,
+    readme: &Path,
+    experiment: Option<&ExperimentConfig>,
+) -> Vec<Finding> {
+    lint(text, readme, readme.parent(), experiment)
+}
+
+fn lint(
+    text: &str,
+    readme: &Path,
+    dir: Option<&Path>,
+    experiment: Option<&ExperimentConfig>,
+) -> Vec<Finding> {
     let mut out = Vec::new();
     let tf = match TaskFile::parse(text.into(), readme) {
         Ok(x) => x,
@@ -185,9 +208,56 @@ fn lint(text: &str, readme: &Path, dir: Option<&Path>) -> Vec<Finding> {
                 )
             }
         }
+        lint_execution(&mut out, dir, experiment);
     };
     annotate_locations(&mut out, &tf);
     out
+}
+
+fn lint_execution(
+    out: &mut Vec<Finding>,
+    dir: &Path,
+    experiment: Option<&ExperimentConfig>,
+) {
+    let config_path = dir.join(executioncfg::FILE_NAME);
+    match ExecutionConfig::load_optional(dir) {
+        Ok(None) => {}
+        Ok(Some(cfg)) => {
+            if let Some(exp) = experiment
+                && let Err(error) = cfg.validate_against(exp)
+            {
+                let message = format!("{error:#}");
+                fail_at(
+                    out,
+                    "execution",
+                    config_path.clone(),
+                    execution_profile_line(&config_path).unwrap_or(1),
+                    1,
+                    message,
+                );
+            }
+        }
+        Err(error) => fail_at(
+            out,
+            "execution",
+            config_path,
+            error.line,
+            error.column,
+            error.message,
+        ),
+    }
+}
+
+fn execution_profile_line(path: &Path) -> Option<usize> {
+    let text = std::fs::read_to_string(path).ok()?;
+    text.lines()
+        .enumerate()
+        .find(|(_, line)| {
+            line.trim_start()
+                .starts_with("profile")
+                && line.contains('=')
+        })
+        .map(|(index, _)| index + 1)
 }
 
 fn config_coordinate(message: &str) -> Option<(usize, usize)> {

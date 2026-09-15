@@ -7,6 +7,7 @@ pub mod acceptance;
 pub mod cli;
 pub mod cmds;
 pub mod config;
+pub mod executioncfg;
 pub mod fingerprint;
 pub mod gate;
 pub mod hash;

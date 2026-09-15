@@ -56,16 +56,30 @@ pub fn require_recorded_predecessor(
     }))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     ctx: &Ctx,
     tasks: &[String],
     repo: Option<&str>,
     agent: Option<&str>,
+    model: Option<&str>,
+    effort: Option<&str>,
     resume: Option<&str>,
     kill_after: Option<u64>,
     selfcheck: bool,
 ) -> anyhow::Result<i32> {
-    run_with_proof_corpus(ctx, tasks, repo, agent, resume, kill_after, None, selfcheck)
+    run_with_proof_corpus(
+        ctx,
+        tasks,
+        repo,
+        agent,
+        model,
+        effort,
+        resume,
+        kill_after,
+        None,
+        selfcheck,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -74,15 +88,14 @@ pub fn run_with_proof_corpus(
     tasks: &[String],
     repo: Option<&str>,
     agent: Option<&str>,
+    model: Option<&str>,
+    effort: Option<&str>,
     resume: Option<&str>,
     kill_after: Option<u64>,
     proof_corpus: Option<&Path>,
     selfcheck: bool,
 ) -> anyhow::Result<i32> {
     let resolved = ctx.load()?;
-    let profile_name = agent
-        .unwrap_or_else(|| resolved.cfg.default_profile())
-        .to_string();
 
     // The experiment state comes first: a resume is pinned to the recorded repo, so the state must
     // be known before any repo is created. Creating first is how a resumed experiment once ended up
@@ -146,8 +159,19 @@ pub fn run_with_proof_corpus(
 
     let plan: Vec<String> = pending
         .iter()
-        .map(|task| format!("run {task} on {repo_url} as {profile_name}, gate, promote on PASS"))
-        .collect();
+        .map(|task| {
+            let (profile, model, effort) = crate::cmds::run::plan_dispatch_for_task(
+                &resolved,
+                task,
+                agent,
+                model,
+                effort,
+            )?;
+            Ok(format!(
+                "run {task} on {repo_url} as {profile} (model {model}, effort {effort}), gate, promote on PASS"
+            ))
+        })
+        .collect::<anyhow::Result<_>>()?;
     if ctx
         .interaction
         .confirm(&format!("experiment {experiment_id}"), &plan)?
@@ -167,9 +191,9 @@ pub fn run_with_proof_corpus(
         let predecessor = require_recorded_predecessor(&resolved.tasks_dir(), &state, task_id)?;
         let mut outcome = match crate::cmds::run::dispatch_one(
             &resolved,
-            &profile_name,
-            None,
-            None,
+            agent,
+            model,
+            effort,
             task_id,
             &repo_url,
             predecessor.as_ref().map(|p| p.commit.as_str()),

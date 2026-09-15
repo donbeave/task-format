@@ -259,6 +259,12 @@ pub enum Command {
         /// Agent profile name from experiment.toml. Default: agents.default.
         #[arg(long)]
         agent: Option<String>,
+        /// Override the profile model for every task in the batch.
+        #[arg(long)]
+        model: Option<String>,
+        /// Override the profile effort for every task in the batch.
+        #[arg(long)]
+        effort: Option<String>,
         /// Resume an interrupted experiment: skip tasks already recorded passed.
         #[arg(long)]
         resume: Option<String>,

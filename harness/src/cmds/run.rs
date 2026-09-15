@@ -12,7 +12,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, bail};
 
 use crate::cmds::Ctx;
-use crate::config::{Resolved, timestamp_compact};
+use crate::config::{DispatchOverrides, Resolved, resolve_dispatch, timestamp_compact};
+use crate::executioncfg;
 use crate::ops::container::{self, SecretEnvFile};
 use crate::ops::{docker, git, herdr};
 use crate::redact;
@@ -50,9 +51,6 @@ pub fn run(
     image_fingerprint: &dyn docker::ImageFingerprint,
 ) -> anyhow::Result<i32> {
     let resolved = ctx.load()?;
-    let profile_name = agent
-        .unwrap_or_else(|| resolved.cfg.default_profile())
-        .to_string();
 
     // A run tagged onto an existing experiment is pinned to that experiment's recorded repo, the
     // same rule `experiment --resume` follows. A repo is minted only when the experiment has no
@@ -68,7 +66,7 @@ pub fn run(
 
     let outcome = dispatch_one(
         &resolved,
-        &profile_name,
+        agent,
         model,
         effort,
         task,
@@ -122,11 +120,45 @@ pub fn require_image_fingerprint_match(
     })
 }
 
+/// Resolve profile/model/effort for one task without dispatching. Used by experiment confirmation.
+pub fn plan_dispatch_for_task(
+    resolved: &Resolved,
+    task_id: &str,
+    agent: Option<&str>,
+    model: Option<&str>,
+    effort: Option<&str>,
+) -> anyhow::Result<(String, String, String)> {
+    let location =
+        crate::cmds::source::TaskLocation::resolve(&resolved.tasks_dir(), task_id)?;
+    let execution = load_execution_for_task(&location.package_dir)?;
+    let dispatch = resolve_dispatch(
+        &resolved.cfg,
+        execution.as_ref(),
+        DispatchOverrides {
+            agent,
+            model,
+            effort,
+        },
+    )?;
+    Ok((
+        dispatch.profile_name,
+        dispatch.model,
+        dispatch.effort,
+    ))
+}
+
+fn load_execution_for_task(
+    task_dir: &Path,
+) -> anyhow::Result<Option<executioncfg::ExecutionConfig>> {
+    executioncfg::ExecutionConfig::load_optional(task_dir)
+        .map_err(|error| anyhow::anyhow!("{}:{}: {}", error.line, error.column, error.message))
+}
+
 /// Dispatch one task: everything up to and including prompt injection.
 #[allow(clippy::too_many_arguments)]
 pub fn dispatch_one(
     resolved: &Resolved,
-    profile_name: &str,
+    agent_override: Option<&str>,
     model_override: Option<&str>,
     effort_override: Option<&str>,
     task_id: &str,
@@ -137,16 +169,27 @@ pub fn dispatch_one(
     image_fingerprint: &dyn docker::ImageFingerprint,
 ) -> anyhow::Result<RunOutcome> {
     let cfg = &resolved.cfg;
-    let profile = cfg.profile(profile_name)?.clone();
-    let model = model_override.unwrap_or(&profile.model).to_string();
-    let effort = effort_override.unwrap_or(&profile.effort).to_string();
+
+    let location = crate::cmds::source::TaskLocation::resolve(&resolved.tasks_dir(), task_id)?;
+    let execution = load_execution_for_task(&location.package_dir)?;
+    let dispatch = resolve_dispatch(
+        cfg,
+        execution.as_ref(),
+        DispatchOverrides {
+            agent: agent_override,
+            model: model_override,
+            effort: effort_override,
+        },
+    )?;
+    let profile_name = &dispatch.profile_name;
+    let profile = dispatch.profile;
+    let model = dispatch.model;
+    let effort = dispatch.effort;
 
     // Before anything is created, cloned or launched: the image that will judge this run must be
     // the build this binary is. A mismatched dispatch would record a verdict from an engine the
     // run record does not describe.
     require_image_fingerprint_match(image_fingerprint, &profile.image)?;
-
-    let location = crate::cmds::source::TaskLocation::resolve(&resolved.tasks_dir(), task_id)?;
 
     // ---------- run dir ----------
     let run_id = run_dir_name(&timestamp_compact(), profile_name, &location.run_key);
@@ -204,7 +247,7 @@ pub fn dispatch_one(
     top_up_snapshot(&snapshot, &resolved.template_dir())?;
 
     // ---------- 4. lint (aborts dispatch) ----------
-    let report = crate::lint::lint_path(task_dir);
+    let report = crate::lint::lint_path_with_experiment(task_dir, Some(cfg));
     crate::ops::write_file(&run_dir.join("lint.log"), &report.render())?;
     if !report.passed() {
         redact::emit_lines(report.render().lines());
@@ -239,7 +282,7 @@ pub fn dispatch_one(
     redact::write_scrubbed(&run_dir.join("prompt.txt"), prompt.as_bytes())?;
     let session_id = uuid::Uuid::new_v4().to_string();
 
-    // ---------- 9. agent home ----------
+    // ---------- 9. agent home (profile carries resolved model/effort) ----------
     let agent_home = run_dir.join("agent-home");
     container::preseed_agent_home(&agent_home, &profile)?;
 
@@ -254,7 +297,7 @@ pub fn dispatch_one(
         run: run_id.clone(),
         run_dir: run_dir.display().to_string(),
         container: container.clone(),
-        agent: profile_name.to_string(),
+        agent: profile_name.clone(),
         agent_kind: profile.kind.clone(),
         model,
         effort,

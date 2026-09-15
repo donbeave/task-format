@@ -421,6 +421,63 @@ impl ExperimentConfig {
     }
 }
 
+/// CLI overrides for agent dispatch. Absent fields defer to lower-precedence sources.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DispatchOverrides<'a> {
+    pub agent: Option<&'a str>,
+    pub model: Option<&'a str>,
+    pub effort: Option<&'a str>,
+}
+
+/// Fully resolved dispatch identity for one task: profile name plus model/effort applied to a
+/// profile clone (so preseed and agent command agree).
+#[derive(Debug, Clone)]
+pub struct ResolvedDispatch {
+    pub profile_name: String,
+    pub profile: AgentProfile,
+    pub model: String,
+    pub effort: String,
+}
+
+/// Single precedence chain for every dispatch path:
+/// profile: CLI `--agent` > `execution.toml` profile > `[agents.default].profile`;
+/// model:   CLI `--model`  > `execution.toml` model  > profile.model;
+/// effort:  CLI `--effort` > `execution.toml` effort > profile.effort.
+pub fn resolve_dispatch(
+    cfg: &ExperimentConfig,
+    execution: Option<&crate::executioncfg::ExecutionConfig>,
+    overrides: DispatchOverrides<'_>,
+) -> anyhow::Result<ResolvedDispatch> {
+    let profile_name = overrides
+        .agent
+        .map(str::to_string)
+        .or_else(|| execution.map(|exec| exec.profile.clone()))
+        .unwrap_or_else(|| cfg.default_profile().to_string());
+
+    let base = cfg.profile(&profile_name)?.clone();
+    let model = overrides
+        .model
+        .map(str::to_string)
+        .or_else(|| execution.and_then(|exec| exec.model.clone()))
+        .unwrap_or_else(|| base.model.clone());
+    let effort = overrides
+        .effort
+        .map(str::to_string)
+        .or_else(|| execution.and_then(|exec| exec.effort.clone()))
+        .unwrap_or_else(|| base.effort.clone());
+
+    let mut profile = base;
+    profile.model = model.clone();
+    profile.effort = effort.clone();
+
+    Ok(ResolvedDispatch {
+        profile_name,
+        profile,
+        model,
+        effort,
+    })
+}
+
 /// The manifest plus every path it names, resolved against the manifest's directory.
 #[derive(Debug, Clone)]
 pub struct Resolved {
@@ -752,5 +809,86 @@ CURSOR_API_KEY = "file://cursor-api-key.token"
     fn timestamps_are_shaped() {
         assert_eq!(timestamp_compact().len(), 15);
         assert!(timestamp_rfc3339().ends_with('Z'));
+    }
+
+    fn two_profile_manifest() -> ExperimentConfig {
+        ExperimentConfig::parse(
+            r#"
+schema = "experiment/v1"
+[agents.default]
+profile = "default-p"
+[agents.profiles.default-p]
+kind = "claude"
+model = "default-model"
+effort = "low"
+image = "harness-claude:latest"
+[agents.profiles.alt-p]
+kind = "codex"
+model = "alt-model"
+effort = "max"
+image = "harness-codex:latest"
+"#,
+        )
+        .unwrap()
+    }
+
+    fn execution(profile: &str, model: Option<&str>, effort: Option<&str>) -> crate::executioncfg::ExecutionConfig {
+        crate::executioncfg::ExecutionConfig {
+            schema: crate::executioncfg::SCHEMA.to_string(),
+            profile: profile.to_string(),
+            model: model.map(str::to_string),
+            effort: effort.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn dispatch_precedence_without_execution_toml() {
+        let cfg = two_profile_manifest();
+        let got = resolve_dispatch(&cfg, None, DispatchOverrides::default()).unwrap();
+        assert_eq!(got.profile_name, "default-p");
+        assert_eq!(got.model, "default-model");
+        assert_eq!(got.effort, "low");
+    }
+
+    #[test]
+    fn dispatch_precedence_cli_over_execution_and_profile() {
+        let cfg = two_profile_manifest();
+        let exec = execution("alt-p", Some("exec-model"), Some("medium"));
+        let got = resolve_dispatch(
+            &cfg,
+            Some(&exec),
+            DispatchOverrides {
+                agent: Some("default-p"),
+                model: Some("cli-model"),
+                effort: Some("high"),
+            },
+        )
+        .unwrap();
+        assert_eq!(got.profile_name, "default-p");
+        assert_eq!(got.model, "cli-model");
+        assert_eq!(got.effort, "high");
+        assert_eq!(got.profile.model, "cli-model");
+        assert_eq!(got.profile.effort, "high");
+    }
+
+    #[test]
+    fn dispatch_precedence_execution_over_profile_defaults() {
+        let cfg = two_profile_manifest();
+        let exec = execution("alt-p", Some("exec-model"), Some("medium"));
+        let got = resolve_dispatch(&cfg, Some(&exec), DispatchOverrides::default()).unwrap();
+        assert_eq!(got.profile_name, "alt-p");
+        assert_eq!(got.model, "exec-model");
+        assert_eq!(got.effort, "medium");
+        assert_eq!(got.profile.kind, "codex");
+    }
+
+    #[test]
+    fn dispatch_precedence_partial_execution_defers_to_profile() {
+        let cfg = two_profile_manifest();
+        let exec = execution("alt-p", None, None);
+        let got = resolve_dispatch(&cfg, Some(&exec), DispatchOverrides::default()).unwrap();
+        assert_eq!(got.profile_name, "alt-p");
+        assert_eq!(got.model, "alt-model");
+        assert_eq!(got.effort, "max");
     }
 }
