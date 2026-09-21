@@ -2,6 +2,7 @@
 //! 0600 env-file that carries resolved secrets to `docker run` and nowhere else.
 
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "macos")]
 use std::process::Command;
 use std::time::{Duration, Instant};
 
@@ -451,11 +452,6 @@ fn keychain_secret(service: &str, account: &str) -> anyhow::Result<String> {
         bail!("macOS keychain entry {service}/{account} is empty");
     }
     Ok(value)
-}
-
-#[cfg(not(target_os = "macos"))]
-fn keychain_secret(_service: &str, _account: &str) -> anyhow::Result<String> {
-    bail!("host Cursor auth requires a Unix host")
 }
 
 /// Start the container. Persistent by hard rule: no `--rm`, so the operator can re-attach.
