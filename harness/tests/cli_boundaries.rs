@@ -102,11 +102,7 @@ fn host_cli_never_lists_validation_or_runtime_only_commands() {
 
 #[test]
 fn validation_binary_rejects_host_and_runtime_subcommands() {
-    let bin = std::env::var("CARGO_BIN_EXE_taskfmt")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| {
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/taskfmt")
-        });
+    let bin = taskfmt_harness::testbin::built_bin("taskfmt", "taskfmt");
     for subcommand in ["run", "container-entrypoint", "agent-launch"] {
         let output = Command::new(&bin)
             .args([subcommand, "--help"])
