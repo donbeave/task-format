@@ -1,0 +1,19 @@
+schema = 2
+
+[generator]
+repository = "donbeave/task-format"
+revision = "be61acbbbfb71db6b51337e547e39de049d4fc15"
+
+# Public repo: GitHub-hosted singleton (no velnor lanes).
+# No external DCO declared: the DCO app has not posted on this repo
+# (runbook §2 guardrail — declaring an uncovered context fails Policy).
+[workflow]
+providers = ["github-hosted"]
+automatic_providers = ["github-hosted"]
+default_branch = "main"
+
+[workflow.selectors.github-hosted]
+runs_on = ["ubuntu-24.04"]
+
+[policy]
+ruleset_required_status_checks = ["ci-required", "Policy"]
