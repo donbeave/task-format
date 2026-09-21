@@ -178,6 +178,9 @@ pub(crate) struct HostAuthStagingFile {
 }
 
 impl HostAuthStagingFile {
+    // Only the macOS keychain-materialization path stages auth files; other
+    // platforms bail before this point, so the constructor is macOS-only.
+    #[cfg(target_os = "macos")]
     fn write_json(body: &str) -> anyhow::Result<Self> {
         redact::register(body);
         let dir = tempfile::env::temp_dir();
@@ -425,7 +428,9 @@ fn host_cursor_auth_path(staging: &mut Option<HostAuthStagingFile>) -> anyhow::R
     materialize_cursor_auth_from_keychain(staging)
 }
 
-#[cfg(unix)]
+// The `security(1)` CLI exists only on macOS; the non-macOS stub below covers
+// every other platform (including unix).
+#[cfg(target_os = "macos")]
 fn keychain_secret(service: &str, account: &str) -> anyhow::Result<String> {
     let output = super::capture(Command::new("security").args([
         "find-generic-password",
@@ -448,7 +453,7 @@ fn keychain_secret(service: &str, account: &str) -> anyhow::Result<String> {
     Ok(value)
 }
 
-#[cfg(not(unix))]
+#[cfg(not(target_os = "macos"))]
 fn keychain_secret(_service: &str, _account: &str) -> anyhow::Result<String> {
     bail!("host Cursor auth requires a Unix host")
 }
@@ -727,9 +732,7 @@ mod tests {
         );
         assert!(codex_agent_cmd("gpt-5", "high").contains(" -m gpt-5 "));
         let cursor = cursor_agent_cmd("composer-2.5", "high", "/goal Implement the task.");
-        assert!(cursor.starts_with(
-            "agent --trust --yolo --approve-mcps --sandbox disabled"
-        ));
+        assert!(cursor.starts_with("agent --trust --yolo --approve-mcps --sandbox disabled"));
         assert!(cursor.contains("--workspace /work"));
         assert!(cursor.contains("--model composer-2.5"));
         assert!(cursor.contains("'/goal Implement the task.'"));
