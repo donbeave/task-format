@@ -44,7 +44,6 @@ jobs:
       plan_digest: ${{ steps.plan.outputs.plan_digest }}
       excluded: ${{ steps.plan.outputs.excluded }}
       bun_matrix: ${{ steps.plan.outputs.bun_matrix }}
-      docker_matrix: ${{ steps.plan.outputs.docker_matrix }}
       rust_matrix: ${{ steps.plan.outputs.rust_matrix }}
       # Presence-only no-work marker: `planned_no_work` is `true` or absent,
       # never `false`. Consumers MUST branch
@@ -244,96 +243,6 @@ jobs:
       cache_key_files: |
         web/package.json
         web/bun.lock
-      unit_platform: linux-x64
-      unit_trust: untrusted-ok
-      unit_admission: github-hosted
-  github-hosted-docker-harness-images-base:
-    name: "Docker · Docker (harness/images/base) · github-hosted — docker-harness-images-base"
-    if: ${{ always() && needs.plan.result == 'success' && needs.policy.result == 'success' && contains(needs.plan.outputs.units, '"unit_id":"docker-harness-images-base"') && (true) }}
-    needs: [plan, policy]
-    uses: ./.github/workflows/ci-unit-docker.yml
-    with:
-      unit: docker-harness-images-base
-      provider: github-hosted
-      selected_units: ${{ needs.plan.outputs.units }}
-      selected_unit_ids: ${{ needs.plan.outputs.unit_ids }}
-      scope: ${{ needs.plan.outputs.scope }}
-      full_units: ${{ needs.plan.outputs.full_units }}
-      plan_digest: ${{ needs.plan.outputs.plan_digest }}
-      base_sha: ${{ needs.plan.outputs.base_sha }}
-      head_sha: ${{ needs.plan.outputs.head_sha }}
-      unit_platform: linux-x64
-      unit_trust: untrusted-ok
-      unit_admission: github-hosted
-  github-hosted-docker-harness-images-claude:
-    name: "Docker · Docker (harness/images/claude) · github-hosted — docker-harness-images-claude"
-    if: ${{ always() && needs.plan.result == 'success' && needs.policy.result == 'success' && contains(needs.plan.outputs.units, '"unit_id":"docker-harness-images-claude"') && (true) }}
-    needs: [plan, policy]
-    uses: ./.github/workflows/ci-unit-docker.yml
-    with:
-      unit: docker-harness-images-claude
-      provider: github-hosted
-      selected_units: ${{ needs.plan.outputs.units }}
-      selected_unit_ids: ${{ needs.plan.outputs.unit_ids }}
-      scope: ${{ needs.plan.outputs.scope }}
-      full_units: ${{ needs.plan.outputs.full_units }}
-      plan_digest: ${{ needs.plan.outputs.plan_digest }}
-      base_sha: ${{ needs.plan.outputs.base_sha }}
-      head_sha: ${{ needs.plan.outputs.head_sha }}
-      unit_platform: linux-x64
-      unit_trust: untrusted-ok
-      unit_admission: github-hosted
-  github-hosted-docker-harness-images-codex:
-    name: "Docker · Docker (harness/images/codex) · github-hosted — docker-harness-images-codex"
-    if: ${{ always() && needs.plan.result == 'success' && needs.policy.result == 'success' && contains(needs.plan.outputs.units, '"unit_id":"docker-harness-images-codex"') && (true) }}
-    needs: [plan, policy]
-    uses: ./.github/workflows/ci-unit-docker.yml
-    with:
-      unit: docker-harness-images-codex
-      provider: github-hosted
-      selected_units: ${{ needs.plan.outputs.units }}
-      selected_unit_ids: ${{ needs.plan.outputs.unit_ids }}
-      scope: ${{ needs.plan.outputs.scope }}
-      full_units: ${{ needs.plan.outputs.full_units }}
-      plan_digest: ${{ needs.plan.outputs.plan_digest }}
-      base_sha: ${{ needs.plan.outputs.base_sha }}
-      head_sha: ${{ needs.plan.outputs.head_sha }}
-      unit_platform: linux-x64
-      unit_trust: untrusted-ok
-      unit_admission: github-hosted
-  github-hosted-docker-harness-images-cursor:
-    name: "Docker · Docker (harness/images/cursor) · github-hosted — docker-harness-images-cursor"
-    if: ${{ always() && needs.plan.result == 'success' && needs.policy.result == 'success' && contains(needs.plan.outputs.units, '"unit_id":"docker-harness-images-cursor"') && (true) }}
-    needs: [plan, policy]
-    uses: ./.github/workflows/ci-unit-docker.yml
-    with:
-      unit: docker-harness-images-cursor
-      provider: github-hosted
-      selected_units: ${{ needs.plan.outputs.units }}
-      selected_unit_ids: ${{ needs.plan.outputs.unit_ids }}
-      scope: ${{ needs.plan.outputs.scope }}
-      full_units: ${{ needs.plan.outputs.full_units }}
-      plan_digest: ${{ needs.plan.outputs.plan_digest }}
-      base_sha: ${{ needs.plan.outputs.base_sha }}
-      head_sha: ${{ needs.plan.outputs.head_sha }}
-      unit_platform: linux-x64
-      unit_trust: untrusted-ok
-      unit_admission: github-hosted
-  github-hosted-docker-harness-images-taskfmt:
-    name: "Docker · Docker (harness/images/taskfmt) · github-hosted — docker-harness-images-taskfmt"
-    if: ${{ always() && needs.plan.result == 'success' && needs.policy.result == 'success' && contains(needs.plan.outputs.units, '"unit_id":"docker-harness-images-taskfmt"') && (true) }}
-    needs: [plan, policy]
-    uses: ./.github/workflows/ci-unit-docker.yml
-    with:
-      unit: docker-harness-images-taskfmt
-      provider: github-hosted
-      selected_units: ${{ needs.plan.outputs.units }}
-      selected_unit_ids: ${{ needs.plan.outputs.unit_ids }}
-      scope: ${{ needs.plan.outputs.scope }}
-      full_units: ${{ needs.plan.outputs.full_units }}
-      plan_digest: ${{ needs.plan.outputs.plan_digest }}
-      base_sha: ${{ needs.plan.outputs.base_sha }}
-      head_sha: ${{ needs.plan.outputs.head_sha }}
       unit_platform: linux-x64
       unit_trust: untrusted-ok
       unit_admission: github-hosted
@@ -605,7 +514,7 @@ jobs:
   ci-required:
     name: ci-required
     if: ${{ always() }}
-    needs: [plan, policy, github-hosted-bun-task-monitor, github-hosted-docker-harness-images-base, github-hosted-docker-harness-images-claude, github-hosted-docker-harness-images-codex, github-hosted-docker-harness-images-cursor, github-hosted-docker-harness-images-taskfmt, github-hosted-rust-taskfmt, github-hosted-rust-taskfmt-core, github-hosted-rust-taskfmt-harness, github-hosted-rust-taskfmt-host, github-hosted-rust-taskfmt-runtime]
+    needs: [plan, policy, github-hosted-bun-task-monitor, github-hosted-rust-taskfmt, github-hosted-rust-taskfmt-core, github-hosted-rust-taskfmt-harness, github-hosted-rust-taskfmt-host, github-hosted-rust-taskfmt-runtime]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -690,7 +599,7 @@ jobs:
           SELECTED_UNITS: ${{ needs.plan.outputs.units }}
           PLAN_DIGEST: ${{ needs.plan.outputs.plan_digest }}
           EXCLUDED: ${{ needs.plan.outputs.excluded }}
-          EXPECTED_CALLERS: "[{\"job_id\":\"github-hosted-bun-task-monitor\",\"provider\":\"github-hosted\",\"unit_id\":\"bun-task-monitor\"},{\"job_id\":\"github-hosted-docker-harness-images-base\",\"provider\":\"github-hosted\",\"unit_id\":\"docker-harness-images-base\"},{\"job_id\":\"github-hosted-docker-harness-images-claude\",\"provider\":\"github-hosted\",\"unit_id\":\"docker-harness-images-claude\"},{\"job_id\":\"github-hosted-docker-harness-images-codex\",\"provider\":\"github-hosted\",\"unit_id\":\"docker-harness-images-codex\"},{\"job_id\":\"github-hosted-docker-harness-images-cursor\",\"provider\":\"github-hosted\",\"unit_id\":\"docker-harness-images-cursor\"},{\"job_id\":\"github-hosted-docker-harness-images-taskfmt\",\"provider\":\"github-hosted\",\"unit_id\":\"docker-harness-images-taskfmt\"},{\"job_id\":\"github-hosted-rust-taskfmt\",\"provider\":\"github-hosted\",\"unit_id\":\"rust-taskfmt\"},{\"job_id\":\"github-hosted-rust-taskfmt-core\",\"provider\":\"github-hosted\",\"unit_id\":\"rust-taskfmt-core\"},{\"job_id\":\"github-hosted-rust-taskfmt-harness\",\"provider\":\"github-hosted\",\"unit_id\":\"rust-taskfmt-harness\"},{\"job_id\":\"github-hosted-rust-taskfmt-host\",\"provider\":\"github-hosted\",\"unit_id\":\"rust-taskfmt-host\"},{\"job_id\":\"github-hosted-rust-taskfmt-runtime\",\"provider\":\"github-hosted\",\"unit_id\":\"rust-taskfmt-runtime\"}]"
+          EXPECTED_CALLERS: "[{\"job_id\":\"github-hosted-bun-task-monitor\",\"provider\":\"github-hosted\",\"unit_id\":\"bun-task-monitor\"},{\"job_id\":\"github-hosted-rust-taskfmt\",\"provider\":\"github-hosted\",\"unit_id\":\"rust-taskfmt\"},{\"job_id\":\"github-hosted-rust-taskfmt-core\",\"provider\":\"github-hosted\",\"unit_id\":\"rust-taskfmt-core\"},{\"job_id\":\"github-hosted-rust-taskfmt-harness\",\"provider\":\"github-hosted\",\"unit_id\":\"rust-taskfmt-harness\"},{\"job_id\":\"github-hosted-rust-taskfmt-host\",\"provider\":\"github-hosted\",\"unit_id\":\"rust-taskfmt-host\"},{\"job_id\":\"github-hosted-rust-taskfmt-runtime\",\"provider\":\"github-hosted\",\"unit_id\":\"rust-taskfmt-runtime\"}]"
           PROVIDER_ADMITTED_GITHUB_HOSTED: ${{ true }}
         shell: bash
         run: |
@@ -749,121 +658,6 @@ jobs:
               skipped) ;;
               success) echo "unexpected CI job github-hosted-bun-task-monitor succeeded outside the expected set: the plan did not declare it" >&2; exit 1 ;;
               *) echo "unexpected CI job github-hosted-bun-task-monitor ran outside the expected set: $result" >&2; exit 1 ;;
-            esac
-          fi
-          if plan_expects "docker-harness-images-base" "github-hosted"; then
-            result="$(result_for_job github-hosted-docker-harness-images-base)"
-            if [[ "$PROVIDER_ADMITTED_GITHUB_HOSTED" == true ]]; then
-              case "$result" in
-                success) ;;
-                skipped) echo "expected CI job github-hosted-docker-harness-images-base was skipped: a skipped expected result cannot pass" >&2; exit 1 ;;
-                cancelled) echo "expected CI job github-hosted-docker-harness-images-base was cancelled: a cancelled expected result cannot pass" >&2; exit 1 ;;
-                *) echo "expected CI job github-hosted-docker-harness-images-base did not pass: $result" >&2; exit 1 ;;
-              esac
-            else
-              case "$result" in
-                skipped) ;;
-                *) echo "selected CI job github-hosted-docker-harness-images-base ran outside its provider admission (PROVIDER_ADMITTED_GITHUB_HOSTED=$PROVIDER_ADMITTED_GITHUB_HOSTED): $result" >&2; exit 1 ;;
-              esac
-            fi
-          else
-            result="$(result_for_job github-hosted-docker-harness-images-base)"
-            case "$result" in
-              skipped) ;;
-              success) echo "unexpected CI job github-hosted-docker-harness-images-base succeeded outside the expected set: the plan did not declare it" >&2; exit 1 ;;
-              *) echo "unexpected CI job github-hosted-docker-harness-images-base ran outside the expected set: $result" >&2; exit 1 ;;
-            esac
-          fi
-          if plan_expects "docker-harness-images-claude" "github-hosted"; then
-            result="$(result_for_job github-hosted-docker-harness-images-claude)"
-            if [[ "$PROVIDER_ADMITTED_GITHUB_HOSTED" == true ]]; then
-              case "$result" in
-                success) ;;
-                skipped) echo "expected CI job github-hosted-docker-harness-images-claude was skipped: a skipped expected result cannot pass" >&2; exit 1 ;;
-                cancelled) echo "expected CI job github-hosted-docker-harness-images-claude was cancelled: a cancelled expected result cannot pass" >&2; exit 1 ;;
-                *) echo "expected CI job github-hosted-docker-harness-images-claude did not pass: $result" >&2; exit 1 ;;
-              esac
-            else
-              case "$result" in
-                skipped) ;;
-                *) echo "selected CI job github-hosted-docker-harness-images-claude ran outside its provider admission (PROVIDER_ADMITTED_GITHUB_HOSTED=$PROVIDER_ADMITTED_GITHUB_HOSTED): $result" >&2; exit 1 ;;
-              esac
-            fi
-          else
-            result="$(result_for_job github-hosted-docker-harness-images-claude)"
-            case "$result" in
-              skipped) ;;
-              success) echo "unexpected CI job github-hosted-docker-harness-images-claude succeeded outside the expected set: the plan did not declare it" >&2; exit 1 ;;
-              *) echo "unexpected CI job github-hosted-docker-harness-images-claude ran outside the expected set: $result" >&2; exit 1 ;;
-            esac
-          fi
-          if plan_expects "docker-harness-images-codex" "github-hosted"; then
-            result="$(result_for_job github-hosted-docker-harness-images-codex)"
-            if [[ "$PROVIDER_ADMITTED_GITHUB_HOSTED" == true ]]; then
-              case "$result" in
-                success) ;;
-                skipped) echo "expected CI job github-hosted-docker-harness-images-codex was skipped: a skipped expected result cannot pass" >&2; exit 1 ;;
-                cancelled) echo "expected CI job github-hosted-docker-harness-images-codex was cancelled: a cancelled expected result cannot pass" >&2; exit 1 ;;
-                *) echo "expected CI job github-hosted-docker-harness-images-codex did not pass: $result" >&2; exit 1 ;;
-              esac
-            else
-              case "$result" in
-                skipped) ;;
-                *) echo "selected CI job github-hosted-docker-harness-images-codex ran outside its provider admission (PROVIDER_ADMITTED_GITHUB_HOSTED=$PROVIDER_ADMITTED_GITHUB_HOSTED): $result" >&2; exit 1 ;;
-              esac
-            fi
-          else
-            result="$(result_for_job github-hosted-docker-harness-images-codex)"
-            case "$result" in
-              skipped) ;;
-              success) echo "unexpected CI job github-hosted-docker-harness-images-codex succeeded outside the expected set: the plan did not declare it" >&2; exit 1 ;;
-              *) echo "unexpected CI job github-hosted-docker-harness-images-codex ran outside the expected set: $result" >&2; exit 1 ;;
-            esac
-          fi
-          if plan_expects "docker-harness-images-cursor" "github-hosted"; then
-            result="$(result_for_job github-hosted-docker-harness-images-cursor)"
-            if [[ "$PROVIDER_ADMITTED_GITHUB_HOSTED" == true ]]; then
-              case "$result" in
-                success) ;;
-                skipped) echo "expected CI job github-hosted-docker-harness-images-cursor was skipped: a skipped expected result cannot pass" >&2; exit 1 ;;
-                cancelled) echo "expected CI job github-hosted-docker-harness-images-cursor was cancelled: a cancelled expected result cannot pass" >&2; exit 1 ;;
-                *) echo "expected CI job github-hosted-docker-harness-images-cursor did not pass: $result" >&2; exit 1 ;;
-              esac
-            else
-              case "$result" in
-                skipped) ;;
-                *) echo "selected CI job github-hosted-docker-harness-images-cursor ran outside its provider admission (PROVIDER_ADMITTED_GITHUB_HOSTED=$PROVIDER_ADMITTED_GITHUB_HOSTED): $result" >&2; exit 1 ;;
-              esac
-            fi
-          else
-            result="$(result_for_job github-hosted-docker-harness-images-cursor)"
-            case "$result" in
-              skipped) ;;
-              success) echo "unexpected CI job github-hosted-docker-harness-images-cursor succeeded outside the expected set: the plan did not declare it" >&2; exit 1 ;;
-              *) echo "unexpected CI job github-hosted-docker-harness-images-cursor ran outside the expected set: $result" >&2; exit 1 ;;
-            esac
-          fi
-          if plan_expects "docker-harness-images-taskfmt" "github-hosted"; then
-            result="$(result_for_job github-hosted-docker-harness-images-taskfmt)"
-            if [[ "$PROVIDER_ADMITTED_GITHUB_HOSTED" == true ]]; then
-              case "$result" in
-                success) ;;
-                skipped) echo "expected CI job github-hosted-docker-harness-images-taskfmt was skipped: a skipped expected result cannot pass" >&2; exit 1 ;;
-                cancelled) echo "expected CI job github-hosted-docker-harness-images-taskfmt was cancelled: a cancelled expected result cannot pass" >&2; exit 1 ;;
-                *) echo "expected CI job github-hosted-docker-harness-images-taskfmt did not pass: $result" >&2; exit 1 ;;
-              esac
-            else
-              case "$result" in
-                skipped) ;;
-                *) echo "selected CI job github-hosted-docker-harness-images-taskfmt ran outside its provider admission (PROVIDER_ADMITTED_GITHUB_HOSTED=$PROVIDER_ADMITTED_GITHUB_HOSTED): $result" >&2; exit 1 ;;
-              esac
-            fi
-          else
-            result="$(result_for_job github-hosted-docker-harness-images-taskfmt)"
-            case "$result" in
-              skipped) ;;
-              success) echo "unexpected CI job github-hosted-docker-harness-images-taskfmt succeeded outside the expected set: the plan did not declare it" >&2; exit 1 ;;
-              *) echo "unexpected CI job github-hosted-docker-harness-images-taskfmt ran outside the expected set: $result" >&2; exit 1 ;;
             esac
           fi
           if plan_expects "rust-taskfmt" "github-hosted"; then
