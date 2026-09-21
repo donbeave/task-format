@@ -43,8 +43,22 @@ pub fn capture(cmd: &mut Command) -> std::io::Result<Captured> {
 }
 
 /// Run a command with captured output, killing it when the deadline expires.
+///
+/// The child runs as a process-group leader; on timeout the whole group is
+/// signalled, so orphaned grandchildren cannot hold the captured pipes open
+/// past the deadline (a bare `Child::kill` stops only the direct child and
+/// the output readers would block until the last grandchild exits).
 pub fn capture_with_timeout(cmd: &mut Command, timeout: Duration) -> std::io::Result<Captured> {
     use std::io::Read;
+    use std::os::unix::process::CommandExt;
+
+    // SAFETY: `setsid` is async-signal-safe; this runs after fork, before exec.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
 
     let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
     let stdout = child.stdout.take().expect("stdout was piped");
@@ -68,7 +82,17 @@ pub fn capture_with_timeout(cmd: &mut Command, timeout: Duration) -> std::io::Re
             break (status, false);
         }
         if started.elapsed() >= timeout {
-            child.kill()?;
+            // Group first so grandchildren die with the leader; ignore errors
+            // (the group is already gone when the child just exited).
+            unsafe {
+                libc::killpg(child.id() as libc::pid_t, libc::SIGKILL);
+            }
+            if let Err(err) = child.kill() {
+                // Already reaped between the group kill and this call.
+                if err.kind() != std::io::ErrorKind::NotFound {
+                    return Err(err);
+                }
+            }
             break (child.wait()?, true);
         }
         std::thread::sleep(Duration::from_millis(10));
@@ -231,7 +255,9 @@ mod tests {
     fn capture_with_timeout_kills_a_stuck_child() {
         let started = Instant::now();
         let mut command = Command::new("/bin/sh");
-        command.args(["-c", "sleep 30"]);
+        // Backgrounded sleep: survives as a pipe-holding grandchild when only
+        // the direct child is killed, so this pins the process-group kill.
+        command.args(["-c", "sleep 30 & wait"]);
         let err = capture_with_timeout(&mut command, Duration::from_millis(100)).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
         assert!(

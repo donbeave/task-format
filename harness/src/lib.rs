@@ -16,3 +16,4 @@ pub mod cli {
 }
 
 pub mod itest;
+pub mod testbin;

@@ -506,7 +506,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let bare = tmp.path().join("remote.git");
         std::fs::create_dir_all(&bare).unwrap();
-        git(&bare, &["init", "-q", "--bare"]);
+        // Pin the initial branch: a bare `init` follows ambient
+        // init.defaultBranch, and `rev-parse HEAD` echoes "HEAD" (rc 0) when
+        // the symref target is unborn.
+        git(&bare, &["init", "-q", "--bare", "-b", "main"]);
 
         let repo = tmp.path().join("repo");
         std::fs::create_dir_all(&repo).unwrap();
