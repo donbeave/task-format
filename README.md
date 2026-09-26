@@ -41,17 +41,19 @@ taskfmt --help
 
 ## Work with a task
 
-Copy the template to a task directory, then replace its placeholder task ID, title, requirements,
-acceptance criteria, checklist, and check commands with the real task contract. Choose a separate
-writable path for progress. The template's initial progress file matches its example first leaf,
-`1.1`; update the task ID and leaf in both the header and first event when copying it.
+Create the task package from the contract files, leaving the progress seed outside it. Replace the
+placeholder task ID, title, requirements, acceptance criteria, checklist, and check commands with
+the real task contract. The canonical progress seed matches its example first leaf, `1.1`; update
+the task ID and leaf in both the header and first event at the caller's writable progress path.
 
 ```sh
-cp -R reference/task-template /task
-mkdir -p /progress
+mkdir -p /task /progress
+cp reference/task-template/README.md \
+  reference/task-template/AGENTS.md \
+  reference/task-template/verify.toml \
+  /task/
 cp reference/task-template/progress.md /progress/progress.md
-# Edit /task/README.md, /task/AGENTS.md, and /task/verify.toml; replace TASK-000 throughout.
-# Replace TASK-000 and the initial leaf in /progress/progress.md.
+# Edit the task files and replace TASK-000; update the external progress file's ID and first leaf.
 taskfmt lint /task
 ```
 

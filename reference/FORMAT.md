@@ -95,8 +95,9 @@ that verification commands passed.
 
 ## Verification workflow
 
-1. Copy and instantiate `task-template/`; replace all placeholder prose and commands.
-2. Copy and update the progress template at the caller's writable path.
+1. Instantiate the task package from `task-template/README.md`, `AGENTS.md`, and `verify.toml`;
+   leave `task-template/progress.md` outside the task directory.
+2. Copy the progress seed to the caller's writable path and update it for the task.
 3. Run `taskfmt lint TASK_DIR`.
 4. Update progress events as work proceeds; inspect them with `taskfmt status`.
 5. Run `taskfmt verify --task-dir TASK_DIR --root WORKSPACE --base BASE --no-progress` for
