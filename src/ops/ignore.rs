@@ -6,15 +6,19 @@
 //!
 //! The only reconstruction that does not reimplement git's pattern semantics is to read the base
 //! commit's ignore blobs out of the object store, materialise them at their tree paths in a scratch
-//! repository outside the judged worktree, and ask git there. The scratch contains nothing but those
-//! blobs, so what it answers with is exactly the base commit's rules and nothing else.
+//! repository outside the judged worktree, and ask git there. Path queries add empty candidate files
+//! and parent directories to preserve file-versus-directory semantics; candidate contents never
+//! become rules. Thus the only ignore sources are the base commit's blobs.
 //!
-//! Every failure is answered "not ignored", which keeps the candidate in the changed set. The gate
-//! then over-reports rather than hides, and a degraded evaluator reproduces the visible symptom
-//! instead of opening a silent hole.
+//! The scope caller treats every failure as "not ignored", which keeps the candidate in the
+//! changed set. The gate then over-reports rather than hides, and a degraded evaluator reproduces
+//! the visible symptom instead of opening a silent hole.
 
+use std::collections::HashMap;
+use std::fs::OpenOptions;
+use std::io::{Seek, SeekFrom, Write};
 use std::path::{Component, Path};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use super::{capture, write_file};
 
@@ -38,11 +42,22 @@ impl BaseIgnores {
     /// `super::git::changed_files`, so a container relying on `safe.directory` in its git config is
     /// unaffected. Only the scratch queries are isolated.
     pub fn load(root: &Path, base: &str) -> anyhow::Result<Self> {
-        let listing = super::git::output(&mut super::git::in_dir(
+        let listing = super::git::output_bytes(&mut super::git::in_dir(
             root,
             &["ls-tree", "-r", "-z", base],
         ))?;
-        let paths: Vec<&str> = listing.split('\0').filter_map(ignore_blob_path).collect();
+        let paths = listing
+            .split(|byte| *byte == 0)
+            .filter_map(ignore_blob_path)
+            .map(|path| {
+                std::str::from_utf8(path).map(str::to_string).map_err(|error| {
+                    anyhow::anyhow!(
+                        "base commit contains a `.gitignore` path that is not valid UTF-8 at byte {}; scope validation requires UTF-8 paths",
+                        error.valid_up_to()
+                    )
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
         if paths.is_empty() {
             return Ok(Self { scratch: None });
         }
@@ -62,13 +77,23 @@ impl BaseIgnores {
         // whose template carries rules would otherwise have them answer for the base commit.
         write_file(&here.join(".git").join("info").join("exclude"), "")?;
         for path in paths {
-            let blob = super::git::output(&mut super::git::in_dir(
+            let blob = super::git::output_bytes(&mut super::git::in_dir(
                 root,
                 &["show", &format!("{base}:{path}")],
             ))?;
+            std::str::from_utf8(&blob).map_err(|error| {
+                anyhow::anyhow!(
+                    "base commit `.gitignore` {path:?} is not valid UTF-8 at byte {}; base ignore rules cannot be applied safely",
+                    error.valid_up_to()
+                )
+            })?;
             // Placement reproduces per-directory relativity: a rule in `a/b/.gitignore` governs
             // `a/b` and below in the scratch exactly as it did in the base commit's tree.
-            write_file(&here.join(path), &blob)?;
+            let file = here.join(path);
+            if let Some(parent) = file.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(file, blob)?;
         }
 
         Ok(Self {
@@ -80,6 +105,7 @@ impl BaseIgnores {
     ///
     /// Unusable input — empty, absolute, or holding any component that is not a plain name — is
     /// answered `false` rather than guessed at.
+    #[cfg(test)]
     pub fn dir_ignored_at_base(&self, dir: &Path) -> anyhow::Result<bool> {
         let Some(scratch) = self.scratch.as_ref() else {
             return Ok(false);
@@ -93,19 +119,97 @@ impl BaseIgnores {
         std::fs::create_dir_all(scratch.path().join(&relative))?;
         Ok(capture(&mut check_ignore(scratch.path(), &relative))?.status == 0)
     }
+
+    /// For each root-relative untracked file, report whether the base commit's ignore rules
+    /// ignore that file. Candidates are materialised as files before querying so a directory-only
+    /// rule such as `build/` cannot hide an untracked file named `build`.
+    ///
+    /// The query is batched and atomic: an unusable path or failed git query returns an error, so
+    /// callers can retain the complete candidate set rather than applying a partial answer.
+    pub fn paths_ignored_at_base(&self, paths: &[String]) -> anyhow::Result<Vec<bool>> {
+        if paths.is_empty() {
+            return Ok(Vec::new());
+        }
+        let Some(scratch) = self.scratch.as_ref() else {
+            return Ok(vec![false; paths.len()]);
+        };
+
+        let mut valid = HashMap::<String, Vec<usize>>::new();
+        for (index, path) in paths.iter().enumerate() {
+            let Some(relative) = plain_relative_file(Path::new(path)) else {
+                anyhow::bail!("unusable relative file path: {path:?}");
+            };
+            let file = scratch.path().join(&relative);
+            if let Some(parent) = file.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            match OpenOptions::new().write(true).create_new(true).open(&file) {
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if !file.is_file() {
+                        anyhow::bail!("candidate is not a file in ignore scratch: {path:?}");
+                    }
+                }
+                Err(error) => return Err(error.into()),
+            }
+            valid.entry(relative).or_default().push(index);
+        }
+
+        let mut input = tempfile::tempfile()?;
+        for path in valid.keys() {
+            input.write_all(path.as_bytes())?;
+            input.write_all(b"\0")?;
+        }
+        input.seek(SeekFrom::Start(0))?;
+
+        let captured = capture(&mut check_ignore_paths(scratch.path(), input))?;
+        if captured.status != 0 && captured.status != 1 {
+            anyhow::bail!(
+                "git check-ignore failed (exit={}): {}",
+                captured.status,
+                captured.stderr.trim_end()
+            );
+        }
+
+        let mut ignored = vec![false; paths.len()];
+        if captured.status == 0 {
+            if captured.stdout.is_empty() {
+                anyhow::bail!("git check-ignore matched candidates without returning paths");
+            }
+            let fields = captured.stdout.split('\0').collect::<Vec<_>>();
+            if fields.last() != Some(&"") {
+                anyhow::bail!("git check-ignore returned malformed NUL-delimited output");
+            }
+            let (records, remainder) = fields[..fields.len() - 1].as_chunks::<4>();
+            if !remainder.is_empty() {
+                anyhow::bail!("git check-ignore returned malformed NUL-delimited output");
+            }
+            for record in records {
+                let Some(indices) = valid.get(record[3]) else {
+                    anyhow::bail!("git check-ignore returned an unknown candidate path");
+                };
+                for index in indices {
+                    ignored[*index] = true;
+                }
+            }
+        }
+        Ok(ignored)
+    }
 }
 
 /// The path of one `ls-tree -r -z` entry, when that entry is a regular-file ignore file.
 ///
 /// Symlinks (`120000`) and gitlinks (`160000`) are skipped: their patterns never suppress anything,
 /// which is the over-reporting direction.
-fn ignore_blob_path(entry: &str) -> Option<&str> {
-    let (meta, path) = entry.split_once('\t')?;
-    let mode = meta.split_whitespace().next()?;
-    if mode != "100644" && mode != "100755" {
+fn ignore_blob_path(entry: &[u8]) -> Option<&[u8]> {
+    let tab = entry.iter().position(|byte| *byte == b'\t')?;
+    let meta = &entry[..tab];
+    let path = &entry[tab + 1..];
+    let mode = meta.split(|byte| byte.is_ascii_whitespace()).next()?;
+    if mode != b"100644" && mode != b"100755" {
         return None;
     }
-    if path == ".gitignore" || path.ends_with("/.gitignore") {
+    if path == b".gitignore" || path.ends_with(b"/.gitignore") {
         Some(path)
     } else {
         None
@@ -113,6 +217,7 @@ fn ignore_blob_path(entry: &str) -> Option<&str> {
 }
 
 /// `dir` as a relative path of plain components, or `None` when it cannot be one.
+#[cfg(test)]
 fn plain_relative_dir(dir: &Path) -> Option<String> {
     let text = dir.to_str()?;
     if text.is_empty() {
@@ -124,12 +229,22 @@ fn plain_relative_dir(dir: &Path) -> Option<String> {
     Some(text.to_string())
 }
 
-/// The one query this module makes, with the isolation it needs.
+/// `path` as a relative file made only of plain components.
+fn plain_relative_file(path: &Path) -> Option<String> {
+    let text = path.to_str()?;
+    if text.is_empty() || !path.components().all(|c| matches!(c, Component::Normal(_))) {
+        return None;
+    }
+    Some(text.to_string())
+}
+
+/// Isolated directory query retained for the directory-rule unit cases.
 ///
-/// Both levers are load-bearing and neither substitutes for the other: `core.excludesFile=/dev/null`
-/// is what suppresses the per-user ignore file, because that file's default location is a built-in
-/// fallback rather than a config value and so survives `GIT_CONFIG_GLOBAL=/dev/null`; the emptied
-/// `info/exclude` in `load` is what suppresses the scratch's own template rules.
+/// `core.excludesFile=/dev/null` suppresses the per-user ignore file, because that file's default
+/// location is a built-in fallback rather than a config value and so survives
+/// `GIT_CONFIG_GLOBAL=/dev/null`; the emptied `info/exclude` in `load` suppresses the scratch's own
+/// template rules.
+#[cfg(test)]
 fn check_ignore(scratch: &Path, dir: &str) -> Command {
     let mut cmd = Command::new("git");
     cmd.current_dir(scratch)
@@ -142,6 +257,29 @@ fn check_ignore(scratch: &Path, dir: &str) -> Command {
             "--",
             dir,
         ])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE");
+    cmd
+}
+
+/// One batch query for concrete file paths. `-z` preserves arbitrary path names, while the
+/// explicit environment keeps ambient/global excludes out of the base-commit decision.
+fn check_ignore_paths(scratch: &Path, input: std::fs::File) -> Command {
+    let mut cmd = Command::new("git");
+    cmd.current_dir(scratch)
+        .args([
+            "-c",
+            "core.excludesFile=/dev/null",
+            "check-ignore",
+            "-v",
+            "-z",
+            "--no-index",
+            "--stdin",
+        ])
+        .stdin(Stdio::from(input))
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
         .env_remove("GIT_DIR")
@@ -175,6 +313,17 @@ mod tests {
 
     fn ignored(rules: &BaseIgnores, dir: &str) -> bool {
         rules.dir_ignored_at_base(Path::new(dir)).unwrap()
+    }
+
+    fn paths_ignored(rules: &BaseIgnores, paths: &[&str]) -> Vec<bool> {
+        rules
+            .paths_ignored_at_base(
+                &paths
+                    .iter()
+                    .map(|path| path.to_string())
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap()
     }
 
     /// `git check-ignore` as the working tree answers it — the untrusted opinion the evaluator
@@ -215,6 +364,56 @@ mod tests {
 
         assert!(!ignored(&rules, "src/evil"));
         assert!(!ignored(&rules, "src"));
+    }
+
+    #[test]
+    fn base_filename_pattern_ignores_untracked_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        base_repo(&repo, &[(".gitignore", "*.secret\n")]);
+        let rules = BaseIgnores::load(&repo, "HEAD").unwrap();
+
+        assert_eq!(
+            paths_ignored(&rules, &["hidden.secret", "visible.txt"]),
+            [true, false]
+        );
+    }
+
+    #[test]
+    fn malformed_base_ignore_blob_is_rejected_instead_of_lossily_decoded() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        base_repo(&repo, &[(".gitignore", "placeholder\n")]);
+        std::fs::write(repo.join(".gitignore"), b"\xff\n").unwrap();
+        git(&repo, &["add", "-f", ".gitignore"]);
+        git(&repo, &["commit", "-q", "-m", "malformed ignore bytes"]);
+
+        let error = match BaseIgnores::load(&repo, "HEAD") {
+            Ok(_) => panic!("a malformed base ignore blob must not be decoded lossily"),
+            Err(error) => error.to_string(),
+        };
+        assert!(error.contains("`.gitignore`"), "{error}");
+        assert!(error.contains("not valid UTF-8"), "{error}");
+    }
+
+    #[test]
+    fn a_directory_only_base_rule_does_not_ignore_a_same_named_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        base_repo(&repo, &[(".gitignore", "build/\n")]);
+        let rules = BaseIgnores::load(&repo, "HEAD").unwrap();
+
+        assert_eq!(paths_ignored(&rules, &["build"]), [false]);
+    }
+
+    #[test]
+    fn a_directory_only_base_rule_ignores_a_descendant_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        base_repo(&repo, &[(".gitignore", "build/\n")]);
+        let rules = BaseIgnores::load(&repo, "HEAD").unwrap();
+
+        assert_eq!(paths_ignored(&rules, &["build/output.txt"]), [true]);
     }
 
     #[test]

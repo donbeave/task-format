@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::SystemTime;
 
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
+
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -867,4 +870,81 @@ fn verify_requires_scope_base_and_rejects_invalid_paths_and_out_of_scope_changes
     let out_of_scope = cli(&out_of_scope);
     assert_eq!(out_of_scope.status.code(), Some(1));
     assert!(text(&out_of_scope).contains("changed path is outside writable_paths: outside.txt"));
+}
+
+#[test]
+fn verify_scope_reports_untracked_paths_hidden_by_a_new_root_gitignore() {
+    let temp = TempDir::new().unwrap();
+    let root = base_workspace(temp.path());
+    let task_dir = copy_task(temp.path());
+
+    fs::write(root.join(".gitignore"), "outside.txt\n").unwrap();
+    fs::write(root.join("outside.txt"), "outside writable scope\n").unwrap();
+
+    let mut args = verify_args(&root, &task_dir, "HEAD");
+    args.push("--no-progress".into());
+    let output = cli(&args);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        text(&output).contains("CHECK scope FAIL"),
+        "{}",
+        text(&output)
+    );
+    assert!(
+        text(&output).contains("changed path is outside writable_paths: outside.txt"),
+        "{}",
+        text(&output)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn verify_scope_fails_closed_for_invalid_utf8_path_near_valid_replacement_character_path() {
+    let temp = TempDir::new().unwrap();
+    let root = base_workspace(temp.path());
+    let task_dir = copy_task(temp.path());
+
+    fs::write(root.join(".gitignore"), "\u{fffd}\n").unwrap();
+    git(&root, &["add", ".gitignore"]);
+    git(
+        &root,
+        &[
+            "commit",
+            "-q",
+            "-m",
+            "ignore replacement-character filename",
+        ],
+    );
+
+    fs::write(root.join("\u{fffd}"), "ignored valid UTF-8 filename\n").unwrap();
+    let invalid_path = root.join(std::ffi::OsStr::from_bytes(&[0xff]));
+    if let Err(error) = fs::write(&invalid_path, "invalid UTF-8 filename\n") {
+        #[cfg(target_os = "macos")]
+        let filesystem_rejects_invalid_name = error.raw_os_error() == Some(92); // EILSEQ
+        #[cfg(not(target_os = "macos"))]
+        let filesystem_rejects_invalid_name = error.kind() == std::io::ErrorKind::InvalidInput;
+        assert!(
+            filesystem_rejects_invalid_name,
+            "unexpected failure creating invalid UTF-8 filename: {error}"
+        );
+        eprintln!("skipping: filesystem rejects invalid UTF-8 filenames: {error}");
+        return;
+    }
+
+    let mut args = verify_args(&root, &task_dir, "HEAD");
+    args.push("--no-progress".into());
+    let output = cli(&args);
+    let report = format!(
+        "{}\n{}",
+        text(&output),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert_eq!(output.status.code(), Some(1), "{report}");
+    assert!(report.contains("CHECK scope FAIL"), "{report}");
+    assert!(
+        report.to_ascii_lowercase().contains("not valid utf-8"),
+        "expected a fail-closed non-UTF-8 path diagnostic, got:\n{report}"
+    );
 }

@@ -48,6 +48,7 @@ writable path for progress. The template's initial progress file matches its exa
 
 ```sh
 cp -R reference/task-template /task
+mkdir -p /progress
 cp reference/task-template/progress.md /progress/progress.md
 # Edit /task/README.md, /task/AGENTS.md, and /task/verify.toml; replace TASK-000 throughout.
 # Replace TASK-000 and the initial leaf in /progress/progress.md.
@@ -71,7 +72,16 @@ to the nearest whole percent with halves rounded up. Status validates and reads 
 run checks or change them.
 
 Use checks-only verification while progress is incomplete. Supply the caller's workspace baseline
-commit as `TASK_BASE`:
+commit as `TASK_BASE`. After preparing `/work` with the task's starting files and before making task
+changes, create the baseline and resolve its commit ID:
+
+```sh
+git -C /work add -A
+git -C /work commit -m "Task baseline"
+TASK_BASE=$(git -C /work rev-parse HEAD)
+```
+
+If `/work` already has the intended baseline commit, set `TASK_BASE` from that commit instead.
 
 ```sh
 taskfmt verify --task-dir /task --root /work --base "$TASK_BASE" --no-progress
