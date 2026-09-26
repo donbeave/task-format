@@ -6,10 +6,10 @@ workspace and within `verify.toml` path limits. The caller provides the workspac
 ## Start
 
 1. Read `README.md` and `verify.toml`; run `taskfmt lint TASK_DIR`.
-2. Copy the file to the caller's chosen writable path with `cp "$TASK_DIR/progress.md" "$PROGRESS_FILE"`.
-   Replace the placeholder task ID.
-   Replace initial leaf `1.1` in both the `current` header and first event if the instantiated
-   task's first leaf differs.
+2. Use the caller-provided writable `PROGRESS_FILE` outside the task directory. For new work, the
+   caller initializes it from the canonical progress seed when creating the task, then replaces the
+   placeholder task ID and sets the first leaf in both `current` and the initial event. For resumed
+   work, use the supplied valid progress unchanged. Never keep a progress file in the task directory.
 3. Begin from the first checklist leaf, unless the caller supplied valid progress to resume.
 
 ## Update progress
