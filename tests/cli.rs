@@ -654,6 +654,71 @@ fn verify_enforces_base_tree_against_explicit_base_and_rejects_legacy_predecesso
 }
 
 #[test]
+fn verify_does_not_run_declared_checks_when_base_tree_mismatches() {
+    let temp = TempDir::new().unwrap();
+    let root = base_workspace(temp.path());
+    let pinned_commit = git_output(&root, &["rev-parse", "HEAD"]);
+    fs::create_dir_all(root.join("src/auth/session")).unwrap();
+    fs::write(
+        root.join("src/auth/session/change.rs"),
+        "// scoped change\n",
+    )
+    .unwrap();
+    git(&root, &["add", "-A"]);
+    git(
+        &root,
+        &[
+            "-c",
+            "core.hooksPath=/dev/null",
+            "commit",
+            "-q",
+            "-m",
+            "scoped change",
+        ],
+    );
+
+    let task_dir = copy_task(temp.path());
+    let config_path = task_dir.join("verify.toml");
+    let config = fs::read_to_string(&config_path)
+        .unwrap()
+        .replacen(
+            "task_id = \"TASK-042\"",
+            &format!("task_id = \"TASK-042\"\nbase_tree = \"{pinned_commit}\""),
+            1,
+        )
+        .replacen("argv = [\"true\"]", &marker_command_argv(), 1)
+        .replacen("shell = \"true\"", &marker_command_shell_toml(), 1);
+    fs::write(&config_path, config).unwrap();
+
+    let lint = cli(&[
+        "lint".into(),
+        task_dir.display().to_string(),
+        "--json".into(),
+    ]);
+    assert!(lint.status.success(), "{}", text(&lint));
+
+    let marker_path = temp.path().join("declared-command-ran");
+    let mut args = verify_args(&root, &task_dir, "HEAD");
+    args.push("--no-progress".into());
+    let output = cli_with_env(&args, "TASKFMT_TEST_DECLARED_COMMAND_MARKER", &marker_path);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        text(&output).contains("CHECK base_tree FAIL"),
+        "{}",
+        text(&output)
+    );
+    assert!(
+        !text(&output).contains("CHECK CHK-001"),
+        "{}",
+        text(&output)
+    );
+    assert!(
+        !marker_path.exists(),
+        "base_tree failure ran a declared check"
+    );
+}
+
+#[test]
 fn lint_reports_missing_verify_config_and_verify_reports_missing_executable() {
     let temp = TempDir::new().unwrap();
     let task_dir = copy_task(temp.path());
@@ -893,6 +958,115 @@ fn verify_scope_reports_untracked_paths_hidden_by_a_new_root_gitignore() {
     );
     assert!(
         text(&output).contains("changed path is outside writable_paths: outside.txt"),
+        "{}",
+        text(&output)
+    );
+}
+
+#[test]
+fn verify_rechecks_scope_after_declared_commands_against_immutable_base() {
+    let temp = TempDir::new().unwrap();
+    let root = base_workspace(temp.path());
+    let task_dir = copy_task(temp.path());
+    let config_path = task_dir.join("verify.toml");
+    let command = "mkdir -p src/auth/session && printf forbidden > src/auth/session/legacy_expiry_check.rs && printf outside > outside.txt && git add -A && git commit -q -m declared-command";
+    let config = fs::read_to_string(&config_path).unwrap().replacen(
+        "argv = [\"true\"]",
+        &format!("shell = {}", serde_json::to_string(command).unwrap()),
+        1,
+    );
+    fs::write(config_path, config).unwrap();
+
+    let mut args = verify_args(&root, &task_dir, "HEAD");
+    args.push("--no-progress".into());
+    let output = cli(&args);
+    let report = text(&output);
+
+    assert_eq!(output.status.code(), Some(1), "{report}");
+    assert!(report.contains("CHECK CHK-001 PASS"), "{report}");
+    assert!(report.contains("CHECK scope FAIL"), "{report}");
+    assert!(
+        report.contains("changed path is outside writable_paths: outside.txt"),
+        "{report}"
+    );
+    assert!(report.contains("CHECK forbidden_paths FAIL"), "{report}");
+    assert!(
+        report.contains("forbidden path changed: src/auth/session/legacy_expiry_check.rs"),
+        "{report}"
+    );
+}
+
+#[test]
+fn verify_rechecks_artifacts_after_later_declared_commands() {
+    let temp = TempDir::new().unwrap();
+    let root = base_workspace(temp.path());
+    let task_dir = copy_task(temp.path());
+    let config_path = task_dir.join("verify.toml");
+    let original = fs::read_to_string(&config_path).unwrap();
+    let config = original
+        .replacen(
+            "id = \"CHK-001\"\nphase = \"focused\"\nargv = [\"true\"]",
+            "id = \"CHK-001\"\nphase = \"focused\"\nargv = [\"true\"]\nexpected = { forbidden_artifacts = [\"src/auth/session/late.txt\"] }",
+            1,
+        )
+        .replacen(
+            "id = \"CHK-002\"\nphase = \"regression\"\nargv = [\"true\"]",
+            "id = \"CHK-002\"\nphase = \"regression\"\nshell = \"mkdir -p src/auth/session && printf late > src/auth/session/late.txt\"",
+            1,
+        );
+    assert_ne!(config, original);
+    fs::write(config_path, config).unwrap();
+
+    let mut args = verify_args(&root, &task_dir, "HEAD");
+    args.push("--no-progress".into());
+    let output = cli(&args);
+    let report = text(&output);
+
+    assert_eq!(output.status.code(), Some(1), "{report}");
+    assert!(report.contains("CHECK CHK-001 FAIL"), "{report}");
+    assert!(
+        report.contains(
+            "forbidden artifact exists: src/auth/session/late.txt after all declared checks"
+        ),
+        "{report}"
+    );
+}
+
+#[test]
+fn lint_rejects_checks_after_the_completion_gate() {
+    let temp = TempDir::new().unwrap();
+    let task_dir = copy_task(temp.path());
+    let config_path = task_dir.join("verify.toml");
+    let mut config = fs::read_to_string(&config_path).unwrap().replacen(
+        "phase = \"focused\"",
+        "phase = \"gate\"",
+        1,
+    );
+    let last_gate = config.rfind("phase = \"gate\"").unwrap();
+    config.replace_range(
+        last_gate..last_gate + "phase = \"gate\"".len(),
+        "phase = \"lint\"",
+    );
+    fs::write(config_path, config).unwrap();
+
+    let output = cli(&[
+        "lint".into(),
+        task_dir.display().to_string(),
+        "--json".into(),
+    ]);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        report["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|finding| {
+                finding["rule"] == "config"
+                    && finding["message"]
+                        .as_str()
+                        .is_some_and(|message| message.contains("checks must be ordered"))
+            }),
         "{}",
         text(&output)
     );

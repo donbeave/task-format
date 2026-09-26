@@ -94,6 +94,19 @@ pub enum Phase {
     Lint,
     Gate,
 }
+
+impl Phase {
+    fn rank(&self) -> u8 {
+        match self {
+            Self::Precondition => 0,
+            Self::Focused => 1,
+            Self::Regression => 2,
+            Self::Lint => 3,
+            Self::Gate => 4,
+        }
+    }
+}
+
 impl VerifyConfig {
     pub fn parse(text: &str) -> anyhow::Result<Self> {
         Self::parse_located(text).map_err(|error| anyhow::anyhow!(error.message))
@@ -146,9 +159,20 @@ impl VerifyConfig {
         anyhow::ensure!(!self.checks.is_empty(), "checks empty");
         let mut ids = BTreeSet::new();
         let mut gate = 0;
+        let mut previous_phase: Option<&Phase> = None;
         for c in &self.checks {
             anyhow::ensure!(id(&c.id, "CHK-"), "check id invalid: {}", c.id);
             anyhow::ensure!(ids.insert(&c.id), "duplicate check id: {}", c.id);
+            if let Some(previous) = previous_phase {
+                anyhow::ensure!(
+                    c.phase.rank() >= previous.rank(),
+                    "{} phase {:?} follows {:?}; checks must be ordered precondition, focused, regression, lint, gate",
+                    c.id,
+                    c.phase,
+                    previous
+                );
+            }
+            previous_phase = Some(&c.phase);
             anyhow::ensure!(
                 c.argv.is_some() != c.shell.is_some(),
                 "{} needs exactly one of argv or shell",
@@ -172,6 +196,12 @@ impl VerifyConfig {
             }
         }
         anyhow::ensure!(gate == 1, "exactly one gate check required");
+        anyhow::ensure!(
+            self.checks
+                .last()
+                .is_some_and(|check| check.phase == Phase::Gate),
+            "gate check must be last"
+        );
         Ok(())
     }
 }

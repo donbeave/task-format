@@ -47,8 +47,9 @@ caller-supplied `--base` to resolve to that same commit.
 Each check has a unique `CHK-NNN` ID, a phase (`precondition`, `focused`, `regression`, `lint`, or
 `gate`), and exactly one command form: `argv` or `shell`. It declares non-empty `requirements` and
 `acceptance` references and may declare expected exit status, output matchers, or required and
-forbidden artifacts. Exactly one check has phase `gate`. AC-to-check, check-to-AC, and all task ID
-references must agree.
+forbidden artifacts. Checks must appear in phase order: `precondition`, `focused`, `regression`,
+`lint`, then `gate`; `gate` is last. Exactly one check has phase `gate`. AC-to-check, check-to-AC,
+and all task ID references must agree.
 
 `taskfmt lint TASK_DIR` checks the README, TOML, and their references; it does not execute commands.
 `taskfmt verify` executes declared commands in the caller's workspace, checks their expectations,

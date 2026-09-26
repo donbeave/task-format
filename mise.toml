@@ -1,5 +1,5 @@
 [tasks.taskfmt-ci]
-description = "Format, build, test, and lint taskfmt plus its canonical task packages."
+description = "Check, build, and lint taskfmt plus its canonical task packages."
 run = [
   "cargo check --locked --all-targets --all-features",
   "cargo build --locked --release --bin taskfmt",

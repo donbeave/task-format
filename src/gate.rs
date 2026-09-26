@@ -127,12 +127,23 @@ fn run_inner(options: GateOpts) -> anyhow::Result<GateOutput> {
         );
     }
 
-    if let Some(base_tree) = &config.base_tree {
-        session.check(
-            "base_tree",
-            check_base_tree(&options.root, &options.base, base_tree),
-        );
-    }
+    let task_lint_passed = task_lint.passed();
+    let base_tree_passed = if let Some(base_tree) = &config.base_tree {
+        let result = check_base_tree(&options.root, &options.base, base_tree);
+        let passed = result.is_ok();
+        session.check("base_tree", result);
+        passed
+    } else {
+        true
+    };
+
+    // Resolve the caller's baseline before running any declared command. Commands are arbitrary
+    // and may move a ref such as `HEAD`; all later scope checks must compare against this fixed
+    // commit or a command could commit an out-of-scope change and make it disappear from the diff.
+    let scope_base = match ops::git::resolve_commit(&options.root, &options.base) {
+        Ok(commit) => commit,
+        Err(_) => options.base.clone(),
+    };
 
     let mut allowed = config.writable_paths.clone();
     if let Some(progress) = &options.progress
@@ -141,19 +152,64 @@ fn run_inner(options: GateOpts) -> anyhow::Result<GateOutput> {
     {
         allowed.push(relative.replace('\\', "/"));
     }
-    session.check("scope", check_scope(&options.root, &options.base, &allowed));
-    session.check(
-        "forbidden_paths",
-        check_forbidden_paths(&options.root, &options.base, &config.forbidden_paths),
-    );
-    session.check(
-        "forbidden_patterns",
-        check_forbidden_patterns(&options.root, &config.forbidden_patterns),
-    );
 
-    for check in &config.checks {
-        session.check(&check.id, run_configured_check(&options.root, check));
-    }
+    // Run a preflight before invoking arbitrary commands. If the starting workspace already
+    // violates a path constraint, do not give those commands a chance to operate on it. When
+    // preflight passes, the same checks run again below after every declared command so command
+    // side effects cannot bypass the scope boundary.
+    let preflight_scope = check_scope(&options.root, &scope_base, &allowed);
+    let preflight_forbidden_paths =
+        check_forbidden_paths(&options.root, &scope_base, &config.forbidden_paths);
+    let preflight_forbidden_patterns =
+        check_forbidden_patterns(&options.root, &config.forbidden_patterns);
+    let preflight_passed = preflight_scope.is_ok()
+        && preflight_forbidden_paths.is_ok()
+        && preflight_forbidden_patterns.is_ok();
+
+    let (scope, forbidden_paths, forbidden_patterns) =
+        if task_lint_passed && base_tree_passed && preflight_passed {
+            // Keep every declared forbidden artifact in memory before commands run. Each command is
+            // arbitrary, so the complete set must be audited against the final workspace after the
+            // last command rather than only after the check that declares it.
+            let forbidden_artifacts = config
+                .checks
+                .iter()
+                .map(|check| check.expected.forbidden_artifacts.clone())
+                .collect::<Vec<_>>();
+            let mut command_results = Vec::with_capacity(config.checks.len());
+            for check in &config.checks {
+                command_results.push((check, run_configured_check(&options.root, check)));
+            }
+            let post_command_forbidden = forbidden_artifacts
+                .iter()
+                .map(|paths| forbidden_artifact_failures(&options.root, paths))
+                .collect::<Vec<_>>();
+            for (index, (check, result)) in command_results.into_iter().enumerate() {
+                session.check(
+                    &check.id,
+                    merge_post_command_forbidden_artifact_failures(
+                        result,
+                        &post_command_forbidden[index],
+                    ),
+                );
+            }
+
+            (
+                check_scope(&options.root, &scope_base, &allowed),
+                check_forbidden_paths(&options.root, &scope_base, &config.forbidden_paths),
+                check_forbidden_patterns(&options.root, &config.forbidden_patterns),
+            )
+        } else {
+            (
+                preflight_scope,
+                preflight_forbidden_paths,
+                preflight_forbidden_patterns,
+            )
+        };
+
+    session.check("scope", scope);
+    session.check("forbidden_paths", forbidden_paths);
+    session.check("forbidden_patterns", forbidden_patterns);
 
     if let Some(progress_path) = &options.progress {
         session.check(
@@ -462,13 +518,52 @@ fn expected_failures(
             occurrences: &expected.stderr_occurrences,
         },
     );
+    failures.extend(artifact_failures(root, expected));
+    failures
+}
+
+fn artifact_failures(root: &Path, expected: &verifycfg::Expected) -> Vec<String> {
+    let mut failures = Vec::new();
     for path in &expected.required_artifacts {
         check_artifact(root, path, true, &mut failures);
     }
-    for path in &expected.forbidden_artifacts {
+    failures.extend(forbidden_artifact_failures(
+        root,
+        &expected.forbidden_artifacts,
+    ));
+    failures
+}
+
+fn forbidden_artifact_failures(root: &Path, paths: &[String]) -> Vec<String> {
+    let mut failures = Vec::new();
+    for path in paths {
         check_artifact(root, path, false, &mut failures);
     }
     failures
+}
+
+fn merge_post_command_forbidden_artifact_failures(
+    result: CheckBody,
+    post_command: &[String],
+) -> CheckBody {
+    if post_command.is_empty() {
+        return result;
+    }
+    let post_command = post_command
+        .iter()
+        .map(|failure| format!("{failure} after all declared checks"))
+        .collect::<Vec<_>>();
+    match result {
+        Ok(_) => Err(post_command),
+        Err(mut failures) => {
+            for failure in post_command {
+                if !failures.iter().any(|existing| existing == &failure) {
+                    failures.push(format!("{failure} after all declared checks"));
+                }
+            }
+            Err(failures)
+        }
+    }
 }
 
 struct StreamExpectation<'a> {
@@ -525,13 +620,39 @@ fn check_artifact(root: &Path, path: &str, required: bool, failures: &mut Vec<St
             return;
         }
     };
-    let is_file = std::fs::metadata(&candidate).is_ok_and(|metadata| metadata.is_file());
-    if required && !is_file {
+
+    let _symlink_metadata = match std::fs::symlink_metadata(&candidate) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if required {
+                failures.push(format!(
+                    "required artifact is missing or not a file: {path}"
+                ));
+            }
+            return;
+        }
+        Err(error) => {
+            failures.push(format!("cannot inspect artifact {path}: {error}"));
+            return;
+        }
+    };
+    if !required {
+        failures.push(format!("forbidden artifact exists: {path}"));
+        return;
+    }
+
+    let is_file = match std::fs::metadata(&candidate) {
+        Ok(metadata) => metadata.is_file(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => {
+            failures.push(format!("cannot inspect artifact {path}: {error}"));
+            return;
+        }
+    };
+    if !is_file {
         failures.push(format!(
             "required artifact is missing or not a file: {path}"
         ));
-    } else if !required && is_file {
-        failures.push(format!("forbidden artifact exists: {path}"));
     }
 }
 
@@ -595,5 +716,56 @@ mod tests {
             },
         );
         assert!(failures.is_empty(), "{failures:?}");
+    }
+
+    #[test]
+    fn forbidden_artifact_rejects_existing_file_and_directory() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("file"), "").unwrap();
+        std::fs::create_dir(root.path().join("directory")).unwrap();
+
+        for path in ["file", "directory"] {
+            let mut failures = Vec::new();
+            check_artifact(root.path(), path, false, &mut failures);
+            assert_eq!(failures, vec![format!("forbidden artifact exists: {path}")]);
+        }
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn forbidden_artifact_rejects_symlink_to_directory() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("directory")).unwrap();
+        symlink_directory(Path::new("directory"), &root.path().join("directory-link")).unwrap();
+
+        let mut failures = Vec::new();
+        check_artifact(root.path(), "directory-link", false, &mut failures);
+        assert_eq!(
+            failures,
+            vec!["forbidden artifact exists: directory-link".to_string()]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn artifact_inspection_errors_fail_closed() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("file"), "content").unwrap();
+
+        let mut failures = Vec::new();
+        check_artifact(root.path(), "file/child", false, &mut failures);
+
+        assert_eq!(failures.len(), 1);
+        assert!(failures[0].starts_with("cannot inspect artifact file/child:"));
+    }
+
+    #[cfg(unix)]
+    fn symlink_directory(target: &Path, link: &Path) -> std::io::Result<()> {
+        std::os::unix::fs::symlink(target, link)
+    }
+
+    #[cfg(windows)]
+    fn symlink_directory(target: &Path, link: &Path) -> std::io::Result<()> {
+        std::os::windows::fs::symlink_dir(target, link)
     }
 }
