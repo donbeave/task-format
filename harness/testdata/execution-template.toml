@@ -1,4 +1,0 @@
-schema = "execution/v1"
-profile = "codex-kimi"
-model = "kimi-k3"
-effort = "high"

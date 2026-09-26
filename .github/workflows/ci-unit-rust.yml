@@ -130,10 +130,6 @@ on:
         required: false
         type: string
         default: ""
-      validation_phases:
-        required: false
-        type: string
-        default: ""
 
 jobs:
   verify-github-hosted:
@@ -181,12 +177,12 @@ jobs:
       - name: Download Velnor workflow runtime
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: velnor-workflow-runtime-eed474c4a1d9b071fd1b5de00c769c8997398e5a-${{ runner.os }}-${{ runner.arch }}
+          name: velnor-workflow-runtime-0eeac75a157da9c1e4171d56b663fe5943e85fed-${{ runner.os }}-${{ runner.arch }}
           path: .velnor-workflow-runtime
       - name: Verify Velnor workflow runtime
         shell: bash
         env:
-          EXPECTED_REVISION: eed474c4a1d9b071fd1b5de00c769c8997398e5a
+          EXPECTED_REVISION: 0eeac75a157da9c1e4171d56b663fe5943e85fed
         run: |
           set -euo pipefail
           manifest=.velnor-workflow-runtime/manifest.json
@@ -200,7 +196,7 @@ jobs:
       - name: Add Velnor workflow runtime to PATH
         shell: bash
         env:
-          EXPECTED_REVISION: eed474c4a1d9b071fd1b5de00c769c8997398e5a
+          EXPECTED_REVISION: 0eeac75a157da9c1e4171d56b663fe5943e85fed
         run: |
           set -euo pipefail
           home="$RUNNER_TEMP/velnor-workflow-runtime-artifact"
@@ -263,7 +259,35 @@ jobs:
           path: |
             ~/.rustup
           key: velnor-rustup-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'rust-toolchain') }}
+      - name: Verify Rust toolchain cache
+        id: rustup-toolchain-verify
+        if: steps.rustup-toolchain.outputs.cache-hit == 'true'
+        shell: bash
+        run: |
+          valid=true
+          if ! command -v rustup >/dev/null 2>&1; then
+            valid=false
+          else
+            expected_channel='1.98.1'
+            installed="$(rustup toolchain list 2>/dev/null | awk -v expected="$expected_channel" '$1 == expected || index($1, expected "-") == 1 { print $1; exit }')" || installed=""
+            if [[ -z "$installed" ]]; then
+              valid=false
+            else
+              :
+              if ! rustup component list --installed --toolchain "$installed" 2>/dev/null | awk -v wanted='clippy' '$1 == wanted || index($1, wanted "-") == 1 { found=1 } END { exit found ? 0 : 1 }'; then
+                valid=false
+              fi
+              if ! rustup component list --installed --toolchain "$installed" 2>/dev/null | awk -v wanted='rustfmt' '$1 == wanted || index($1, wanted "-") == 1 { found=1 } END { exit found ? 0 : 1 }'; then
+                valid=false
+              fi
+              if ! rustup component list --installed --toolchain "$installed" 2>/dev/null | awk -v wanted='llvm-tools' '$1 == wanted || index($1, wanted "-") == 1 { found=1 } END { exit found ? 0 : 1 }'; then
+                valid=false
+              fi
+            fi
+          fi
+          echo "valid=$valid" >> "$GITHUB_OUTPUT"
       - name: Provision Rust toolchain
+        if: steps.rustup-toolchain.outputs.cache-hit != 'true' || steps.rustup-toolchain-verify.outputs.valid != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -275,6 +299,10 @@ jobs:
           path: |
             ~/.rustup
           key: velnor-rustup-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'rust-toolchain') }}
+      - name: Set up Mise
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          install: false
       - name: Bound the Mr. Boxington store
         shell: bash
         run: echo "MBX_GC_MAX_SIZE=12GiB" >> "$GITHUB_ENV"
@@ -394,7 +422,7 @@ jobs:
               chmod 0444 "$marker" 2>/dev/null || true
             fi
           fi
-      - name: Formatting check
+      - name: Run unit checks
         env:
           CI_SCOPE: ${{ inputs.scope }}
           CI_UNIT_ID: ${{ inputs.unit }}
@@ -418,41 +446,7 @@ jobs:
             fi
           fi
           rc=0
-          velnor-workflow run --config .github/ci/project.toml --scope "$CI_SCOPE" --unit "$CI_UNIT_ID" --phase fmt 2>&1 | tee -a "$RUNNER_TEMP/velnor-unit-log.txt" || rc=$?
-          exit $rc
-      - name: Clippy check
-        env:
-          CI_SCOPE: ${{ inputs.scope }}
-          CI_UNIT_ID: ${{ inputs.unit }}
-          EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ inputs.base_sha }}
-          HEAD_SHA: ${{ inputs.head_sha }}
-          VELNOR_SELECTION_FILE: .velnor-ci-selection/velnor-ci-selection
-          CARGO_NET_OFFLINE: "true"
-          MISE_AUTO_INSTALL: "false"
-          MISE_EXEC_AUTO_INSTALL: "false"
-          MISE_NOT_FOUND_AUTO_INSTALL: "false"
-        run: |
-          set -o pipefail
-          rc=0
-          velnor-workflow run --config .github/ci/project.toml --scope "$CI_SCOPE" --unit "$CI_UNIT_ID" --phase clippy 2>&1 | tee -a "$RUNNER_TEMP/velnor-unit-log.txt" || rc=$?
-          exit $rc
-      - name: Tests
-        env:
-          CI_SCOPE: ${{ inputs.scope }}
-          CI_UNIT_ID: ${{ inputs.unit }}
-          EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ inputs.base_sha }}
-          HEAD_SHA: ${{ inputs.head_sha }}
-          VELNOR_SELECTION_FILE: .velnor-ci-selection/velnor-ci-selection
-          CARGO_NET_OFFLINE: "true"
-          MISE_AUTO_INSTALL: "false"
-          MISE_EXEC_AUTO_INSTALL: "false"
-          MISE_NOT_FOUND_AUTO_INSTALL: "false"
-        run: |
-          set -o pipefail
-          rc=0
-          velnor-workflow run --config .github/ci/project.toml --scope "$CI_SCOPE" --unit "$CI_UNIT_ID" --phase test 2>&1 | tee -a "$RUNNER_TEMP/velnor-unit-log.txt" || rc=$?
+          velnor-workflow run --config .github/ci/project.toml --scope "$CI_SCOPE" --unit "$CI_UNIT_ID" 2>&1 | tee "$RUNNER_TEMP/velnor-unit-log.txt" || rc=$?
           timing_dir="$RUNNER_TEMP/velnor-ci-timing-${GITHUB_RUN_ID:-unknown}-${GITHUB_RUN_ATTEMPT:-0}-${GITHUB_JOB:-unknown}"
           umask 077
           mkdir -p "$timing_dir"
@@ -484,7 +478,7 @@ jobs:
           fi
       - name: Report phase timings and cache outcomes
         if: always()
-        uses: tailrocks/velnor/.github/actions/report-velnor-ci-outcomes@eed474c4a1d9b071fd1b5de00c769c8997398e5a
+        uses: tailrocks/velnor/.github/actions/report-velnor-ci-outcomes@0eeac75a157da9c1e4171d56b663fe5943e85fed
         with:
           job_label: ${{ inputs.unit }}
           ci_lane: github

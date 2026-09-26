@@ -1,6 +1,0 @@
-# Per-task agent dispatch (optional). Delete this file to use experiment.toml defaults.
-# Auth and secrets stay in experiment.toml profiles only.
-schema = "execution/v1"
-profile = "codex-kimi" # example — set the profile that should run this task
-# model = "kimi-k3"    # optional; defers to profile.model
-# effort = "high"      # optional: low | medium | high | max

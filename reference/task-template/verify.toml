@@ -1,3 +1,4 @@
+# Replace TASK-000 and every placeholder argv with the instantiated task's values.
 schema = "verify/v2"
 task_id = "TASK-000"
 writable_paths = ["src", "tests"]

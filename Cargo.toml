@@ -1,20 +1,19 @@
-[workspace]
-resolver = "2"
-members = [
-  "crates/taskfmt-core",
-  "crates/taskfmt",
-  "crates/taskfmt-runtime",
-  "crates/taskfmt-host",
-  "harness",
-]
-
-[workspace.package]
+[package]
+name = "taskfmt"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.98"
+description = "Task format parser and local verifier"
 license = "Apache-2.0"
 
-[workspace.dependencies]
-clap = { version = "4.5", features = ["derive", "env"] }
+[dependencies]
+anyhow = "1"
+clap = { version = "4.5", features = ["derive"] }
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+toml = "1.1.5"
 
 [profile.release]
 strip = true

@@ -1,421 +1,121 @@
 # task-format
 
-`task-format` manages filesystem-backed projects, groups, and dependency-linked
-tasks through the Rust **`taskfmt-host`** operator CLI and a local browser monitor.
-The `projects/` directory is the catalog: project and group README files describe
-ownership; task packages retain their immutable contracts, verification, and
-trusted inputs. The Rust API and Bun/TanStack Start browser share the harness
-verification lifecycle. Progress never substitutes for a passing host gate.
-In-container agents run **`taskfmt verify`**; host-side completion uses
-**`taskfmt-host gate`** or **`taskfmt-host selfcheck`**.
-See [monitoring setup and schemas](docs/monitoring.md),
-[example projects](docs/monitoring-examples.md), and
-[installed toolchain versions](docs/monitoring-versions.md).
-The [folder discovery demo](docs/monitoring-demo.md) shows all seven existing
-experimental tasks discovered from `projects/demo/pgtui/` by the running application.
+`task-format` defines a versioned Markdown task contract, its local verification checks, and a
+caller-maintained progress file. It ships one Rust command-line tool: `taskfmt`.
 
-The underlying research harness asks whether structured task packages make AI
-coding work more predictable, bounded, and independently verifiable. Its original
-flat experiment corpus and taskfmt workflows remain supported.
+The format uses `task/v5` for task `README.md` files, `verify/v2` for `verify.toml`, and `progress/v1`
+for progress Markdown. The [format reference](reference/FORMAT.md) is authoritative. The
+[canonical task template](reference/task-template/) and [real task examples](examples/) show how
+to apply it.
 
-## Getting started
+## Product boundary
 
-**[docs/getting-started.md](docs/getting-started.md)** is the step-by-step guide: install the
-three binaries, verify the repo with bundled examples (`selftest`, `harness/testdata/example`,
-`experiments/tasks/TASK-001`), run the test suite, and dispatch your first task in Docker.
+One task package describes a bounded outcome. Its files have separate roles:
 
-Quick install from the repository root:
-
-```sh
-cargo install --path crates/taskfmt-host --locked --bin taskfmt-host
-cargo install --path crates/taskfmt --locked --bin taskfmt
-cargo install --path crates/taskfmt-runtime --locked --bin taskfmt-runtime
-taskfmt-host selftest    # no Docker — proves lint, progress, and gate logic
-taskfmt-host lint TASK-001
-```
-
-Cargo installs to `~/.cargo/bin`. Put that directory on your `PATH`, then run
-`taskfmt-host --help`.
-
-| Binary | Role |
+| File | Role |
 | --- | --- |
-| `taskfmt-host` | Host operator CLI (`lint`, `run`, `experiment`, `gate`, `promote`, …) |
-| `taskfmt` | In-container validation (`init`, `status`, `lint`, `verify`) |
-| `taskfmt-runtime` | Container boot (`container-entrypoint`, `prereqs`, `agent-launch`) |
+| `README.md` | Goal, context, scope, requirements, acceptance criteria, decisions, and checklist. |
+| `AGENTS.md` | Short instructions for the executor working on the task. |
+| `verify.toml` | Local commands, expected results, and workspace path limits. |
+| Caller-chosen progress file | Mutable coordination events, stored outside the task package. |
 
-## Projects and groups
+`taskfmt lint` validates a task package and its cross-references. `taskfmt status` reads a task and
+progress file, validates the event stream, and reports derived checklist state. `taskfmt verify`
+runs the declared checks and local scope checks; full verification also requires completed,
+valid progress.
 
-The default catalog is `projects/`. The former `taskfmt project` and
-`taskfmt group` CLI subcommands were removed; use the browser monitor described
-in [monitoring setup](docs/monitoring.md) (historical CLI examples there are
-stale). Host operators dispatch and gate individual tasks with `taskfmt-host`
-as shown below.
+The executor provides the working copy, tools, prerequisites, and inputs. `taskfmt` runs there. It
+does not create environments, launch agents, dispatch tasks, manage projects, provision services,
+handle credentials, or promote changes. Those responsibilities belong outside
+this repository. Commands declared in `verify.toml` run in the workspace and may have their own
+effects; `taskfmt` does not sandbox arbitrary commands.
 
-## Why this exists
+## Install
 
-An AI coding agent turns prose into edits, checks, and a completion claim. If scope, decisions, or proof are unclear, it can drift into unrelated work or report success without solving the problem. Faster agents make this ambiguity more expensive, not less.
-
-This project treats task writing as an engineering variable. It gives an agent one explicit contract and checks the result at a caller-provided execution boundary.
-
-## What this project is—and is not
-
-It is a filesystem project/task system, a versioned task format, a Rust execution
-harness, and an experiment corpus for testing task-package design.
-
-It is not a model leaderboard, a universal prompting recipe, or proof that the current format is optimal. The current `TASK-001`–`TASK-007` series validates the harness and package lifecycle; it is not yet a measured format comparison.
-
-## The task package
-
-One package describes one bounded, observable outcome:
-
-- `README.md` — the binding goal, context, requirements, scope, acceptance criteria, fixed decisions, and checklist;
-- `AGENTS.md` — execution protocol and progress rules;
-- `verify.toml` — commands, path limits, and completion gate;
-- `trusted/` — planner-owned tests or fixtures outside the agent's edit scope.
-
-The package is read-only during a run. Progress is derived state stored outside the package and is never itself proof of completion.
-
-## Trust model
-
-The harness protects the experiment in layers:
-
-1. A fresh workspace and agent session prevent previous state from contaminating a run.
-2. A recorded baseline anchors scope checks to a known Git tree.
-3. Trusted verification material is overlaid before execution and kept outside `verify.toml`'s writable paths.
-4. In-container `taskfmt verify` executes the declared checks, expected matchers, progress validation, and scope check.
-5. The host freezes one complete candidate tree, runs `taskfmt-host gate` on that exact tree, and records its evidence.
-6. Promotion creates and pushes a commit directly from the recorded tree with an expected-parent lease. The host verdict, not the agent's report, decides success.
-
-## Running experiments
-
-Run commands from the repository root. Docker must be running, and the agent credentials
-referenced by `experiment.toml` must be available.
-
-### First-time setup
-
-Install the host binary, preload the pinned PostgreSQL prerequisite image, and build the agent
-images:
+With the repository checked out and Rust installed, install the single binary from the root:
 
 ```sh
-cargo install --path crates/taskfmt-host --locked --bin taskfmt-host
-cargo install --path crates/taskfmt --locked --bin taskfmt
-cargo install --path crates/taskfmt-runtime --locked --bin taskfmt-runtime
-taskfmt-host preload --auto
-taskfmt-host build-images --auto
+cargo install --path . --locked
+taskfmt --help
 ```
 
-`taskfmt-host build-images` defaults to `--agent all`, so it builds the shared taskfmt/base images plus
-`harness-claude`, `harness-codex`, and `harness-cursor`. Use `--agent claude`, `--agent codex`, or
-`--agent cursor` only when you want to build one agent layer. You do not need to run `docker build`
-directly. Re-run
-`build-images` after changing harness Rust code so the binary on the host and the binary inside
-the image match.
+## Work with a task
 
-Dispatch also checks that the image contains the preloaded PostgreSQL tarball before launching a
-persistent run. If a stale image is missing it, rebuild with `taskfmt-host preload --auto` followed by
-`taskfmt-host build-images --agent all --auto`.
-
-Image building and runtime selection are separate. Build both images once, then choose the agent
-profile for each run with `--agent`.
-
-The current image toolchain is:
-
-| Component | Version |
-| --- | --- |
-| Claude Code | `2.1.261` |
-| Codex CLI | `0.153.4` |
-| Cursor Agent CLI | `2026.09.10-fd3934a` |
-| Rust | `1.98.1` |
-| Node.js LTS | `24.20.0` |
-| Herdr | `0.8.2` |
-| PostgreSQL | `18.6` |
-| Debian | `13.6` (Trixie) |
-
-Rebuild the images when upgrading these pins. The build prints all four generated image tags and
-each agent Dockerfile runs its CLI version check during the build.
-
-### Use Claude with GLM-5.3-Flash
-
-The repository defines the `zai-flash` profile for Claude through Z.ai's Anthropic-compatible API.
-Create the token file expected by `experiment.toml`:
+Copy the template to a task directory, then replace its placeholder task ID, title, requirements,
+acceptance criteria, checklist, and check commands with the real task contract. Choose a separate
+writable path for progress. The template's initial progress file matches its example first leaf,
+`1.1`; update the task ID and leaf in both the header and first event when copying it.
 
 ```sh
-mkdir -p ~/.config/taskfmt
-chmod 700 ~/.config/taskfmt
-$EDITOR ~/.config/taskfmt/zai-flash.token
-chmod 600 ~/.config/taskfmt/zai-flash.token
+cp -R reference/task-template /task
+mkdir -p /progress
+cp reference/task-template/progress.md /progress/progress.md
+# Edit /task/README.md, /task/AGENTS.md, and /task/verify.toml; replace TASK-000 throughout.
+# Replace TASK-000 and the initial leaf in /progress/progress.md.
+taskfmt lint /task
 ```
 
-Put only the Z.ai API token in that file. Build the Claude image, then select the `zai-flash`
-profile when running tasks:
+Paths are caller choices; `/task`, `/work`, and `/progress/progress.md` are examples. Lint checks
+the task and verifier configuration without running their commands or requiring progress.
+
+During work, append valid events to the caller's progress file. Inspect its derived state at any
+time:
 
 ```sh
-taskfmt-host build-images --agent claude --auto
-taskfmt-host run \
-  --task TASK-001 \
-  --repo <repository-url> \
-  --agent zai-flash \
-  --wait
+taskfmt status --task-dir /task --progress /progress/progress.md
+taskfmt status --task-dir /task --progress /progress/progress.md --json
 ```
 
-For a series:
+Status shows task identity, state, current leaf, per-item progress, completed and total leaves,
+and a whole-number percentage. The percentage is `100 × completed leaves / total leaves`, rounded
+to the nearest whole percent with halves rounded up. Status validates and reads files; it does not
+run checks or change them.
+
+Use checks-only verification while progress is incomplete. Supply the caller's workspace baseline
+commit as `TASK_BASE`. After preparing `/work` with the task's starting files and before making task
+changes, create the baseline and resolve its commit ID:
 
 ```sh
-taskfmt-host experiment \
-  --tasks 1-3 \
-  --repo <repository-url> \
-  --agent zai-flash \
-  --auto
+git -C /work add -A
+git -C /work commit -m "Task baseline"
+TASK_BASE=$(git -C /work rev-parse HEAD)
 ```
 
-`--agent claude` selects the image family during image building; `--agent zai-flash` selects the
-configured Claude/GLM-5.3-Flash profile during execution. Because `zai-flash` is the default
-profile, the execution commands may omit `--agent zai-flash`.
-
-### Use Codex with GLM-5.3-Flash (Z.ai)
-
-The `codex-zai` profile runs the Codex CLI against Z.ai with `model = "glm-5.3-flash"` and
-`effort = "max"`. You do **not** need `codex --login` (that is only for `codex-default`, which
-uses host OAuth).
-
-Credentials resolve at dispatch from `experiment.toml`. By default the profile reads
-`ZAI_API_KEY` from 1Password (`op://ChainArgos/Z.ai/Test`); sign in to the 1Password CLI first
-(`op signin`). Alternatively, put the Z.ai API key in a local file and point the profile at it:
+If `/work` already has the intended baseline commit, set `TASK_BASE` from that commit instead.
 
 ```sh
-mkdir -p ~/.config/taskfmt
-chmod 700 ~/.config/taskfmt
-$EDITOR ~/.config/taskfmt/zai-flash.token   # Z.ai API key only
-chmod 600 ~/.config/taskfmt/zai-flash.token
+taskfmt verify --task-dir /task --root /work --base "$TASK_BASE" --no-progress
 ```
 
-Then set `ZAI_API_KEY = "file://zai-flash.token"` under `[agents.profiles.codex-zai.env_secret]`
-in `experiment.toml`.
-
-Build the Codex image, lint the first task, and dispatch with **`--agent codex-zai`** (this
-profile is not the default):
+After all checklist leaves are complete, run full verification with the progress path:
 
 ```sh
-taskfmt-host build-images --agent codex --auto
-taskfmt-host lint TASK-001
-taskfmt-host run \
-  --task TASK-001 \
-  --repo <repository-url> \
-  --agent codex-zai \
-  --wait
+taskfmt verify \
+  --task-dir /task \
+  --root /work \
+  --progress /progress/progress.md \
+  --base "$TASK_BASE"
 ```
 
-Model and effort are already pinned in the profile; override only when needed:
+Full verification checks the task contract, the supplied baseline and workspace scope, every
+declared command and expected result, and completed progress. A progress state of `DONE` or a 100%
+status is a coordination claim. Only a successful full `taskfmt verify` run proves that the
+declared checks passed for that workspace at that time; its final standalone `DONE` line is the
+completion signal. Checks-only success reports `CHECKS PASS` and does not signal task completion.
+
+## Examples
+
+[`examples/README.md`](examples/README.md) lists the canonical task examples and their prerequisites.
+Examples describe actual work and may require their named target repository or tools; the template's
+placeholder commands must be replaced before execution.
+
+## Development
+
+The pinned Rust toolchain is in `rust-toolchain.toml`. From the repository root:
 
 ```sh
-taskfmt-host run \
-  --task TASK-001 \
-  --repo <repository-url> \
-  --agent codex-zai \
-  --model glm-5.3-flash \
-  --effort max \
-  --wait
+cargo fmt --all -- --check
+cargo check --locked --all-targets --all-features
+cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo test --locked --all-targets --all-features
 ```
-
-After a passing gate, promote the recorded tree:
-
-```sh
-taskfmt-host promote <run-id> --auto
-```
-
-For a series with the same profile:
-
-```sh
-taskfmt-host experiment \
-  --tasks 1-3 \
-  --repo <repository-url> \
-  --agent codex-zai \
-  --auto
-```
-
-### Use Cursor
-
-The `cursor-default` profile runs the headed Cursor Agent CLI under herdr with
-`model = "composer-2.5"`. Dispatch passes the full `/goal …` prompt as the cursor-agent launch
-argument (not herdr bracketed-paste), so the composer should show **`Goal active (...)`** after
-launch—not `[Pasted text]` or an idle slash-command menu. Dispatch waits up to three minutes for
-that line before warning.
-
-**Authentication.** Cursor uses the same login as your host `agent` CLI. Run `agent login` on the
-host before dispatch. The `cursor-default` profile sets `auth = "host"`; do not combine that with
-`CURSOR_API_KEY` in `env_secret`. On macOS the harness reads your Keychain session at dispatch
-time; on Linux it mounts `~/.cursor/auth.json` (or legacy `~/.config/cursor/auth.json`). Inside the
-Linux container the entrypoint installs credentials at `/home/agent/.config/cursor/auth.json`.
-
-**Yolo (Run Everything).** Dispatch matches a host `cursor-yolo` wrapper: the agent command uses
-`--trust --yolo --approve-mcps --sandbox disabled`, and the pre-seeded `cli-config.json` sets
-`approvalMode` to `unrestricted` with sandbox disabled — the same intent as Claude's
-`--dangerously-skip-permissions` and Codex's `--dangerously-bypass-approvals-and-sandbox`.
-
-Build the Cursor image, lint the task, and dispatch:
-
-```sh
-taskfmt-host build-images --agent cursor --auto
-taskfmt-host lint TASK-001
-taskfmt-host run \
-  --task TASK-001 \
-  --repo <repository-url> \
-  --agent cursor-default \
-  --wait
-```
-
-Omit `--wait` to return immediately; follow with `taskfmt-host status <run-id> --wait`, then
-`taskfmt-host gate <run-id>` before promotion. Attach to the live TUI with
-`taskfmt-host attach <run-id>` (detach with `ctrl+b q`, not `ctrl+c`).
-
-Harness completion still requires in-container `taskfmt verify` (last line `DONE`), a valid
-`/progress/progress.md` event stream, and a final `GOAL_RESULT task=<id> status=DONE` line in the
-transcript—the Cursor UI banner alone is not gate evidence. Reinstall the host binary and rebuild
-the Cursor image after pulling harness changes:
-
-```sh
-cargo install --path crates/taskfmt-host --locked --bin taskfmt-host
-taskfmt-host build-images --agent cursor --auto
-```
-
-For a series with the same profile:
-
-```sh
-taskfmt-host experiment \
-  --tasks 1-3 \
-  --repo <repository-url> \
-  --agent cursor-default \
-  --auto
-```
-
-### Run one task
-
-Lint the task, then dispatch it to a fresh container:
-
-```sh
-taskfmt-host lint TASK-001
-taskfmt-host run --task TASK-001 --repo <repository-url> --agent codex-default --wait
-```
-
-Without `--repo`, `taskfmt-host run` creates a disposable private repository after confirmation. The
-`--wait` flag waits for the agent and runs the host gate. After a passing result, promote the
-recorded tree:
-
-```sh
-taskfmt-host promote <run-id>  # only after a passing gate
-```
-
-To return immediately instead, omit `--wait`; follow the run with `taskfmt-host status <run-id> --wait`,
-then run `taskfmt-host gate <run-id>` before promotion.
-
-`taskfmt-host selfcheck TASK-001 <workspace>` is an optional pre-dispatch check that proves the task
-gate distinguishes the untouched base from a reference solution.
-
-### Run an ordered experiment series
-
-`experiment` runs the repository lifecycle and, for each selected task, performs dispatch, gating,
-and promotion in order. It stops on the first failure or blocked task:
-
-```sh
-taskfmt-host experiment \
-  --tasks 1-3 \
-  --repo <repository-url> \
-  --agent codex-default \
-  --auto
-```
-
-Omit `--repo` to create a disposable experiment repository. Use `--tasks all` or selections such
-as `1-3,5` and `TASK-002..TASK-004`. Resume an interrupted series with its experiment ID:
-
-```sh
-taskfmt-host experiment --resume <experiment-id> --tasks all --agent codex-default --auto
-```
-
-### Run every task in one command
-
-After first-time setup, run the complete configured task corpus sequentially with Claude and
-GLM-5.3-Flash:
-
-```sh
-taskfmt-host experiment \
-  --tasks all \
-  --repo <repository-url> \
-  --agent zai-flash \
-  --auto
-```
-
-Omit `--repo` to let `taskfmt-host` create a disposable private repository. Add
-`--proof-corpus /path/to/pgtui-proof.git` for a controlled campaign; the corpus is preflighted
-before any runtime repository is created and pinned to the experiment state. This is one command,
-not parallel execution: tasks run in order, and the experiment stops at the first failed or
-blocked task. Resume the same experiment after fixing the cause:
-
-```sh
-taskfmt-host experiment \
-  --resume <experiment-id> \
-  --agent zai-flash \
-  --auto
-```
-
-Use `taskfmt-host ps`, `taskfmt-host status <run-id>`, or `taskfmt-host attach <run-id>` to inspect a live or
-completed run. A prereq failure still writes the launch manifest, so `attach` can locate the
-parked container and points to `out/prereqs.log`. Run records and evidence are stored under
-`experiments/runs/`.
-
-See [harness/README.md](harness/README.md) for complete flags, safety rules, configuration, and
-development checks.
-
-## Research question and method
-
-The research compares task-package writing, not software outcomes. Change one meaningful variable—such as checklist shape, rule placement, context order, or verification presentation—while holding the outcome, repository, trusted checks, gate, image, agent profile, and runtime limits fixed.
-
-Each observation is a fresh run with a recorded baseline, an independent gate, and retained artifacts. A single favorable run is a signal, not a finding.
-
-Measure gate pass rate, false-completion claims, scope violations, diff stability, retries, and rework across repeated runs. Adopt a format change only when control comparisons show a reproducible improvement without weakening verification or changing the task outcome.
-
-## Topics and adopted decisions
-
-| Research topic | Current decision |
-| --- | --- |
-| Broad work vs. bounded work | Split into coherent, independently verifiable vertical slices. |
-| Executor invention vs. prepared design | Resolve consequential product, architecture, and compatibility choices before dispatch. |
-| Mutable contract vs. protected contract | Keep task instructions and planner-owned proof read-only. |
-| Self-report vs. independent proof | Let the host-side gate decide completion. |
-| Shared mutable checks vs. trusted checks | Overlay verifier inputs outside the agent's allowed paths. |
-| Reused state vs. fresh state | Start each observation from a fresh clone, container, and session. |
-| Pixel-only UI proof vs. portable evidence | Prefer deterministic semantic or textual assertions for interactive behavior. |
-| Repeated prose vs. enforceable rules | Put critical invariants in the harness and configuration. |
-
-These are design decisions and hypotheses, not claims that alternatives always fail.
-
-## Findings and open evidence
-
-Research converged on five durable principles: bounded outcomes, settled decisions, protected inputs, independent gates, and inspectable fresh runs. `task/v5`, `verify/v2`, `taskfmt`, and seven ordered `pgtui` packages implement those ideas.
-
-No completed ablation matrix yet proves that one wording or checklist style produces a quantitative improvement. Future claims require repeated control comparisons and their full run records.
-
-## Repository map
-
-| Path | Role |
-| --- | --- |
-| `docs/getting-started.md` | Install binaries, local verification, and example walkthrough. |
-| `crates/` | Rust workspace: `taskfmt-host`, `taskfmt`, `taskfmt-runtime`, and shared `taskfmt-core`. |
-| `harness/` | Docker images, integration tests, and bundled fixtures; see [`docs/crate-split.md`](docs/crate-split.md). |
-| `experiments/tasks/` | Versioned task packages used as experiment inputs. |
-| `experiments/fixtures/` | Shared deterministic seed data. |
-| `experiments/runs/` | Generated run workspaces and evidence; Git-ignored. |
-| `reference/task-template/` | Canonical `task/v5` + `verify/v2` package template. |
-| `experiment.toml` | Versioned paths, images, runtime, and agent profiles. |
-| `projects/` | Primary filesystem catalog: projects, groups, and task packages. |
-| `web/` | Bun-managed TanStack Start progress-monitoring frontend. |
-| `docs/monitoring.md` | Monitor setup, metadata, dependency, and lifecycle reference. |
-
-## Authority and boundaries
-
-When documents disagree, use this order: harness code and `experiment.toml`, then the task template and live experiment packages, then this documentation. Documentation explains behavior; it does not override executable rules.
-
-Do not alter task-package structure, task metadata, trusted verification, or fixtures while changing explanatory documentation. A task may change only paths declared by `verify.toml`'s `writable_paths`.
-
-## License
-
-Apache License 2.0. See [LICENSE](LICENSE).
