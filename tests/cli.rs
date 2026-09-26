@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::time::SystemTime;
 
 use serde_json::Value;
 use tempfile::TempDir;
@@ -8,6 +9,14 @@ use tempfile::TempDir;
 fn cli(args: &[String]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_taskfmt"))
         .args(args)
+        .output()
+        .expect("start taskfmt")
+}
+
+fn cli_with_env(args: &[String], key: &str, value: &Path) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_taskfmt"))
+        .args(args)
+        .env(key, value)
         .output()
         .expect("start taskfmt")
 }
@@ -117,6 +126,123 @@ fn completed_progress() -> String {
         .collect::<Vec<_>>()
         .join("\n");
     progress(&events, "DONE", "NONE", 10)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum SnapshotKind {
+    File,
+    Directory,
+    Symlink,
+    Other,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct SnapshotEntry {
+    kind: SnapshotKind,
+    contents: Option<Vec<u8>>,
+    symlink_target: Option<PathBuf>,
+    modified: Option<SystemTime>,
+    permissions: u32,
+}
+
+#[cfg(unix)]
+fn permission_bits(metadata: &fs::Metadata) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    metadata.permissions().mode()
+}
+
+#[cfg(not(unix))]
+fn permission_bits(metadata: &fs::Metadata) -> u32 {
+    u32::from(metadata.permissions().readonly())
+}
+
+fn snapshot_entry(path: &Path) -> SnapshotEntry {
+    let metadata = fs::symlink_metadata(path).unwrap();
+    let file_type = metadata.file_type();
+    let kind = if file_type.is_file() {
+        SnapshotKind::File
+    } else if file_type.is_dir() {
+        SnapshotKind::Directory
+    } else if file_type.is_symlink() {
+        SnapshotKind::Symlink
+    } else {
+        SnapshotKind::Other
+    };
+    SnapshotEntry {
+        contents: (kind == SnapshotKind::File).then(|| fs::read(path).unwrap()),
+        symlink_target: (kind == SnapshotKind::Symlink).then(|| fs::read_link(path).unwrap()),
+        modified: metadata.modified().ok(),
+        permissions: permission_bits(&metadata),
+        kind,
+    }
+}
+
+fn snapshot_tree(root: &Path) -> Vec<(PathBuf, SnapshotEntry)> {
+    fn visit(root: &Path, dir: &Path, snapshot: &mut Vec<(PathBuf, SnapshotEntry)>) {
+        let mut entries = fs::read_dir(dir)
+            .unwrap()
+            .map(Result::unwrap)
+            .collect::<Vec<_>>();
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            let path = entry.path();
+            snapshot.push((
+                path.strip_prefix(root).unwrap().to_path_buf(),
+                snapshot_entry(&path),
+            ));
+            if entry.file_type().unwrap().is_dir() {
+                visit(root, &path, snapshot);
+            }
+        }
+    }
+
+    let mut snapshot = vec![(PathBuf::new(), snapshot_entry(root))];
+    visit(root, root, &mut snapshot);
+    snapshot
+}
+
+#[test]
+fn record_declared_command_execution_marker_when_requested() {
+    if let Some(marker) = std::env::var_os("TASKFMT_TEST_DECLARED_COMMAND_MARKER") {
+        fs::write(marker, b"executed").unwrap();
+    }
+}
+
+fn marker_command_args() -> Vec<String> {
+    vec![
+        std::env::current_exe().unwrap().display().to_string(),
+        "--exact".into(),
+        "record_declared_command_execution_marker_when_requested".into(),
+        "--nocapture".into(),
+    ]
+}
+
+fn marker_command_argv() -> String {
+    let args = marker_command_args()
+        .iter()
+        .map(|arg| serde_json::to_string(arg).unwrap())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("argv = [{args}]")
+}
+
+fn shell_quote(argument: &str) -> String {
+    format!("'{}'", argument.replace('\'', "'\\''"))
+}
+
+fn marker_command_shell() -> String {
+    marker_command_args()
+        .iter()
+        .map(|argument| shell_quote(argument))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn marker_command_shell_toml() -> String {
+    format!(
+        "shell = {}",
+        serde_json::to_string(&marker_command_shell()).unwrap()
+    )
 }
 
 #[test]
@@ -298,6 +424,107 @@ fn verify_checks_only_ends_with_checks_pass_and_full_completion_ends_with_done()
     assert_eq!(incomplete.status.code(), Some(1));
     assert!(text(&incomplete).contains("CHECK progress FAIL"));
     assert!(!text(&incomplete).ends_with("DONE\n"));
+
+    let config_path = task_dir.join("verify.toml");
+    let original_config = fs::read_to_string(&config_path).unwrap();
+    let config = original_config.replacen(
+        "argv = [\"true\"]",
+        &format!(
+            "argv = [{}, \"__unknown_taskfmt_command__\"]",
+            serde_json::to_string(env!("CARGO_BIN_EXE_taskfmt")).unwrap()
+        ),
+        1,
+    );
+    assert_ne!(
+        config, original_config,
+        "failing command fixture did not apply"
+    );
+    fs::write(config_path, config).unwrap();
+    fs::write(&progress_path, completed_progress()).unwrap();
+    let failing_check_with_done_progress = cli(&full_args);
+    assert_eq!(failing_check_with_done_progress.status.code(), Some(1));
+    assert!(text(&failing_check_with_done_progress).contains("CHECK CHK-001 FAIL"));
+    assert!(!text(&failing_check_with_done_progress).ends_with("DONE\n"));
+}
+
+#[test]
+fn canonical_template_runs_through_lint_status_and_both_verify_modes() {
+    let temp = TempDir::new().unwrap();
+    let task_id = "TASK-900";
+    let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("reference/task-template");
+    let task_dir = temp.path().join("task");
+    fs::create_dir_all(&task_dir).unwrap();
+
+    let readme = fs::read_to_string(template_dir.join("README.md"))
+        .unwrap()
+        .replace("TASK-000", task_id);
+    fs::write(task_dir.join("README.md"), readme).unwrap();
+    let verify_config = fs::read_to_string(template_dir.join("verify.toml"))
+        .unwrap()
+        .replace("TASK-000", task_id)
+        .replace("<precondition-command>", "true")
+        .replace("<focused-test-command>", "true")
+        .replace("<regression-command>", "true")
+        .replace("<lint-command>", "true")
+        .replace("<gate-command>", "true");
+    fs::write(task_dir.join("verify.toml"), verify_config).unwrap();
+
+    let progress_path = temp.path().join("progress.md");
+    fs::copy(template_dir.join("progress.md"), &progress_path).unwrap();
+    let leaves = ["1.1", "2.1", "2.2", "2.3", "2.4", "3.1"];
+    let events = leaves
+        .iter()
+        .flat_map(|leaf| [format!("STARTED | {leaf}"), format!("DONE | {leaf}")])
+        .enumerate()
+        .map(|(index, event)| format!("- {} | {event}", index + 1))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let completed_progress = fs::read_to_string(&progress_path)
+        .unwrap()
+        .replace("task: TASK-000", &format!("task: {task_id}"))
+        .replace("state: IN_PROGRESS", "state: DONE")
+        .replace("current: 1.1", "current: NONE")
+        .replace("latest_event: 1", "latest_event: 12")
+        .replace("- 1 | STARTED | 1.1", &events);
+    fs::write(&progress_path, completed_progress).unwrap();
+
+    let root = base_workspace(temp.path());
+    let base = git_output(&root, &["rev-parse", "HEAD"]);
+
+    let lint = cli(&[
+        "lint".into(),
+        task_dir.display().to_string(),
+        "--json".into(),
+    ]);
+    assert!(lint.status.success(), "{}", text(&lint));
+
+    let status = cli(&[
+        "status".into(),
+        "--task-dir".into(),
+        task_dir.display().to_string(),
+        "--progress".into(),
+        progress_path.display().to_string(),
+        "--json".into(),
+    ]);
+    assert!(status.status.success(), "{}", text(&status));
+    let status_report: Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert_eq!(status_report["state"], "DONE");
+    assert_eq!(status_report["completed_leaves"], 6);
+    assert_eq!(status_report["total_leaves"], 6);
+    assert_eq!(status_report["percent"], 100);
+
+    let mut checks_only_args = verify_args(&root, &task_dir, &base);
+    checks_only_args.push("--no-progress".into());
+    let checks_only = cli(&checks_only_args);
+    assert!(checks_only.status.success(), "{}", text(&checks_only));
+    assert!(text(&checks_only).ends_with("CHECKS PASS\n"));
+    assert!(!text(&checks_only).contains("\nDONE\n"));
+
+    let mut full_args = verify_args(&root, &task_dir, &base);
+    full_args.extend(["--progress".into(), progress_path.display().to_string()]);
+    let full = cli(&full_args);
+    assert!(full.status.success(), "{}", text(&full));
+    assert!(text(&full).ends_with("DONE\n"));
 }
 
 #[test]
@@ -449,6 +676,13 @@ fn lint_reports_missing_verify_config_and_verify_reports_missing_executable() {
     );
 
     let root = base_workspace(temp.path());
+    let mut missing_config_args = verify_args(&root, &task_dir, "HEAD");
+    missing_config_args.push("--no-progress".into());
+    let missing_config = cli(&missing_config_args);
+    assert_eq!(missing_config.status.code(), Some(70));
+    assert!(text(&missing_config).contains("cannot load"));
+    assert!(text(&missing_config).contains("verify.toml"));
+
     let executable_task = copy_task(&temp.path().join("with-command"));
     let config_path = executable_task.join("verify.toml");
     let config = fs::read_to_string(&config_path).unwrap().replacen(
@@ -463,6 +697,140 @@ fn lint_reports_missing_verify_config_and_verify_reports_missing_executable() {
     assert_eq!(verify.status.code(), Some(1));
     assert!(text(&verify).contains("CHECK CHK-001 FAIL"));
     assert!(text(&verify).contains("CHK-001 could not start"));
+}
+
+#[test]
+fn lint_rejects_broken_acceptance_check_reference() {
+    let temp = TempDir::new().unwrap();
+    let task_dir = copy_task(temp.path());
+    let readme_path = task_dir.join("README.md");
+    let original_readme = fs::read_to_string(&readme_path).unwrap();
+    let readme = original_readme.replacen("- **Check:** `CHK-001`", "- **Check:** `CHK-999`", 1);
+    assert_ne!(
+        readme, original_readme,
+        "broken check reference was not applied"
+    );
+    fs::write(readme_path, readme).unwrap();
+
+    let lint = cli(&[
+        "lint".into(),
+        task_dir.display().to_string(),
+        "--json".into(),
+    ]);
+    assert_eq!(lint.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&lint.stdout).unwrap();
+    assert!(
+        report["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|finding| {
+                finding["rule"] == "graph"
+                    && finding["message"]
+                        .as_str()
+                        .is_some_and(|message| message.contains("unknown check CHK-999"))
+            })
+    );
+}
+
+#[test]
+fn lint_and_status_are_repeatable_read_only_and_do_not_execute_task_commands() {
+    let temp = TempDir::new().unwrap();
+    let task_dir = copy_task(temp.path());
+    let config_path = task_dir.join("verify.toml");
+    let original_config = fs::read_to_string(&config_path).unwrap();
+    let config = original_config
+        .replacen("argv = [\"true\"]", &marker_command_argv(), 1)
+        .replacen("shell = \"true\"", &marker_command_shell_toml(), 1);
+    assert_ne!(
+        config, original_config,
+        "marker command fixture did not apply"
+    );
+    fs::write(config_path, config).unwrap();
+    let progress_path = temp.path().join("progress.md");
+    fs::write(&progress_path, partial_progress()).unwrap();
+    let marker_path = temp.path().join("declared-command-ran");
+
+    let command = marker_command_args();
+    let marker_probe = Command::new(&command[0])
+        .args(&command[1..])
+        .env("TASKFMT_TEST_DECLARED_COMMAND_MARKER", &marker_path)
+        .output()
+        .unwrap();
+    assert!(
+        marker_probe.status.success(),
+        "marker probe failed: {}",
+        String::from_utf8_lossy(&marker_probe.stderr)
+    );
+    assert_eq!(fs::read(&marker_path).unwrap(), b"executed");
+    fs::remove_file(&marker_path).unwrap();
+
+    let shell_probe = Command::new("bash")
+        .args(["-eo", "pipefail", "-c"])
+        .arg(marker_command_shell())
+        .env("TASKFMT_TEST_DECLARED_COMMAND_MARKER", &marker_path)
+        .output()
+        .unwrap();
+    assert!(
+        shell_probe.status.success(),
+        "shell marker probe failed: {}",
+        String::from_utf8_lossy(&shell_probe.stderr)
+    );
+    assert_eq!(fs::read(&marker_path).unwrap(), b"executed");
+    fs::remove_file(&marker_path).unwrap();
+
+    let before = snapshot_tree(temp.path());
+
+    let lint_args = vec![
+        "lint".into(),
+        task_dir.display().to_string(),
+        "--json".into(),
+    ];
+    let status_args = vec![
+        "status".into(),
+        "--task-dir".into(),
+        task_dir.display().to_string(),
+        "--progress".into(),
+        progress_path.display().to_string(),
+        "--json".into(),
+    ];
+
+    let first_lint = cli_with_env(
+        &lint_args,
+        "TASKFMT_TEST_DECLARED_COMMAND_MARKER",
+        &marker_path,
+    );
+    let second_lint = cli_with_env(
+        &lint_args,
+        "TASKFMT_TEST_DECLARED_COMMAND_MARKER",
+        &marker_path,
+    );
+    assert!(first_lint.status.success(), "{}", text(&first_lint));
+    assert_eq!(first_lint.stdout, second_lint.stdout);
+    assert_eq!(first_lint.stderr, second_lint.stderr);
+    assert_eq!(first_lint.status, second_lint.status);
+
+    let first_status = cli_with_env(
+        &status_args,
+        "TASKFMT_TEST_DECLARED_COMMAND_MARKER",
+        &marker_path,
+    );
+    let second_status = cli_with_env(
+        &status_args,
+        "TASKFMT_TEST_DECLARED_COMMAND_MARKER",
+        &marker_path,
+    );
+    assert!(first_status.status.success(), "{}", text(&first_status));
+    assert_eq!(first_status.stdout, second_status.stdout);
+    assert_eq!(first_status.stderr, second_status.stderr);
+    assert_eq!(first_status.status, second_status.status);
+
+    assert!(!marker_path.exists(), "lint or status ran a task command");
+    assert_eq!(
+        snapshot_tree(temp.path()),
+        before,
+        "lint or status changed files"
+    );
 }
 
 #[test]
