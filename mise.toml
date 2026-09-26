@@ -1,0 +1,14 @@
+[tasks.taskfmt-ci]
+description = "Format, build, test, and lint taskfmt plus its canonical task packages."
+run = [
+  "cargo check --locked --all-targets --all-features",
+  "cargo build --locked --release --bin taskfmt",
+  "cargo run --locked -- lint reference/task-template",
+  "cargo run --locked -- lint examples/TASK-001",
+  "cargo run --locked -- lint examples/TASK-002",
+  "cargo run --locked -- lint examples/TASK-003",
+  "cargo run --locked -- lint examples/TASK-004",
+  "cargo run --locked -- lint examples/TASK-005",
+  "cargo run --locked -- lint examples/TASK-006",
+  "cargo run --locked -- lint examples/TASK-007",
+]

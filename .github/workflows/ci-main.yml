@@ -43,7 +43,6 @@ jobs:
       full_units: ${{ steps.plan.outputs.full_units }}
       plan_digest: ${{ steps.plan.outputs.plan_digest }}
       excluded: ${{ steps.plan.outputs.excluded }}
-      bun_matrix: ${{ steps.plan.outputs.bun_matrix }}
       rust_matrix: ${{ steps.plan.outputs.rust_matrix }}
       # Presence-only no-work marker: `planned_no_work` is `true` or absent,
       # never `false`. Consumers MUST branch
@@ -223,29 +222,6 @@ jobs:
         env:
           MISE_NO_CONFIG: "1"
         run: mise exec actionlint@1.7.12 -- actionlint
-  github-hosted-bun-task-monitor:
-    name: "Bun · Bun package (task-monitor) · github-hosted — bun-task-monitor"
-    if: ${{ always() && needs.plan.result == 'success' && needs.policy.result == 'success' && contains(needs.plan.outputs.units, '"unit_id":"bun-task-monitor"') && (true) }}
-    needs: [plan, policy]
-    uses: ./.github/workflows/ci-unit-bun.yml
-    with:
-      unit: bun-task-monitor
-      provider: github-hosted
-      selected_units: ${{ needs.plan.outputs.units }}
-      selected_unit_ids: ${{ needs.plan.outputs.unit_ids }}
-      scope: ${{ needs.plan.outputs.scope }}
-      full_units: ${{ needs.plan.outputs.full_units }}
-      plan_digest: ${{ needs.plan.outputs.plan_digest }}
-      base_sha: ${{ needs.plan.outputs.base_sha }}
-      head_sha: ${{ needs.plan.outputs.head_sha }}
-      tool_version: "1.4.2"
-      cache_paths: "~/.bun/install/cache"
-      cache_key_files: |
-        web/package.json
-        web/bun.lock
-      unit_platform: linux-x64
-      unit_trust: untrusted-ok
-      unit_admission: github-hosted
   github-hosted-rust-taskfmt:
     name: "Rust · taskfmt · github-hosted — rust-taskfmt"
     if: ${{ always() && needs.plan.result == 'success' && needs.policy.result == 'success' && contains(needs.plan.outputs.units, '"unit_id":"rust-taskfmt"') && (true) }}
@@ -261,26 +237,21 @@ jobs:
       plan_digest: ${{ needs.plan.outputs.plan_digest }}
       base_sha: ${{ needs.plan.outputs.base_sha }}
       head_sha: ${{ needs.plan.outputs.head_sha }}
+      mise_runner: true
       mbx_enabled: true
-      mbx_compat: bc9a3593327c
+      mbx_compat: "23c42e19af8b"
       mbx_dependency_files: |
         .cargo/**
         Cargo.lock
         rust-toolchain
         rust-toolchain.toml
       mbx_freshness_files: |
-        crates/taskfmt-core/**/*.rs
-        crates/taskfmt-core/benches/**
-        crates/taskfmt-core/build.rs
-        crates/taskfmt-core/examples/**
-        crates/taskfmt-core/src/**
-        crates/taskfmt-core/tests/**
-        crates/taskfmt/**/*.rs
-        crates/taskfmt/benches/**
-        crates/taskfmt/examples/**
-        crates/taskfmt/src/**
-        crates/taskfmt/tests/**
+        ./**/*.rs
+        benches/**
+        examples/**
         mise.lock
+        src/**
+        tests/**
       cache_paths: |
         ~/.cargo/registry
         ~/.cargo/git
@@ -289,232 +260,15 @@ jobs:
         Cargo.lock
         rust-toolchain.toml
         rust-toolchain
-      cargo_root: "crates/taskfmt"
-      cargo_net_offline: true
-      unit_platform: linux-x64
-      unit_trust: untrusted-ok
-      unit_dependencies: rust-taskfmt-core
-      unit_admission: github-hosted
-      validation_phases: "fmt,clippy,test"
-  github-hosted-rust-taskfmt-core:
-    name: "Rust · taskfmt-core · github-hosted — rust-taskfmt-core"
-    if: ${{ always() && needs.plan.result == 'success' && needs.policy.result == 'success' && contains(needs.plan.outputs.units, '"unit_id":"rust-taskfmt-core"') && (true) }}
-    needs: [plan, policy]
-    uses: ./.github/workflows/ci-unit-rust.yml
-    with:
-      unit: rust-taskfmt-core
-      provider: github-hosted
-      selected_units: ${{ needs.plan.outputs.units }}
-      selected_unit_ids: ${{ needs.plan.outputs.unit_ids }}
-      scope: ${{ needs.plan.outputs.scope }}
-      full_units: ${{ needs.plan.outputs.full_units }}
-      plan_digest: ${{ needs.plan.outputs.plan_digest }}
-      base_sha: ${{ needs.plan.outputs.base_sha }}
-      head_sha: ${{ needs.plan.outputs.head_sha }}
-      mbx_enabled: true
-      mbx_compat: "197dc760d2d4"
-      mbx_dependency_files: |
-        .cargo/**
-        Cargo.lock
-        rust-toolchain
-        rust-toolchain.toml
-      mbx_freshness_files: |
-        crates/taskfmt-core/**/*.rs
-        crates/taskfmt-core/benches/**
-        crates/taskfmt-core/build.rs
-        crates/taskfmt-core/examples/**
-        crates/taskfmt-core/src/**
-        crates/taskfmt-core/tests/**
-        mise.lock
-      cache_paths: |
-        ~/.cargo/registry
-        ~/.cargo/git
-      cache_key_files: |
-        .cargo/**
-        Cargo.lock
-        rust-toolchain.toml
-        rust-toolchain
-      cargo_root: "crates/taskfmt-core"
+      cargo_root: "."
       cargo_net_offline: true
       unit_platform: linux-x64
       unit_trust: untrusted-ok
       unit_admission: github-hosted
-      validation_phases: "fmt,clippy,test"
-  github-hosted-rust-taskfmt-harness:
-    name: "Rust · taskfmt-harness · github-hosted — rust-taskfmt-harness"
-    if: ${{ always() && needs.plan.result == 'success' && needs.policy.result == 'success' && contains(needs.plan.outputs.units, '"unit_id":"rust-taskfmt-harness"') && (true) }}
-    needs: [plan, policy]
-    uses: ./.github/workflows/ci-unit-rust.yml
-    with:
-      unit: rust-taskfmt-harness
-      provider: github-hosted
-      selected_units: ${{ needs.plan.outputs.units }}
-      selected_unit_ids: ${{ needs.plan.outputs.unit_ids }}
-      scope: ${{ needs.plan.outputs.scope }}
-      full_units: ${{ needs.plan.outputs.full_units }}
-      plan_digest: ${{ needs.plan.outputs.plan_digest }}
-      base_sha: ${{ needs.plan.outputs.base_sha }}
-      head_sha: ${{ needs.plan.outputs.head_sha }}
-      mbx_enabled: true
-      mbx_compat: "6a378a29d4f4"
-      mbx_dependency_files: |
-        .cargo/**
-        Cargo.lock
-        harness/Cargo.lock
-        rust-toolchain
-        rust-toolchain.toml
-      mbx_freshness_files: |
-        crates/taskfmt-core/**/*.rs
-        crates/taskfmt-core/benches/**
-        crates/taskfmt-core/build.rs
-        crates/taskfmt-core/examples/**
-        crates/taskfmt-core/src/**
-        crates/taskfmt-core/tests/**
-        crates/taskfmt-host/**/*.rs
-        crates/taskfmt-host/benches/**
-        crates/taskfmt-host/examples/**
-        crates/taskfmt-host/src/**
-        crates/taskfmt-host/src/task-prompt.md
-        crates/taskfmt-host/tests/**
-        crates/taskfmt-runtime/**/*.rs
-        crates/taskfmt-runtime/benches/**
-        crates/taskfmt-runtime/examples/**
-        crates/taskfmt-runtime/src/**
-        crates/taskfmt-runtime/tests/**
-        crates/taskfmt/**/*.rs
-        crates/taskfmt/benches/**
-        crates/taskfmt/examples/**
-        crates/taskfmt/src/**
-        crates/taskfmt/tests/**
-        harness/**/*.rs
-        harness/Cargo.lock
-        harness/benches/**
-        harness/examples/**
-        harness/images/cursor/cursor-cli-config.json
-        harness/src/**
-        harness/tests/**
-        mise.lock
-      cache_paths: |
-        ~/.cargo/registry
-        ~/.cargo/git
-      cache_key_files: |
-        .cargo/**
-        harness/Cargo.lock
-        rust-toolchain.toml
-        rust-toolchain
-      cargo_root: harness
-      cargo_net_offline: true
-      unit_platform: linux-x64
-      unit_trust: untrusted-ok
-      unit_dependencies: "rust-taskfmt,rust-taskfmt-core,rust-taskfmt-host,rust-taskfmt-runtime"
-      unit_admission: github-hosted
-      validation_phases: "fmt,clippy,test"
-  github-hosted-rust-taskfmt-host:
-    name: "Rust · taskfmt-host · github-hosted — rust-taskfmt-host"
-    if: ${{ always() && needs.plan.result == 'success' && needs.policy.result == 'success' && contains(needs.plan.outputs.units, '"unit_id":"rust-taskfmt-host"') && (true) }}
-    needs: [plan, policy]
-    uses: ./.github/workflows/ci-unit-rust.yml
-    with:
-      unit: rust-taskfmt-host
-      provider: github-hosted
-      selected_units: ${{ needs.plan.outputs.units }}
-      selected_unit_ids: ${{ needs.plan.outputs.unit_ids }}
-      scope: ${{ needs.plan.outputs.scope }}
-      full_units: ${{ needs.plan.outputs.full_units }}
-      plan_digest: ${{ needs.plan.outputs.plan_digest }}
-      base_sha: ${{ needs.plan.outputs.base_sha }}
-      head_sha: ${{ needs.plan.outputs.head_sha }}
-      mbx_enabled: true
-      mbx_compat: "7ca294e14bf8"
-      mbx_dependency_files: |
-        .cargo/**
-        Cargo.lock
-        rust-toolchain
-        rust-toolchain.toml
-      mbx_freshness_files: |
-        crates/taskfmt-core/**/*.rs
-        crates/taskfmt-core/benches/**
-        crates/taskfmt-core/build.rs
-        crates/taskfmt-core/examples/**
-        crates/taskfmt-core/src/**
-        crates/taskfmt-core/tests/**
-        crates/taskfmt-host/**/*.rs
-        crates/taskfmt-host/benches/**
-        crates/taskfmt-host/examples/**
-        crates/taskfmt-host/src/**
-        crates/taskfmt-host/src/task-prompt.md
-        crates/taskfmt-host/tests/**
-        harness/images/cursor/cursor-cli-config.json
-        mise.lock
-      cache_paths: |
-        ~/.cargo/registry
-        ~/.cargo/git
-      cache_key_files: |
-        .cargo/**
-        Cargo.lock
-        rust-toolchain.toml
-        rust-toolchain
-      cargo_root: "crates/taskfmt-host"
-      cargo_net_offline: true
-      unit_platform: linux-x64
-      unit_trust: untrusted-ok
-      unit_dependencies: rust-taskfmt-core
-      unit_admission: github-hosted
-      validation_phases: "fmt,clippy,test"
-  github-hosted-rust-taskfmt-runtime:
-    name: "Rust · taskfmt-runtime · github-hosted — rust-taskfmt-runtime"
-    if: ${{ always() && needs.plan.result == 'success' && needs.policy.result == 'success' && contains(needs.plan.outputs.units, '"unit_id":"rust-taskfmt-runtime"') && (true) }}
-    needs: [plan, policy]
-    uses: ./.github/workflows/ci-unit-rust.yml
-    with:
-      unit: rust-taskfmt-runtime
-      provider: github-hosted
-      selected_units: ${{ needs.plan.outputs.units }}
-      selected_unit_ids: ${{ needs.plan.outputs.unit_ids }}
-      scope: ${{ needs.plan.outputs.scope }}
-      full_units: ${{ needs.plan.outputs.full_units }}
-      plan_digest: ${{ needs.plan.outputs.plan_digest }}
-      base_sha: ${{ needs.plan.outputs.base_sha }}
-      head_sha: ${{ needs.plan.outputs.head_sha }}
-      mbx_enabled: true
-      mbx_compat: "49d09cc06b1f"
-      mbx_dependency_files: |
-        .cargo/**
-        Cargo.lock
-        rust-toolchain
-        rust-toolchain.toml
-      mbx_freshness_files: |
-        crates/taskfmt-core/**/*.rs
-        crates/taskfmt-core/benches/**
-        crates/taskfmt-core/build.rs
-        crates/taskfmt-core/examples/**
-        crates/taskfmt-core/src/**
-        crates/taskfmt-core/tests/**
-        crates/taskfmt-runtime/**/*.rs
-        crates/taskfmt-runtime/benches/**
-        crates/taskfmt-runtime/examples/**
-        crates/taskfmt-runtime/src/**
-        crates/taskfmt-runtime/tests/**
-        mise.lock
-      cache_paths: |
-        ~/.cargo/registry
-        ~/.cargo/git
-      cache_key_files: |
-        .cargo/**
-        Cargo.lock
-        rust-toolchain.toml
-        rust-toolchain
-      cargo_root: "crates/taskfmt-runtime"
-      cargo_net_offline: true
-      unit_platform: linux-x64
-      unit_trust: untrusted-ok
-      unit_dependencies: rust-taskfmt-core
-      unit_admission: github-hosted
-      validation_phases: "fmt,clippy,test"
   ci-required:
     name: ci-required
     if: ${{ always() }}
-    needs: [plan, policy, github-hosted-bun-task-monitor, github-hosted-rust-taskfmt, github-hosted-rust-taskfmt-core, github-hosted-rust-taskfmt-harness, github-hosted-rust-taskfmt-host, github-hosted-rust-taskfmt-runtime]
+    needs: [plan, policy, github-hosted-rust-taskfmt]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -599,7 +353,7 @@ jobs:
           SELECTED_UNITS: ${{ needs.plan.outputs.units }}
           PLAN_DIGEST: ${{ needs.plan.outputs.plan_digest }}
           EXCLUDED: ${{ needs.plan.outputs.excluded }}
-          EXPECTED_CALLERS: "[{\"job_id\":\"github-hosted-bun-task-monitor\",\"provider\":\"github-hosted\",\"unit_id\":\"bun-task-monitor\"},{\"job_id\":\"github-hosted-rust-taskfmt\",\"provider\":\"github-hosted\",\"unit_id\":\"rust-taskfmt\"},{\"job_id\":\"github-hosted-rust-taskfmt-core\",\"provider\":\"github-hosted\",\"unit_id\":\"rust-taskfmt-core\"},{\"job_id\":\"github-hosted-rust-taskfmt-harness\",\"provider\":\"github-hosted\",\"unit_id\":\"rust-taskfmt-harness\"},{\"job_id\":\"github-hosted-rust-taskfmt-host\",\"provider\":\"github-hosted\",\"unit_id\":\"rust-taskfmt-host\"},{\"job_id\":\"github-hosted-rust-taskfmt-runtime\",\"provider\":\"github-hosted\",\"unit_id\":\"rust-taskfmt-runtime\"}]"
+          EXPECTED_CALLERS: "[{\"job_id\":\"github-hosted-rust-taskfmt\",\"provider\":\"github-hosted\",\"unit_id\":\"rust-taskfmt\"}]"
           PROVIDER_ADMITTED_GITHUB_HOSTED: ${{ true }}
         shell: bash
         run: |
@@ -637,29 +391,6 @@ jobs:
             echo "required CI prerequisite policy did not pass: $result" >&2
             exit 1
           fi
-          if plan_expects "bun-task-monitor" "github-hosted"; then
-            result="$(result_for_job github-hosted-bun-task-monitor)"
-            if [[ "$PROVIDER_ADMITTED_GITHUB_HOSTED" == true ]]; then
-              case "$result" in
-                success) ;;
-                skipped) echo "expected CI job github-hosted-bun-task-monitor was skipped: a skipped expected result cannot pass" >&2; exit 1 ;;
-                cancelled) echo "expected CI job github-hosted-bun-task-monitor was cancelled: a cancelled expected result cannot pass" >&2; exit 1 ;;
-                *) echo "expected CI job github-hosted-bun-task-monitor did not pass: $result" >&2; exit 1 ;;
-              esac
-            else
-              case "$result" in
-                skipped) ;;
-                *) echo "selected CI job github-hosted-bun-task-monitor ran outside its provider admission (PROVIDER_ADMITTED_GITHUB_HOSTED=$PROVIDER_ADMITTED_GITHUB_HOSTED): $result" >&2; exit 1 ;;
-              esac
-            fi
-          else
-            result="$(result_for_job github-hosted-bun-task-monitor)"
-            case "$result" in
-              skipped) ;;
-              success) echo "unexpected CI job github-hosted-bun-task-monitor succeeded outside the expected set: the plan did not declare it" >&2; exit 1 ;;
-              *) echo "unexpected CI job github-hosted-bun-task-monitor ran outside the expected set: $result" >&2; exit 1 ;;
-            esac
-          fi
           if plan_expects "rust-taskfmt" "github-hosted"; then
             result="$(result_for_job github-hosted-rust-taskfmt)"
             if [[ "$PROVIDER_ADMITTED_GITHUB_HOSTED" == true ]]; then
@@ -681,98 +412,6 @@ jobs:
               skipped) ;;
               success) echo "unexpected CI job github-hosted-rust-taskfmt succeeded outside the expected set: the plan did not declare it" >&2; exit 1 ;;
               *) echo "unexpected CI job github-hosted-rust-taskfmt ran outside the expected set: $result" >&2; exit 1 ;;
-            esac
-          fi
-          if plan_expects "rust-taskfmt-core" "github-hosted"; then
-            result="$(result_for_job github-hosted-rust-taskfmt-core)"
-            if [[ "$PROVIDER_ADMITTED_GITHUB_HOSTED" == true ]]; then
-              case "$result" in
-                success) ;;
-                skipped) echo "expected CI job github-hosted-rust-taskfmt-core was skipped: a skipped expected result cannot pass" >&2; exit 1 ;;
-                cancelled) echo "expected CI job github-hosted-rust-taskfmt-core was cancelled: a cancelled expected result cannot pass" >&2; exit 1 ;;
-                *) echo "expected CI job github-hosted-rust-taskfmt-core did not pass: $result" >&2; exit 1 ;;
-              esac
-            else
-              case "$result" in
-                skipped) ;;
-                *) echo "selected CI job github-hosted-rust-taskfmt-core ran outside its provider admission (PROVIDER_ADMITTED_GITHUB_HOSTED=$PROVIDER_ADMITTED_GITHUB_HOSTED): $result" >&2; exit 1 ;;
-              esac
-            fi
-          else
-            result="$(result_for_job github-hosted-rust-taskfmt-core)"
-            case "$result" in
-              skipped) ;;
-              success) echo "unexpected CI job github-hosted-rust-taskfmt-core succeeded outside the expected set: the plan did not declare it" >&2; exit 1 ;;
-              *) echo "unexpected CI job github-hosted-rust-taskfmt-core ran outside the expected set: $result" >&2; exit 1 ;;
-            esac
-          fi
-          if plan_expects "rust-taskfmt-harness" "github-hosted"; then
-            result="$(result_for_job github-hosted-rust-taskfmt-harness)"
-            if [[ "$PROVIDER_ADMITTED_GITHUB_HOSTED" == true ]]; then
-              case "$result" in
-                success) ;;
-                skipped) echo "expected CI job github-hosted-rust-taskfmt-harness was skipped: a skipped expected result cannot pass" >&2; exit 1 ;;
-                cancelled) echo "expected CI job github-hosted-rust-taskfmt-harness was cancelled: a cancelled expected result cannot pass" >&2; exit 1 ;;
-                *) echo "expected CI job github-hosted-rust-taskfmt-harness did not pass: $result" >&2; exit 1 ;;
-              esac
-            else
-              case "$result" in
-                skipped) ;;
-                *) echo "selected CI job github-hosted-rust-taskfmt-harness ran outside its provider admission (PROVIDER_ADMITTED_GITHUB_HOSTED=$PROVIDER_ADMITTED_GITHUB_HOSTED): $result" >&2; exit 1 ;;
-              esac
-            fi
-          else
-            result="$(result_for_job github-hosted-rust-taskfmt-harness)"
-            case "$result" in
-              skipped) ;;
-              success) echo "unexpected CI job github-hosted-rust-taskfmt-harness succeeded outside the expected set: the plan did not declare it" >&2; exit 1 ;;
-              *) echo "unexpected CI job github-hosted-rust-taskfmt-harness ran outside the expected set: $result" >&2; exit 1 ;;
-            esac
-          fi
-          if plan_expects "rust-taskfmt-host" "github-hosted"; then
-            result="$(result_for_job github-hosted-rust-taskfmt-host)"
-            if [[ "$PROVIDER_ADMITTED_GITHUB_HOSTED" == true ]]; then
-              case "$result" in
-                success) ;;
-                skipped) echo "expected CI job github-hosted-rust-taskfmt-host was skipped: a skipped expected result cannot pass" >&2; exit 1 ;;
-                cancelled) echo "expected CI job github-hosted-rust-taskfmt-host was cancelled: a cancelled expected result cannot pass" >&2; exit 1 ;;
-                *) echo "expected CI job github-hosted-rust-taskfmt-host did not pass: $result" >&2; exit 1 ;;
-              esac
-            else
-              case "$result" in
-                skipped) ;;
-                *) echo "selected CI job github-hosted-rust-taskfmt-host ran outside its provider admission (PROVIDER_ADMITTED_GITHUB_HOSTED=$PROVIDER_ADMITTED_GITHUB_HOSTED): $result" >&2; exit 1 ;;
-              esac
-            fi
-          else
-            result="$(result_for_job github-hosted-rust-taskfmt-host)"
-            case "$result" in
-              skipped) ;;
-              success) echo "unexpected CI job github-hosted-rust-taskfmt-host succeeded outside the expected set: the plan did not declare it" >&2; exit 1 ;;
-              *) echo "unexpected CI job github-hosted-rust-taskfmt-host ran outside the expected set: $result" >&2; exit 1 ;;
-            esac
-          fi
-          if plan_expects "rust-taskfmt-runtime" "github-hosted"; then
-            result="$(result_for_job github-hosted-rust-taskfmt-runtime)"
-            if [[ "$PROVIDER_ADMITTED_GITHUB_HOSTED" == true ]]; then
-              case "$result" in
-                success) ;;
-                skipped) echo "expected CI job github-hosted-rust-taskfmt-runtime was skipped: a skipped expected result cannot pass" >&2; exit 1 ;;
-                cancelled) echo "expected CI job github-hosted-rust-taskfmt-runtime was cancelled: a cancelled expected result cannot pass" >&2; exit 1 ;;
-                *) echo "expected CI job github-hosted-rust-taskfmt-runtime did not pass: $result" >&2; exit 1 ;;
-              esac
-            else
-              case "$result" in
-                skipped) ;;
-                *) echo "selected CI job github-hosted-rust-taskfmt-runtime ran outside its provider admission (PROVIDER_ADMITTED_GITHUB_HOSTED=$PROVIDER_ADMITTED_GITHUB_HOSTED): $result" >&2; exit 1 ;;
-              esac
-            fi
-          else
-            result="$(result_for_job github-hosted-rust-taskfmt-runtime)"
-            case "$result" in
-              skipped) ;;
-              success) echo "unexpected CI job github-hosted-rust-taskfmt-runtime succeeded outside the expected set: the plan did not declare it" >&2; exit 1 ;;
-              *) echo "unexpected CI job github-hosted-rust-taskfmt-runtime ran outside the expected set: $result" >&2; exit 1 ;;
             esac
           fi
   required:

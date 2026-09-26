@@ -1,91 +1,37 @@
-# Execution protocol
+# Task execution
 
-Your goal is to fully implement this task: `/task/README.md`.
+`README.md` is the task contract. Keep the task package read-only; make changes in the caller's
+workspace and within `verify.toml` path limits. The caller provides the workspace, tools, and inputs.
 
-`/task/` is read-only: it holds the task contract (`README.md`, this protocol, and `verify.toml`). Keep coordination state in `/progress/progress.md`. Do all work in `/work/`.
+## Start
 
-## Files
+1. Read `README.md` and `verify.toml`; run `taskfmt lint TASK_DIR`.
+2. Copy the file to the caller's chosen writable path with `cp "$TASK_DIR/progress.md" "$PROGRESS_FILE"`.
+   Replace the placeholder task ID.
+   Replace initial leaf `1.1` in both the `current` header and first event if the instantiated
+   task's first leaf differs.
+3. Begin from the first checklist leaf, unless the caller supplied valid progress to resume.
 
-| Path | Access | Purpose |
-| --- | --- | --- |
-| `/task/README.md` | read-only | The contract: goal, requirements, acceptance criteria, decisions, checklist. |
-| `/task/verify.toml` | read-only | Machine authority: checks, expected results, and writable paths; never edit. |
-| `/progress/progress.md` | read-write | Coordination event stream and handoff. |
-| `/work/` | read-write | The repository. All code changes happen here. |
+## Update progress
 
-## Task identity
+Append event rows in order. Sequence numbers start at 1 and stay contiguous. The header fields
+`state`, `current`, and `latest_event` must match the event stream:
 
-The canonical task id is the `id` field in `/task/README.md` YAML frontmatter. It must match
-`task_id` in `/task/verify.toml` and the `task` field in `/progress/progress.md`. Every
-`GOAL_PROGRESS` and `GOAL_RESULT` line, and the `TASK:` field in the final report, must use this
-id — not placeholder ids from this protocol file. Examples below use `<id-from-README>` to mean
-that value.
+- `STARTED` opens an incomplete leaf when no leaf is active.
+- `DONE` closes the active leaf. If work remains, immediately start the next leaf before saving.
+  The derived state becomes `DONE` only after every leaf is done.
+- `FAILED` closes the active leaf; append a next event before saving an in-progress file.
+- `REOPENED` reopens a completed leaf as the active leaf.
+- `BLOCKED` and `NEEDS_REPLAN` end the stream with the active leaf.
 
-The completion gate is `taskfmt verify` (binary baked into the image, read-only). Run it from `/work`; never modify or bypass it. `$TASKFMT_BASE` is the scope base commit.
+After edits, inspect state with `taskfmt status --task-dir TASK_DIR --progress PROGRESS_FILE`.
+Write handoff notes as paragraphs or labels under `## Handoff`; do not start a line with `- ` or
+use a line exactly equal to `## Events` or `---`.
 
-The task README uses canonical typed acceptance blocks. Each non-gate `AC-*` block has one exact
-` ```gherkin ` fence containing constrained Given/When/Then behavior. Its `Verification` section
-has `Type`, real `Covers` requirement IDs, and one `Check` ID. A gate has `Type: gate` and one
-`Check` ID, but no `Covers` or Gherkin body. Commands and expected results belong only in
-`verify.toml`; acceptance prose has no machine authority. These blocks are task metadata, not
-Cucumber feature files, and have no runtime step definitions.
+## Verify
 
-## Protocol
-
-1. Read `/task/README.md` fully, then the files listed under "Read before editing".
-2. If `/progress/progress.md` exists you are resuming: read it, run `git status` and `git diff --stat`, and continue from its derived current leaf. The on-disk event stream is the only authority for coordination state; summaries are claims to check, never a substitute. Re-read it before appending an event and before the final report. Re-read `/task/README.md` before editing after any resume or context compaction.
-3. State in the transcript: task ID, one-sentence goal, acceptance IDs, and the first leaf.
-4. Run every `precondition` check. If one fails, append the prescribed blocking event and emit `STATUS: BLOCKED`. Do not work around it.
-5. Work checklist leaves in ID order unless README states dependencies. Append only valid versioned events for known leaves and allowed transitions; do not edit the README checklist or duplicate it into progress. After progress edits, run `taskfmt status` to confirm the stream parses.
-6. Run the ordered verifier checks at the relevant leaf. A check that both passes and fails on the same tree is failed evidence: record it and stop `NEEDS_REPLAN`, naming the command.
-7. When implementation leaves are complete, run `taskfmt verify --progress ""` from `/work`; fix and rerun until it exits 0 with last line `DONE`. Append the terminal progress event, run `taskfmt status` (state must be `DONE`), then run full `taskfmt verify`. Its complete output is completion evidence.
-
-## progress.md grammar
-
-`progress.md` is a strict, versioned event format created once by `taskfmt init` (entrypoint seeds it when missing). Do not hand-edit its schema, headers, sequence numbers, or derived fields. Append events only for checklist leaf IDs; statuses and transitions must be accepted by the parser. Keep free-form handoff notes in the separate handoff section. Progress is coordination state, never gate evidence.
-
-## Prohibited
-
-- Editing anything under `/task/`, or modifying/replacing the `taskfmt` binary.
-- Deleting, skipping, weakening, or rewriting a failing test or check to make it pass.
-- Special-casing known fixtures or verifier inputs.
-- Suppressing errors, warnings, lint rules, type checks, or exit codes.
-- Changing any file outside `writable_paths` in `/task/verify.toml`; the gate rejects every other path.
-- Changing user-visible behavior with no `R-*`/`AC-*` names, even inside `writable_paths`; note it under `FOLLOW_UP`.
-- Claiming `DONE` without a `taskfmt verify` run in this session whose output is in the transcript.
-
-## Stop conditions
-
-- `BLOCKED`: a precondition command exited non-zero, or an environment or dependency condition outside `writable_paths` is false (missing dependency, credentials, infrastructure). A precondition command that errors (rc 127 etc.) is `BLOCKED` too.
-- `NEEDS_REPLAN`: satisfying the task requires changing its goal, acceptance criteria, fixed decisions, scope, or checklist; requirements contradict; a material design decision is unresolved; or the unblock itself needs such a change.
-- `INCOMPLETE`: the turn or budget cap is reached first. Leave the event stream non-terminal and fill the handoff.
-- Do not spin. A leaf with no evidence-backed action left is recorded as failed with its command and observed result; then move to the next independent leaf. Take a terminal only when no leaf anywhere has an evidence-backed action left — or at once where rule 4 or rule 6 says to stop — and report every failed leaf, what was tried, and the smallest decision or dependency needed to resume. If you continued past a failed leaf, say so under `DEVIATIONS`. Retrying a leaf whose failure you have already diagnosed is spinning.
-
-## Turn signal
-
-At the end of every turn EXCEPT the one that carries the final report, print one line:
-
-```text
-GOAL_PROGRESS task=<id-from-README> state=<derived-state> current=<ID|NONE> done_this_turn=<IDs|none> blocked=<ID|none>
-```
-
-On the turn that carries the final report, print this line immediately BEFORE the report and print nothing after the report's `GOAL_RESULT` line. `GOAL_RESULT` is the last line of the session, in every terminal state, without exception.
-
-## Final report
-
-Last thing you print. Exactly this shape:
-
-```text
-STATUS: DONE | BLOCKED | NEEDS_REPLAN | INCOMPLETE
-TASK: <id-from-README>
-SUMMARY: <what changed, or why execution stopped and what was tried>
-ACCEPTANCE:
-- AC-001: PASS | FAIL | NOT_RUN — <command and observed result>
-- AC-002: ...
-VERIFY: command=taskfmt verify exit=<n|NOT_RUN> last_line=<DONE|other|NOT_RUN>
-CHANGED:
-<verbatim `git diff --no-renames --name-status $TASKFMT_BASE`, then the untracked lines of `git status --porcelain --untracked-files=all`; not recall>
-DEVIATIONS: none | <list>
-FOLLOW_UP: none | <smallest decision, dependency, or split needed>
-GOAL_RESULT task=<id-from-README> status=<STATUS>
-```
+Use `taskfmt verify --task-dir TASK_DIR --root WORKSPACE --base BASE --no-progress` to run the
+declared checks while progress is incomplete. Once every checklist leaf is complete, run full
+verification with `--progress PROGRESS_FILE` and the caller's baseline. Full verification must
+pass before reporting completion. Progress and 100% status record coordination; they do not prove
+that declared checks passed.

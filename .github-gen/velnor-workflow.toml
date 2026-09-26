@@ -4,28 +4,18 @@ schema = 2
 repository = "donbeave/task-format"
 revision = "eed474c4a1d9b071fd1b5de00c769c8997398e5a"
 
-# Public repo: GitHub-hosted singleton (no velnor lanes).
-# No external DCO declared: the DCO app has not posted on this repo
-# (runbook §2 guardrail — declaring an uncovered context fails Policy).
-# Docker images excluded by CI evidence: the five Dockerfiles form a
-# local build chain (taskfmt -> base -> claude/codex/cursor via local
-# :latest tags + COPY --from) with context=harness/ and build-args wired
-# by `taskfmt build-images`; standalone per-Dockerfile CI builds cannot
-# resolve the local tags across runners (all 5 fail on missing
-# harness-base/harness-taskfmt). Image verification stays with the
-# repo's own build-images flow.
-[scan]
-# Narrow: rust code include_str!s cursor/cursor-cli-config.json, so only
-# the Dockerfiles (the docker-unit detectors) are excluded.
-exclude = ["harness/images/*/Dockerfile"]
-
 [workflow]
 providers = ["github-hosted"]
 automatic_providers = ["github-hosted"]
 default_branch = "main"
+files = ["ci-pr.yml", "ci-policy.yml", "ci-main.yml"]
 
 [workflow.selectors.github-hosted]
 runs_on = ["ubuntu-24.04"]
 
 [policy]
 ruleset_required_status_checks = ["ci-required", "Policy"]
+
+[[units]]
+id = "rust-taskfmt"
+ci_tasks = ["taskfmt-ci"]

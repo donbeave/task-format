@@ -1,3 +1,0 @@
-schema = "task-meta/v1"
-status = "pending"
-dependencies = ["demo/pgtui/001"]

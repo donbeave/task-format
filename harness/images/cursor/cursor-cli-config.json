@@ -1,7 +1,0 @@
-{
-  "version": 1,
-  "editor": { "vimMode": false },
-  "permissions": { "allow": [], "deny": [] },
-  "approvalMode": "unrestricted",
-  "sandbox": { "mode": "disabled" }
-}
