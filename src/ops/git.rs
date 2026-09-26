@@ -35,10 +35,6 @@ pub(crate) fn output_bytes(command: &mut Command) -> anyhow::Result<Vec<u8>> {
     Ok(captured.stdout)
 }
 
-pub(crate) fn resolves_commit(dir: &Path, base: &str) -> bool {
-    resolve_commit(dir, base).is_ok()
-}
-
 pub(crate) fn resolve_commit(dir: &Path, base: &str) -> anyhow::Result<String> {
     let revision = format!("{base}^{{commit}}");
     let resolved = output(&mut in_dir(

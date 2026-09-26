@@ -128,21 +128,28 @@ fn run_inner(options: GateOpts) -> anyhow::Result<GateOutput> {
     }
 
     let task_lint_passed = task_lint.passed();
-    let base_tree_passed = if let Some(base_tree) = &config.base_tree {
-        let result = check_base_tree(&options.root, &options.base, base_tree);
-        let passed = result.is_ok();
-        session.check("base_tree", result);
-        passed
-    } else {
-        true
-    };
 
-    // Resolve the caller's baseline before running any declared command. Commands are arbitrary
-    // and may move a ref such as `HEAD`; all later scope checks must compare against this fixed
+    // Resolve the caller's baseline once before running any declared command. Commands are
+    // arbitrary and may move a ref such as `HEAD`; every later scope check must use this fixed
     // commit or a command could commit an out-of-scope change and make it disappear from the diff.
-    let scope_base = match ops::git::resolve_commit(&options.root, &options.base) {
-        Ok(commit) => commit,
-        Err(_) => options.base.clone(),
+    let base_resolution = ops::git::resolve_commit(&options.root, &options.base);
+    let base_tree_passed = match (&base_resolution, config.base_tree.as_deref()) {
+        (Ok(base_commit), Some(base_tree)) => {
+            let result = check_base_tree(&options.root, base_commit, base_tree);
+            let passed = result.is_ok();
+            session.check("base_tree", result);
+            passed
+        }
+        (Err(error), Some(_)) => {
+            session.check(
+                "base_tree",
+                Err(vec![format!(
+                    "--base does not resolve to a commit: {error:#}"
+                )]),
+            );
+            false
+        }
+        (_, None) => true,
     };
 
     let mut allowed = config.writable_paths.clone();
@@ -154,58 +161,72 @@ fn run_inner(options: GateOpts) -> anyhow::Result<GateOutput> {
     }
 
     // Run a preflight before invoking arbitrary commands. If the starting workspace already
-    // violates a path constraint, do not give those commands a chance to operate on it. When
-    // preflight passes, the same checks run again below after every declared command so command
-    // side effects cannot bypass the scope boundary.
-    let preflight_scope = check_scope(&options.root, &scope_base, &allowed);
-    let preflight_forbidden_paths =
-        check_forbidden_paths(&options.root, &scope_base, &config.forbidden_paths);
-    let preflight_forbidden_patterns =
-        check_forbidden_patterns(&options.root, &config.forbidden_patterns);
+    // violates a path constraint, do not give those commands a chance to operate on it. After
+    // all declared commands finish, the same scope and forbidden-path checks run again against
+    // the same immutable commit so command side effects cannot bypass the scope boundary.
+    let (preflight_scope, preflight_forbidden_paths, preflight_forbidden_patterns) =
+        match &base_resolution {
+            Ok(scope_base) => (
+                check_scope(&options.root, scope_base, &allowed),
+                check_forbidden_paths(&options.root, scope_base, &config.forbidden_paths),
+                check_forbidden_patterns(&options.root, &config.forbidden_patterns),
+            ),
+            Err(error) => {
+                let message = format!("base ref does not resolve to a commit: {error:#}");
+                (
+                    Err(vec![message.clone()]),
+                    Err(vec![format!("cannot check forbidden paths: {message}")]),
+                    check_forbidden_patterns(&options.root, &config.forbidden_patterns),
+                )
+            }
+        };
     let preflight_passed = preflight_scope.is_ok()
         && preflight_forbidden_paths.is_ok()
         && preflight_forbidden_patterns.is_ok();
 
-    let (scope, forbidden_paths, forbidden_patterns) =
-        if task_lint_passed && base_tree_passed && preflight_passed {
-            // Keep every declared forbidden artifact in memory before commands run. Each command is
-            // arbitrary, so the complete set must be audited against the final workspace after the
-            // last command rather than only after the check that declares it.
-            let forbidden_artifacts = config
-                .checks
-                .iter()
-                .map(|check| check.expected.forbidden_artifacts.clone())
-                .collect::<Vec<_>>();
-            let mut command_results = Vec::with_capacity(config.checks.len());
-            for check in &config.checks {
-                command_results.push((check, run_configured_check(&options.root, check)));
-            }
-            let post_command_forbidden = forbidden_artifacts
-                .iter()
-                .map(|paths| forbidden_artifact_failures(&options.root, paths))
-                .collect::<Vec<_>>();
-            for (index, (check, result)) in command_results.into_iter().enumerate() {
-                session.check(
-                    &check.id,
-                    merge_post_command_forbidden_artifact_failures(
-                        result,
-                        &post_command_forbidden[index],
-                    ),
-                );
-            }
+    let (scope, forbidden_paths, forbidden_patterns) = if let Ok(scope_base) = &base_resolution
+        && task_lint_passed
+        && base_tree_passed
+        && preflight_passed
+    {
+        // Keep every declared forbidden artifact in memory before commands run. Each command
+        // is arbitrary, so audit the complete set after all commands finish rather than only
+        // after the check that declares each artifact.
+        let forbidden_artifacts = config
+            .checks
+            .iter()
+            .map(|check| check.expected.forbidden_artifacts.clone())
+            .collect::<Vec<_>>();
+        let mut command_results = Vec::with_capacity(config.checks.len());
+        for check in &config.checks {
+            command_results.push((check, run_configured_check(&options.root, check)));
+        }
+        let post_command_forbidden = forbidden_artifacts
+            .iter()
+            .map(|paths| forbidden_artifact_failures(&options.root, paths))
+            .collect::<Vec<_>>();
+        for (index, (check, result)) in command_results.into_iter().enumerate() {
+            session.check(
+                &check.id,
+                merge_post_command_forbidden_artifact_failures(
+                    result,
+                    &post_command_forbidden[index],
+                ),
+            );
+        }
 
-            (
-                check_scope(&options.root, &scope_base, &allowed),
-                check_forbidden_paths(&options.root, &scope_base, &config.forbidden_paths),
-                check_forbidden_patterns(&options.root, &config.forbidden_patterns),
-            )
-        } else {
-            (
-                preflight_scope,
-                preflight_forbidden_paths,
-                preflight_forbidden_patterns,
-            )
-        };
+        (
+            check_scope(&options.root, scope_base, &allowed),
+            check_forbidden_paths(&options.root, scope_base, &config.forbidden_paths),
+            check_forbidden_patterns(&options.root, &config.forbidden_patterns),
+        )
+    } else {
+        (
+            preflight_scope,
+            preflight_forbidden_paths,
+            preflight_forbidden_patterns,
+        )
+    };
 
     session.check("scope", scope);
     session.check("forbidden_paths", forbidden_paths);
@@ -220,14 +241,10 @@ fn run_inner(options: GateOpts) -> anyhow::Result<GateOutput> {
     Ok(session.finish(options.progress.is_none()))
 }
 
+/// `base` is the immutable commit ID resolved once by `run_inner`.
 fn check_scope(root: &Path, base: &str, globs: &[String]) -> CheckBody {
     if globs.is_empty() {
         return Err(vec!["writable_paths is empty".to_string()]);
-    }
-    if !ops::git::resolves_commit(root, base) {
-        return Err(vec![format!(
-            "base ref does not resolve to a commit: {base}"
-        )]);
     }
     let matchers = match globs
         .iter()
@@ -269,15 +286,7 @@ fn check_scope(root: &Path, base: &str, globs: &[String]) -> CheckBody {
     }
 }
 
-fn check_base_tree(root: &Path, base: &str, base_tree: &str) -> CheckBody {
-    let supplied = match ops::git::resolve_commit(root, base) {
-        Ok(commit) => commit,
-        Err(error) => {
-            return Err(vec![format!(
-                "--base does not resolve to a commit: {error:#}"
-            )]);
-        }
-    };
+fn check_base_tree(root: &Path, base_commit: &str, base_tree: &str) -> CheckBody {
     let pinned = match ops::git::resolve_commit(root, base_tree) {
         Ok(commit) => commit,
         Err(error) => {
@@ -286,11 +295,11 @@ fn check_base_tree(root: &Path, base: &str, base_tree: &str) -> CheckBody {
             )]);
         }
     };
-    if supplied == pinned {
+    if base_commit == pinned {
         Ok(vec![format!("--base resolves to pinned commit {pinned}")])
     } else {
         Err(vec![format!(
-            "--base resolves to {supplied}, but base_tree pins {pinned}"
+            "--base resolves to {base_commit}, but base_tree pins {pinned}"
         )])
     }
 }

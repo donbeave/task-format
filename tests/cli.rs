@@ -719,6 +719,37 @@ fn verify_does_not_run_declared_checks_when_base_tree_mismatches() {
 }
 
 #[test]
+fn verify_does_not_run_declared_checks_when_base_resolution_fails() {
+    let temp = TempDir::new().unwrap();
+    let root = base_workspace(temp.path());
+    let task_dir = copy_task(temp.path());
+    let config_path = task_dir.join("verify.toml");
+    let config = fs::read_to_string(&config_path)
+        .unwrap()
+        .replacen("argv = [\"true\"]", &marker_command_argv(), 1)
+        .replacen("shell = \"true\"", &marker_command_shell_toml(), 1);
+    fs::write(config_path, config).unwrap();
+
+    let marker_path = temp.path().join("declared-command-ran");
+    let mut args = verify_args(&root, &task_dir, "missing-ref");
+    args.push("--no-progress".into());
+    let output = cli_with_env(&args, "TASKFMT_TEST_DECLARED_COMMAND_MARKER", &marker_path);
+    let report = text(&output);
+
+    assert_eq!(output.status.code(), Some(1), "{report}");
+    assert!(report.contains("CHECK scope FAIL"), "{report}");
+    assert!(
+        report.contains("base ref does not resolve to a commit"),
+        "{report}"
+    );
+    assert!(!report.contains("CHECK CHK-001"), "{report}");
+    assert!(
+        !marker_path.exists(),
+        "base resolution failure ran a declared check"
+    );
+}
+
+#[test]
 fn lint_reports_missing_verify_config_and_verify_reports_missing_executable() {
     let temp = TempDir::new().unwrap();
     let task_dir = copy_task(temp.path());
