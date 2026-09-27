@@ -10,6 +10,5 @@ latest_event: 1
 - 1 | STARTED | 1.1
 
 ## Handoff
-CURRENT_FAILURE: none
 DECISIONS: none
 NEXT_ACTION: Begin the current checklist leaf.

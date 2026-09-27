@@ -98,7 +98,7 @@ fn verify_args(root: &Path, task_dir: &Path, base: &str) -> Vec<String> {
 
 fn progress(events: &str, state: &str, current: &str, latest: usize) -> String {
     format!(
-        "---\nschema: progress/v1\ntask: TASK-042\nstate: {state}\ncurrent: {current}\nlatest_event: {latest}\n---\n\n## Events\n{events}\n\n## Handoff\nCURRENT_FAILURE: none\n"
+        "---\nschema: progress/v1\ntask: TASK-042\nstate: {state}\ncurrent: {current}\nlatest_event: {latest}\n---\n\n## Events\n{events}\n\n## Handoff\nWorking notes may go here.\n"
     )
 }
 

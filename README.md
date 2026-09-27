@@ -1,123 +1,107 @@
 # task-format
 
-`task-format` defines a versioned Markdown task contract, its local verification checks, and a
-caller-maintained progress file. It ships one Rust command-line tool: `taskfmt`.
+`task-format` defines one versioned Markdown task format and ships one Rust CLI, `taskfmt`, to
+validate task packages, read caller-maintained progress, and run declared local checks.
 
-The format uses `task/v5` for task `README.md` files, `verify/v2` for `verify.toml`, and `progress/v1`
-for progress Markdown. The [format reference](reference/FORMAT.md) is authoritative. The
-[canonical task template](reference/task-template/) and [real task examples](examples/) show how
-to apply it.
+The repository keeps three formats:
 
-## Product boundary
+- `task/v5`: a task contract in `README.md`.
+- `verify/v2`: local checks and scope rules in `verify.toml`.
+- `progress/v1`: a caller-written event log stored outside the task package.
 
-One task package describes a bounded outcome. Its files have separate roles:
+[`reference/FORMAT.md`](reference/FORMAT.md) is authoritative. [`reference/task-template/`](reference/task-template/)
+contains the copyable seed. [`examples/`](examples/) contains real task packages. The template has
+placeholders; replace them before using it as a task for real work.
 
-| File | Role |
-| --- | --- |
-| `README.md` | Goal, context, scope, requirements, acceptance criteria, decisions, and checklist. |
-| `AGENTS.md` | Short instructions for the executor working on the task. |
-| `verify.toml` | Local commands, expected results, and workspace path limits. |
-| Caller-chosen progress file | Mutable coordination events, stored outside the task package. |
+## What taskfmt does
 
-`taskfmt lint` validates a task package and its cross-references. `taskfmt status` reads a task and
-progress file, validates the event stream, and reports derived checklist state. `taskfmt verify`
-runs the declared checks and local scope checks; full verification also requires completed,
-valid progress.
+`taskfmt` has exactly three functional commands:
 
-The executor provides the working copy, tools, prerequisites, and inputs. `taskfmt` runs there. It
-does not create environments, launch agents, dispatch tasks, manage projects, provision services,
-handle credentials, or promote changes. Those responsibilities belong outside
-this repository. Commands declared in `verify.toml` run in the workspace and may have their own
-effects; `taskfmt` does not sandbox arbitrary commands.
-
-## Install
-
-With the repository checked out and Rust installed, install the single binary from the root:
-
-```sh
-cargo install --path . --locked
-taskfmt --help
+```text
+taskfmt lint TASK_DIR [--json]
+taskfmt status --task-dir TASK_DIR --progress PROGRESS_FILE [--json]
+taskfmt verify --task-dir TASK_DIR --root WORKSPACE --base BASE (--progress PROGRESS_FILE | --no-progress)
 ```
 
-## Work with a task
+- `lint` validates one task package and its cross-references. It does not run checks or read
+  progress.
+- `status` validates the task and progress file, then reports event-derived checklist state,
+  current item, completed leaves, total leaves, and percentage. It only reads files.
+- `verify` validates the package, compares workspace changes with the caller-supplied baseline and
+  scope rules, runs declared checks, and checks progress during full verification.
 
-Create the task package from the contract files, leaving the progress seed outside it. Replace the
-placeholder task ID, title, requirements, acceptance criteria, checklist, and check commands with
-the real task contract. The canonical progress seed matches its example first leaf, `1.1`; update
-the task ID and leaf in both the header and first event at the caller's writable progress path.
+Taskfmt is a format and local verification tool. The caller supplies an existing workspace,
+baseline commit, progress file, tools, and other prerequisites. It does not create containers,
+launch agents, dispatch tasks, acquire credentials, provision services, or manage task execution
+outside the local verification process. Commands in `verify.toml` can have side effects; taskfmt
+does not sandbox arbitrary commands.
 
-```sh
-mkdir -p /task /progress
-cp reference/task-template/README.md \
-  reference/task-template/AGENTS.md \
-  reference/task-template/verify.toml \
-  /task/
-cp reference/task-template/progress.md /progress/progress.md
-# Edit the task files and replace TASK-000; update the external progress file's ID and first leaf.
-taskfmt lint /task
-```
+## Create and verify a task
 
-Paths are caller choices; `/task`, `/work`, and `/progress/progress.md` are examples. Lint checks
-the task and verifier configuration without running their commands or requiring progress.
-
-During work, append valid events to the caller's progress file. Inspect its derived state at any
-time:
+From the repository root, copy the three task files into a new package. Keep progress at a separate
+caller-writable path.
+Replace the template IDs, requirements, acceptance criteria, checks, writable paths, and command
+placeholders with the task's actual values. Set the initial progress leaf to the first checklist
+leaf.
 
 ```sh
-taskfmt status --task-dir /task --progress /progress/progress.md
-taskfmt status --task-dir /task --progress /progress/progress.md --json
+TASK_DIR=/path/to/task
+WORKSPACE=/path/to/workspace
+PROGRESS_FILE=/path/to/progress/progress.md
+
+mkdir -p "$TASK_DIR" "$(dirname "$PROGRESS_FILE")"
+cp reference/task-template/README.md reference/task-template/AGENTS.md \
+  reference/task-template/verify.toml "$TASK_DIR/"
+cp reference/task-template/progress.md "$PROGRESS_FILE"
+# Edit the task files; set the progress task ID and first leaf.
+
+taskfmt lint "$TASK_DIR"
 ```
 
-Status shows task identity, state, current leaf, per-item progress, completed and total leaves,
-and a whole-number percentage. The percentage is `100 × completed leaves / total leaves`, rounded
-to the nearest whole percent with halves rounded up. Status validates and reads files; it does not
-run checks or change them.
-
-Use checks-only verification while progress is incomplete. Supply the caller's workspace baseline
-commit as `TASK_BASE`. After preparing `/work` with the task's starting files and before making task
-changes, create the baseline and resolve its commit ID:
+The workspace must already contain a committed baseline representing its starting state. Record
+that full commit ID before implementation; taskfmt requires it and never substitutes `HEAD` for a
+missing or invalid baseline.
 
 ```sh
-git -C /work add -A
-git -C /work commit -m "Task baseline"
-TASK_BASE=$(git -C /work rev-parse HEAD)
+BASE=$(git -C "$WORKSPACE" rev-parse --verify 'HEAD^{commit}')
+
+# During work: validate the workspace and run checks without asserting completion.
+taskfmt verify --task-dir "$TASK_DIR" --root "$WORKSPACE" --base "$BASE" --no-progress
+
+# Update the caller-owned progress file, then inspect its derived state.
+taskfmt status --task-dir "$TASK_DIR" --progress "$PROGRESS_FILE"
+
+# After every checklist leaf is recorded complete, run full verification.
+taskfmt verify --task-dir "$TASK_DIR" --root "$WORKSPACE" \
+  --progress "$PROGRESS_FILE" --base "$BASE"
 ```
 
-If `/work` already has the intended baseline commit, set `TASK_BASE` from that commit instead.
-
-```sh
-taskfmt verify --task-dir /task --root /work --base "$TASK_BASE" --no-progress
-```
-
-After all checklist leaves are complete, run full verification with the progress path:
-
-```sh
-taskfmt verify \
-  --task-dir /task \
-  --root /work \
-  --progress /progress/progress.md \
-  --base "$TASK_BASE"
-```
-
-Full verification checks the task contract, the supplied baseline and workspace scope, every
-declared command and expected result, and completed progress. A progress state of `DONE` or a 100%
-status is a coordination claim. Only a successful full `taskfmt verify` run proves that the
-declared checks passed for that workspace at that time; its final standalone `DONE` line is the
-completion signal. Checks-only success reports `CHECKS PASS` and does not signal task completion.
+The caller or executor writes the progress file. Taskfmt has no initialization or progress-writing
+command. A `DONE` progress state and `100%` status are coordination claims, not proof that checks
+passed. Checks-only verification ends with `CHECKS PASS`; only successful full verification ends
+with a standalone `DONE` line.
 
 ## Examples
 
-[`examples/README.md`](examples/README.md) lists the canonical task examples and their prerequisites.
-Examples describe actual work and may require their named target repository or tools; the template's
-placeholder commands must be replaced before execution.
+[`examples/README.md`](examples/README.md) describes the authentic `pgtui` task sequence, target
+workspace requirements, and caller-provided inputs. Examples are task packages, not a self-running
+campaign.
 
 ## Development
 
-The pinned Rust toolchain is in `rust-toolchain.toml`. From the repository root:
+The pinned Rust toolchain is in [`rust-toolchain.toml`](rust-toolchain.toml). From the repository
+root:
 
 ```sh
 cargo fmt --all -- --check
 cargo check --locked --all-targets --all-features
 cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked --all-targets --all-features
+cargo build --locked --release --bin taskfmt
+```
+
+To install the CLI from this checkout:
+
+```sh
+cargo install --path . --locked
 ```

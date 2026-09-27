@@ -49,7 +49,7 @@ mod exhaustive_tests {
 
     fn text(events: &str, state: &str, current: &str, latest: u64) -> String {
         format!(
-            "---\nschema: progress/v1\ntask: TASK-042\nstate: {state}\ncurrent: {current}\nlatest_event: {latest}\n---\n\n## Events\n{events}\n\n## Handoff\nCURRENT_FAILURE: none\n"
+            "---\nschema: progress/v1\ntask: TASK-042\nstate: {state}\ncurrent: {current}\nlatest_event: {latest}\n---\n\n## Events\n{events}\n\n## Handoff\nWorking notes may go here.\n"
         )
     }
 
@@ -268,17 +268,17 @@ mod exhaustive_tests {
             ),
             (
                 "event in handoff",
-                initial.replacen("CURRENT_FAILURE: none", "- 2 | DONE | 1.1", 1),
+                initial.replacen("Working notes may go here.", "- 2 | DONE | 1.1", 1),
                 "not allowed in handoff",
             ),
             (
                 "events heading in handoff",
-                initial.replacen("CURRENT_FAILURE: none", "## Events", 1),
+                initial.replacen("Working notes may go here.", "## Events", 1),
                 "not allowed in handoff",
             ),
             (
                 "fence in handoff",
-                initial.replacen("CURRENT_FAILURE: none", "---", 1),
+                initial.replacen("Working notes may go here.", "---", 1),
                 "not allowed in handoff",
             ),
         ];
@@ -468,7 +468,6 @@ impl ProgressFile {
                 .any(|line| line == "## Events" || line == "---" || line.starts_with("- ")),
             "progress: state-machine content is not allowed in handoff"
         );
-
         let mut events = Vec::new();
         for line in &lines[events_start..events_end] {
             let parts: Vec<_> = line
@@ -641,7 +640,7 @@ mod tests {
     }
     fn text(events: &str, state: &str, current: &str, latest: u64) -> String {
         format!(
-            "---\nschema: progress/v1\ntask: TASK-042\nstate: {state}\ncurrent: {current}\nlatest_event: {latest}\n---\n\n## Events\n{events}\n\n## Handoff\nCURRENT_FAILURE: none\n"
+            "---\nschema: progress/v1\ntask: TASK-042\nstate: {state}\ncurrent: {current}\nlatest_event: {latest}\n---\n\n## Events\n{events}\n\n## Handoff\nWorking notes may go here.\n"
         )
     }
     #[test]

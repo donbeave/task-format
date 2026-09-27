@@ -2,7 +2,7 @@ schema = 2
 
 [generator]
 repository = "donbeave/task-format"
-revision = "0eeac75a157da9c1e4171d56b663fe5943e85fed"
+revision = "e988d793937c044275e4086b00856444c60f6ab8"
 
 [workflow]
 providers = ["github-hosted"]
@@ -19,4 +19,4 @@ ruleset_required_status_checks = ["ci-required", "Policy"]
 [[units]]
 id = "rust-taskfmt"
 ci_tasks = ["taskfmt-ci"]
-watch = ["Cargo.toml", "Cargo.lock", "rust-toolchain", "rust-toolchain.toml", "mise.toml", "README.md", "src/**", "tests/**", "reference/**", "examples/**"]
+watch = ["Cargo.toml", "Cargo.lock", "rust-toolchain", "rust-toolchain.toml", "mise.toml", "README.md", "src/**", "tests/**", "testdata/**", "reference/**", "examples/**"]

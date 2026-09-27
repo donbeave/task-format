@@ -1,83 +1,82 @@
 # Task examples
 
-These seven task/v5 packages are real, ordered implementation slices for the
-`pgtui` Rust workspace. They are target-repository examples, not self-contained
-`taskfmt` smoke fixtures. Each package keeps its own `verify.toml` and the
-trusted source, test, font, and seed inputs its checks expect.
+These seven `task/v5` packages are authentic, ordered implementation tasks for the `pgtui` Rust
+workspace. They demonstrate real task contracts; they are not self-contained `taskfmt` smoke
+fixtures. Each task keeps its own `verify.toml` and lists its prerequisites and writable scope.
 
-## Order and dependencies
+## Order and prerequisites
 
-Apply the tasks in order. Each task depends on the completed target-repository
-state from the task before it.
+Each task builds on the committed result of its predecessor. Select a task whose starting state and
+prerequisites are available.
 
 | Task | Slice | Depends on | Additional prerequisites |
 | --- | --- | --- | --- |
-| [TASK-001](TASK-001/README.md) | Bootstrap the workspace and stub binaries | Empty pgtui repository | Rust toolchain and trusted scaffold |
-| [TASK-002](TASK-002/README.md) | Connection store, list, and CLI skeleton | TASK-001 | Trusted store, app, screen, and CLI tests |
-| [TASK-003](TASK-003/README.md) | Connection form and save flow | TASK-002 | Trusted form, runtime, and screen tests |
-| [TASK-004](TASK-004/README.md) | PostgreSQL connection and table browser | TASK-003 | Docker, seed fixtures, and trusted browser tests |
-| [TASK-005](TASK-005/README.md) | Preview grid and client-side sorting | TASK-004 | Docker and trusted grid tests |
-| [TASK-006](TASK-006/README.md) | Custom SQL screen | TASK-005 | Docker and trusted custom-SQL tests |
-| [TASK-007](TASK-007/README.md) | Disconnect, exit behavior, and screen gallery | TASK-006 | Docker and trusted gallery tests |
+| [TASK-001](TASK-001/README.md) | Bootstrap the workspace and stub binaries | Empty `pgtui` repository | Rust toolchain and task-specific starter inputs |
+| [TASK-002](TASK-002/README.md) | Connection store, list, and CLI skeleton | TASK-001 | Rust toolchain and task-specific tests |
+| [TASK-003](TASK-003/README.md) | Connection form and save flow | TASK-002 | Rust toolchain and task-specific tests |
+| [TASK-004](TASK-004/README.md) | PostgreSQL connection and table browser | TASK-003 | Docker, database fixtures, and tests |
+| [TASK-005](TASK-005/README.md) | Preview grid and client-side sorting | TASK-004 | Docker and grid/database tests |
+| [TASK-006](TASK-006/README.md) | Custom SQL screen | TASK-005 | Docker and custom-SQL tests |
+| [TASK-007](TASK-007/README.md) | Disconnect, exit behavior, and screen gallery | TASK-006 | Docker and gallery tests |
 
-## Caller-provided target and inputs
+The individual task README and `verify.toml` define exact inputs, checks, writable paths, and
+forbidden changes. Each package contains task-specific files under `trusted/`; these are
+caller-provided starting inputs, not an automatic overlay. Paths beneath `trusted/` are relative to
+the target checkout after removing that leading directory. For example,
+`examples/TASK-001/trusted/crates/pgtui/src/render.rs` maps to
+`$WORKSPACE/crates/pgtui/src/render.rs`. Materialize the selected task's inputs before recording
+the baseline commit, then keep them unchanged while implementing the task.
 
-The caller supplies a Git checkout of the `pgtui` target repository, a baseline
-commit, a writable progress file, the Rust toolchain, and the tools and services
-required by the selected task. Run declared checks from that target repository's
-root. TASK-004 through TASK-007 require Docker; each task README and precondition
-check defines its full input set.
+TASK-004 through TASK-007 declare database integration checks that require Docker in the caller's
+environment. Taskfmt does not create the target workspace, copy task inputs, install tools, or
+provision services. The caller supplies those prerequisites.
 
-For each task, start from the committed result of its predecessor and a clean
-target worktree. First copy that task's `trusted/` tree into the target checkout
-with the `trusted/` prefix removed. For example,
-`trusted/crates/pgtui/src/render.rs` goes to `crates/pgtui/src/render.rs`.
-Commit this materialized input state, then use that commit hash as `--base`.
-Only after the baseline commit exists should the executor edit the target. The
-verify scope checks compare executor changes after `--base` against that task's
-`writable_paths` and protected paths.
+## Caller workflow
 
-`taskfmt` reads task and verification files; it does not copy or overlay trusted
-inputs, install tools, provision the target repository, or create services.
-Keep trusted inputs unchanged while implementing the task.
+The caller provides a Git checkout of the `pgtui` target repository, required input files and
+services, a committed starting baseline, and a writable progress file outside the task package.
+Declared commands run from the target repository's root. Prepare each task's target state before
+implementation, commit that state, then record its full commit ID for `--base`. For TASK-002 through
+TASK-007, begin from the committed result of the preceding task and prepare any additional inputs
+required by the selected package.
 
-Lint a package directly, for example:
-
-```sh
-taskfmt lint examples/TASK-001
-```
-
-After materialization and baseline commit, lint the task before execution:
+Lint the task without a progress file:
 
 ```sh
 TASK_DIR=/path/to/task-format/examples/TASK-001
-TARGET_ROOT=/work/pgtui
-PROGRESS=/progress/TASK-001.md
-
-cp -R "$TASK_DIR/trusted/." "$TARGET_ROOT/"
-git -C "$TARGET_ROOT" add crates
-git -C "$TARGET_ROOT" commit -m "Add TASK-001 trusted inputs"
-BASE=$(git -C "$TARGET_ROOT" rev-parse HEAD)
+WORKSPACE=/work/pgtui
+PROGRESS_FILE="${TMPDIR:-/tmp}/taskfmt-progress/TASK-001.md"
+BASE=$(git -C "$WORKSPACE" rev-parse --verify 'HEAD^{commit}')
 
 taskfmt lint "$TASK_DIR"
 ```
 
-Once implementation work is underway, run checks-only verification as needed.
-It runs task validation, scope checks, and declared commands without reading
-progress or claiming completion. Checks may fail while the task is incomplete:
+From the task-format repository root, start progress from the canonical seed outside the task
+directory. Replace its task ID and first leaf with the selected task's values:
 
 ```sh
-taskfmt verify --task-dir "$TASK_DIR" --root "$TARGET_ROOT" --base "$BASE" --no-progress
+mkdir -p "$(dirname "$PROGRESS_FILE")"
+cp reference/task-template/progress.md "$PROGRESS_FILE"
 ```
 
-After the executor has finished and recorded the final progress event, run full
-verification:
+While work remains, checks-only verification may run repeatedly. It validates the task, checks
+workspace scope against the committed baseline, and runs declared commands without reading
+progress or claiming completion. Some declared checks can fail before their implementation is
+complete.
 
 ```sh
-taskfmt verify --task-dir "$TASK_DIR" --root "$TARGET_ROOT" --progress "$PROGRESS" --base "$BASE"
+taskfmt verify --task-dir "$TASK_DIR" --root "$WORKSPACE" \
+  --base "$BASE" --no-progress
+taskfmt status --task-dir "$TASK_DIR" --progress "$PROGRESS_FILE"
 ```
 
-The target repository, baseline, progress file, and task-specific prerequisites
-are caller-provided. For TASK-002 through TASK-007, repeat trusted-input
-materialization and baseline creation for that task after its predecessor is
-committed.
+After every checklist leaf is recorded complete, run full verification:
+
+```sh
+taskfmt verify --task-dir "$TASK_DIR" --root "$WORKSPACE" \
+  --progress "$PROGRESS_FILE" --base "$BASE"
+```
+
+Progress `DONE` and `100%` describe the caller's checklist record only. Checks-only success ends
+with `CHECKS PASS`. Only full verification success, with all declared checks and completed progress,
+ends with the standalone line `DONE`.

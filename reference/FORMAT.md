@@ -1,14 +1,15 @@
-# Task Format
+# Task format reference
 
-This document specifies the formats consumed by `taskfmt`: `task/v5`, `verify/v2`, and
-`progress/v1`. A copyable instance is in [`task-template/`](task-template/).
+This reference specifies the three formats read by `taskfmt`: `task/v5`, `verify/v2`, and
+`progress/v1`. [`task-template/`](task-template/) contains a copyable seed; replace its placeholders
+before using it as a real task.
 
-## Task package: `task/v5`
+## Task contract: `task/v5`
 
-A task directory contains `README.md` and `verify.toml`; `AGENTS.md` may give concise executor
-instructions. The caller keeps progress at a separate writable path.
+A task package contains `README.md` and `verify.toml`. `AGENTS.md` may contain concise instructions
+for the executor. The caller keeps mutable progress at a separate writable path.
 
-The task README starts with YAML-like frontmatter containing exactly these keys:
+The task README begins with frontmatter containing exactly these keys:
 
 ```yaml
 ---
@@ -20,88 +21,131 @@ kind: feature
 ```
 
 `id` is `TASK-` followed by digits. `kind` is one of `bugfix`, `feature`, `refactor`, `removal`,
-`migration`, `test`, or `docs`. The first H1 starts with the same task ID. Include these H2
-sections: `Goal`, `Context`, `Preconditions`, `Scope`, `Requirements`, `Acceptance criteria`,
-`Fixed decisions`, and `Checklist`.
+`migration`, `test`, or `docs`. The first H1 begins with the same ID. Include these H2 sections:
+`Goal`, `Context`, `Preconditions`, `Scope`, `Requirements`, `Acceptance criteria`, `Fixed
+decisions`, and `Checklist`.
 
 Requirements use unique `R-NNN` IDs. Acceptance criteria use unique `AC-NNN` headings and a
 `**Verification**` block with `Type`, `Covers`, and `Check` fields. Types are `scenario`, `outline`,
-`invariant`, and `gate`. Each non-gate criterion has a fenced `gherkin` behavior block and covers
+`invariant`, and `gate`. Every non-gate criterion has a fenced `gherkin` behavior block and covers
 one or more requirements. Scenarios and outlines have one `When` step and at least one `Then` step.
 A gate has a `Check` and no `Covers` or behavior block. Each `Check` names a `CHK-NNN` in
 `verify.toml`.
 
-The checklist is enclosed by one `<!-- checklist:start -->` / `<!-- checklist:end -->` marker pair.
-Items use numeric dotted IDs such as `1`, `1.1`, and `1.2`, with four spaces per nesting level.
-An item is a leaf when the next item is not deeper. Every leaf links to at least one known `R-*`,
-`AC-*`, and `CHK-*`; parent items group leaves. IDs are unique within the checklist. Progress is
-derived from leaves only.
+The checklist is enclosed by exactly one `<!-- checklist:start -->` / `<!-- checklist:end -->` marker
+pair. Items use unique numeric dotted IDs such as `1`, `1.1`, and `1.2`, with four spaces per
+nesting level. An item is a leaf when the next item is not deeper. Every leaf links to at least one
+known `R-*`, `AC-*`, and `CHK-*`; parents group leaves. Progress counts leaves only. A task needs at
+least one checklist leaf.
 
-## Verification: `verify/v2`
+## Local checks: `verify/v2`
 
 `verify.toml` has `schema = "verify/v2"`, a `task_id` matching the README ID, non-empty relative
-`writable_paths`, and one or more `[[checks]]`. Optional scope constraints include `base_tree`,
-`forbidden_paths`, and `forbidden_patterns`. If `base_tree` is set, `taskfmt verify` requires the
-caller-supplied `--base` to resolve to that same commit.
+`writable_paths`, and one or more `[[checks]]`. Optional scope constraints are `base_tree`,
+`forbidden_paths`, and `forbidden_patterns`. If `base_tree` is set, the caller's `--base` must
+resolve to that same commit.
 
-Each check has a unique `CHK-NNN` ID, a phase (`precondition`, `focused`, `regression`, `lint`, or
-`gate`), and exactly one command form: `argv` or `shell`. It declares non-empty `requirements` and
-`acceptance` references and may declare expected exit status, output matchers, or required and
-forbidden artifacts. Checks must appear in phase order: `precondition`, `focused`, `regression`,
-`lint`, then `gate`; `gate` is last. Exactly one check has phase `gate`. AC-to-check, check-to-AC,
-and all task ID references must agree.
+Each check has a unique `CHK-NNN` ID and phase (`precondition`, `focused`, `regression`, `lint`, or
+`gate`). Checks appear in that order; exactly one `gate` check is last. A check has exactly one
+command form: `argv` or `shell`. It declares non-empty `requirements` and `acceptance` references
+that agree with the task. Expected results may constrain exit status, stdout and stderr text or
+regular expressions, occurrence counts, and required or forbidden artifacts.
 
-`taskfmt lint TASK_DIR` checks the README, TOML, and their references; it does not execute commands.
-`taskfmt verify` executes declared commands in the caller's workspace, checks their expectations,
-and enforces the supplied baseline and path limits. The caller provides all needed tools and inputs.
-Arbitrary declared commands are not sandboxed by `taskfmt`.
+`taskfmt lint TASK_DIR` validates the task README, TOML, and cross-references without executing
+commands or reading progress. `taskfmt verify` runs the declared checks in the supplied workspace,
+checks their expected results, and enforces the supplied baseline and path limits. `argv` runs the
+named executable directly. `shell` runs through Bash with error and pipeline-failure handling. The
+caller supplies required tools, services, trusted inputs, and a Git workspace with a committed
+baseline. Taskfmt never substitutes a different baseline when `--base` is missing or invalid.
 
-## Progress: `progress/v1`
+Declared commands can have side effects. Taskfmt does not sandbox them or provide containers,
+credentials, services, agents, dispatch, or execution orchestration.
 
-Progress is a caller-written Markdown file. Copy [`task-template/progress.md`](task-template/progress.md)
-to the caller's chosen writable path, then substitute the task ID and the first checklist leaf in
-both `current` and the initial event. `taskfmt` reads and validates this file; it does not create or
-update it.
+## Caller progress: `progress/v1`
 
-The opening header has exactly five fields: `schema`, `task`, `state`, `current`, and `latest_event`.
-The body has an `## Events` section followed by `## Handoff`. An event row is exactly
-`- N | STATUS | LEAF`, where `N` starts at 1 and increases contiguously. Rows refer only to checklist
-leaves.
+Progress is a caller-written Markdown file outside the task package. Copy
+[`task-template/progress.md`](task-template/progress.md) to a writable location, then replace its
+task ID and initial leaf with the ID and first leaf from the task. Taskfmt reads and validates
+progress; it does not create or update the file.
 
-Allowed event statuses are `STARTED`, `DONE`, `FAILED`, `REOPENED`, `BLOCKED`, and `NEEDS_REPLAN`.
-`STARTED` opens an incomplete leaf when none is active. `DONE` and `FAILED` close the active leaf.
-If work remains after either event, append `STARTED` for the next leaf before saving the file;
-otherwise the derived in-progress state would have no current leaf. `REOPENED` opens a previously
-completed leaf again. `BLOCKED` and `NEEDS_REPLAN` end the event stream with the active leaf.
+The opening header has exactly five fields: `schema`, `task`, `state`, `current`, and
+`latest_event`. The body contains an `## Events` section followed by `## Handoff`. Each event row is
+exactly `- N | STATUS | LEAF`; sequence numbers start at 1 and increase contiguously. Events refer
+only to checklist leaves. Use one blank line after the header fence and one blank line between the
+last event row and `## Handoff`.
 
-The header is derived from the complete event stream and must stay synchronized:
+For example, from the task-format repository root, create a progress file for task `TASK-042` whose
+first checklist leaf is `2.1`:
+
+```sh
+PROGRESS_FILE="${TMPDIR:-/tmp}/taskfmt-progress/TASK-042.md"
+mkdir -p "$(dirname "$PROGRESS_FILE")"
+cp reference/task-template/progress.md "$PROGRESS_FILE"
+```
+
+In the copied file, replace `task: TASK-000` with `task: TASK-042`, replace `current: 1.1` with
+`current: 2.1`, and replace `- 1 | STARTED | 1.1` with `- 1 | STARTED | 2.1`. Keep
+`state: IN_PROGRESS` and `latest_event: 1` for this initial event.
+
+Allowed statuses are `STARTED`, `DONE`, `FAILED`, `REOPENED`, `BLOCKED`, and `NEEDS_REPLAN`:
+
+- `STARTED` opens an incomplete, not-yet-completed leaf when none is active.
+- `DONE` closes the active leaf and records it complete.
+- `FAILED` closes the active leaf without completing it. Start the next leaf or retry before saving
+  an in-progress file.
+- `REOPENED` opens a previously completed, inactive leaf again.
+- `BLOCKED` and `NEEDS_REPLAN` end the event stream and leave the active leaf current.
+
+Keep `state`, `current`, and `latest_event` synchronized with the complete event stream:
 
 | Derived state | `current` | Condition |
 | --- | --- | --- |
 | `IN_PROGRESS` | Active leaf ID | Work remains and a leaf is active. |
 | `BLOCKED` | Active leaf ID | The final event is `BLOCKED`. |
 | `NEEDS_REPLAN` | Active leaf ID | The final event is `NEEDS_REPLAN`. |
-| `DONE` | `NONE` | Every checklist leaf has a `DONE` event not later reopened. |
+| `DONE` | `NONE` | Every leaf has a `DONE` event not later reopened. |
 
-`latest_event` equals the final event sequence. The header's task ID must match the task README.
-Use paragraphs or labels for handoff notes. The parser rejects any handoff line beginning with
-`- ` and lines exactly equal to `## Events` or `---`. The template shows a valid initial stream for
-`TASK-000` and leaf `1.1`.
+After `DONE` or `FAILED`, if work remains, append `STARTED` for the next or retried leaf before
+saving. An `IN_PROGRESS` file must have an active leaf. `latest_event` equals the last event's
+sequence. The header's task ID matches the task README.
 
-`taskfmt status --task-dir TASK_DIR --progress PROGRESS_FILE` validates progress and reports its
-derived checklist state. Its percentage is `100 × completed leaves / total leaves`, rounded to the
-nearest integer with halves rounded up. Progress and status are coordination data; they do not prove
-that verification commands passed.
+Write optional handoff notes as paragraphs or labels. Do not begin a handoff line with `- ` or use a
+line exactly equal to `## Events` or `---`; those are reserved for the event structure.
 
-## Verification workflow
+`taskfmt status --task-dir TASK_DIR --progress PROGRESS_FILE` validates the task and progress, then
+reports event-derived state, current item, per-item status, completed leaves, total leaves, and
+percentage. Percentage is `100 × completed leaves / total leaves`, rounded to the nearest whole
+number with halves rounded up. A task with no leaf is invalid. Status only reads files. Progress
+state and `100%` are coordination claims; they do not prove that verification checks passed.
 
-1. Instantiate the task package from `task-template/README.md`, `AGENTS.md`, and `verify.toml`;
-   leave `task-template/progress.md` outside the task directory.
-2. Copy the progress seed to the caller's writable path and update it for the task.
-3. Run `taskfmt lint TASK_DIR`.
-4. Update progress events as work proceeds; inspect them with `taskfmt status`.
-5. Run `taskfmt verify --task-dir TASK_DIR --root WORKSPACE --base BASE --no-progress` for
-   checks-only verification while work remains.
-6. Once all leaves are complete, run full verification with `--progress PROGRESS_FILE` and the
-   caller's baseline. Only a successful full run, ending in `DONE`, confirms declared checks and
-   completed progress together.
+## Workflow
+
+1. Copy `README.md`, `AGENTS.md`, and `verify.toml` from `task-template/` into a task directory.
+   Replace placeholders and make the task contract and checks agree. Keep `progress.md` outside the
+   task package.
+2. Copy `task-template/progress.md` to the caller's writable progress path. Replace `TASK-000` and
+   `1.1` with the task ID and its first checklist leaf.
+3. Prepare the caller's workspace and prerequisites. Commit its starting state and record the full
+   commit ID for `--base`.
+4. Run `taskfmt lint TASK_DIR`.
+5. Record progress events while working. Inspect derived status with
+   `taskfmt status --task-dir TASK_DIR --progress PROGRESS_FILE`.
+6. When useful, run checks-only verification:
+
+   ```sh
+   taskfmt verify --task-dir TASK_DIR --root WORKSPACE --base BASE --no-progress
+   ```
+
+   This runs task validation, scope checks, and declared commands without reading progress. A
+   successful checks-only run ends with `CHECKS PASS`, not `DONE`.
+
+7. After every checklist leaf is recorded complete, run full verification:
+
+   ```sh
+   taskfmt verify --task-dir TASK_DIR --root WORKSPACE \
+     --progress PROGRESS_FILE --base BASE
+   ```
+
+   Only successful full verification checks both the declared commands and completed progress. It
+   ends with the standalone line `DONE`. A `DONE` progress state or `100%` status alone never
+   produces that completion signal.
