@@ -40,20 +40,30 @@ does not sandbox arbitrary commands.
 
 From the repository root, copy the three task files into a new package. Keep progress at a separate
 caller-writable path.
-Replace the template IDs, requirements, acceptance criteria, checks, writable paths, and command
-placeholders with the task's actual values. Set the initial progress leaf to the first checklist
-leaf.
+Replace the template IDs, requirements, acceptance criteria, checks, and command placeholders with
+the task's actual values. Replace `writable_paths` in `verify.toml` with the exact relative files and
+directories the task may modify; it is the scope allowlist. Set the initial progress leaf to the
+first checklist leaf.
 
 ```sh
 TASK_DIR=/path/to/task
 WORKSPACE=/path/to/workspace
-PROGRESS_FILE=/path/to/progress/progress.md
+TASK_ID=TASK-042
+FIRST_LEAF=1.1
+PROGRESS_FILE=/path/to/progress/${TASK_ID}.md
 
 mkdir -p "$TASK_DIR" "$(dirname "$PROGRESS_FILE")"
 cp reference/task-template/README.md reference/task-template/AGENTS.md \
   reference/task-template/verify.toml "$TASK_DIR/"
 cp reference/task-template/progress.md "$PROGRESS_FILE"
-# Edit the task files; set the progress task ID and first leaf.
+PROGRESS_TMP="${PROGRESS_FILE}.tmp"
+sed \
+  -e "s/^task: TASK-000$/task: ${TASK_ID}/" \
+  -e "s/^current: 1\\.1$/current: ${FIRST_LEAF}/" \
+  -e "s/^- 1 | STARTED | 1\\.1$/- 1 | STARTED | ${FIRST_LEAF}/" \
+  "$PROGRESS_FILE" > "$PROGRESS_TMP"
+mv "$PROGRESS_TMP" "$PROGRESS_FILE"
+# Edit the task files; set TASK_ID and FIRST_LEAF to the instantiated values.
 
 taskfmt lint "$TASK_DIR"
 ```

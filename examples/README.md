@@ -45,7 +45,9 @@ Lint the task without a progress file:
 ```sh
 TASK_DIR=/path/to/task-format/examples/TASK-001
 WORKSPACE=/work/pgtui
-PROGRESS_FILE="${TMPDIR:-/tmp}/taskfmt-progress/TASK-001.md"
+TASK_ID=TASK-001
+FIRST_LEAF=1.1
+PROGRESS_FILE="${TMPDIR:-/tmp}/taskfmt-progress/${TASK_ID}.md"
 BASE=$(git -C "$WORKSPACE" rev-parse --verify 'HEAD^{commit}')
 
 taskfmt lint "$TASK_DIR"
@@ -57,6 +59,13 @@ directory. Replace its task ID and first leaf with the selected task's values:
 ```sh
 mkdir -p "$(dirname "$PROGRESS_FILE")"
 cp reference/task-template/progress.md "$PROGRESS_FILE"
+PROGRESS_TMP="${PROGRESS_FILE}.tmp"
+sed \
+  -e "s/^task: TASK-000$/task: ${TASK_ID}/" \
+  -e "s/^current: 1\\.1$/current: ${FIRST_LEAF}/" \
+  -e "s/^- 1 | STARTED | 1\\.1$/- 1 | STARTED | ${FIRST_LEAF}/" \
+  "$PROGRESS_FILE" > "$PROGRESS_TMP"
+mv "$PROGRESS_TMP" "$PROGRESS_FILE"
 ```
 
 While work remains, checks-only verification may run repeatedly. It validates the task, checks

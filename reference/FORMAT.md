@@ -41,9 +41,10 @@ least one checklist leaf.
 ## Local checks: `verify/v2`
 
 `verify.toml` has `schema = "verify/v2"`, a `task_id` matching the README ID, non-empty relative
-`writable_paths`, and one or more `[[checks]]`. Optional scope constraints are `base_tree`,
-`forbidden_paths`, and `forbidden_patterns`. If `base_tree` is set, the caller's `--base` must
-resolve to that same commit.
+`writable_paths`, and one or more `[[checks]]`. Replace the template `writable_paths` with the exact
+relative files and directories the task may modify; it is the task's scope allowlist. Optional scope
+constraints are `base_tree`, `forbidden_paths`, and `forbidden_patterns`. If `base_tree` is set, the
+caller's `--base` must resolve to that same commit.
 
 Each check has a unique `CHK-NNN` ID and phase (`precondition`, `focused`, `regression`, `lint`, or
 `gate`). Checks appear in that order; exactly one `gate` check is last. A check has exactly one
@@ -74,25 +75,33 @@ exactly `- N | STATUS | LEAF`; sequence numbers start at 1 and increase contiguo
 only to checklist leaves. Use one blank line after the header fence and one blank line between the
 last event row and `## Handoff`.
 
-For example, from the task-format repository root, create a progress file for task `TASK-042` whose
-first checklist leaf is `2.1`:
+For example, from the task-format repository root, create an external progress file for task
+`TASK-042` whose first checklist leaf is `2.1`:
 
 ```sh
-PROGRESS_FILE="${TMPDIR:-/tmp}/taskfmt-progress/TASK-042.md"
+TASK_ID=TASK-042
+FIRST_LEAF=2.1
+PROGRESS_FILE="${TMPDIR:-/tmp}/taskfmt-progress/${TASK_ID}.md"
 mkdir -p "$(dirname "$PROGRESS_FILE")"
 cp reference/task-template/progress.md "$PROGRESS_FILE"
+PROGRESS_TMP="${PROGRESS_FILE}.tmp"
+sed \
+  -e "s/^task: TASK-000$/task: ${TASK_ID}/" \
+  -e "s/^current: 1\\.1$/current: ${FIRST_LEAF}/" \
+  -e "s/^- 1 | STARTED | 1\\.1$/- 1 | STARTED | ${FIRST_LEAF}/" \
+  "$PROGRESS_FILE" > "$PROGRESS_TMP"
+mv "$PROGRESS_TMP" "$PROGRESS_FILE"
 ```
 
-In the copied file, replace `task: TASK-000` with `task: TASK-042`, replace `current: 1.1` with
-`current: 2.1`, and replace `- 1 | STARTED | 1.1` with `- 1 | STARTED | 2.1`. Keep
-`state: IN_PROGRESS` and `latest_event: 1` for this initial event.
+The commands replace the task ID and initial leaf while keeping `state: IN_PROGRESS` and
+`latest_event: 1` for the initial event. Keep the progress file outside the task package.
 
 Allowed statuses are `STARTED`, `DONE`, `FAILED`, `REOPENED`, `BLOCKED`, and `NEEDS_REPLAN`:
 
 - `STARTED` opens an incomplete, not-yet-completed leaf when none is active.
 - `DONE` closes the active leaf and records it complete.
-- `FAILED` closes the active leaf without completing it. Start the next leaf or retry before saving
-  an in-progress file.
+- `FAILED` closes the active leaf without completing it. A following `STARTED` may open the next leaf
+  or retry that failed, incomplete leaf.
 - `REOPENED` opens a previously completed, inactive leaf again.
 - `BLOCKED` and `NEEDS_REPLAN` end the event stream and leave the active leaf current.
 
@@ -105,9 +114,9 @@ Keep `state`, `current`, and `latest_event` synchronized with the complete event
 | `NEEDS_REPLAN` | Active leaf ID | The final event is `NEEDS_REPLAN`. |
 | `DONE` | `NONE` | Every leaf has a `DONE` event not later reopened. |
 
-After `DONE` or `FAILED`, if work remains, append `STARTED` for the next or retried leaf before
-saving. An `IN_PROGRESS` file must have an active leaf. `latest_event` equals the last event's
-sequence. The header's task ID matches the task README.
+After `DONE` or `FAILED`, if work remains, append `STARTED` for the next leaf or retry the failed,
+incomplete leaf before saving. An `IN_PROGRESS` file must have an active leaf. `latest_event` equals
+the last event's sequence. The header's task ID matches the task README.
 
 Write optional handoff notes as paragraphs or labels. Do not begin a handoff line with `- ` or use a
 line exactly equal to `## Events` or `---`; those are reserved for the event structure.
@@ -121,8 +130,8 @@ state and `100%` are coordination claims; they do not prove that verification ch
 ## Workflow
 
 1. Copy `README.md`, `AGENTS.md`, and `verify.toml` from `task-template/` into a task directory.
-   Replace placeholders and make the task contract and checks agree. Keep `progress.md` outside the
-   task package.
+   Replace placeholders, replace `writable_paths` with the task's actual allowed paths, and make the
+   task contract and checks agree. Keep `progress.md` outside the task package.
 2. Copy `task-template/progress.md` to the caller's writable progress path. Replace `TASK-000` and
    `1.1` with the task ID and its first checklist leaf.
 3. Prepare the caller's workspace and prerequisites. Commit its starting state and record the full

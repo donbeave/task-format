@@ -7,22 +7,32 @@ services, and other prerequisites.
 
 ## Start
 
-1. Read `README.md` and `verify.toml`; they must already contain the instantiated task ID, paths,
-   check references, and real commands. Do not edit the task contract.
+1. Read `README.md` and `verify.toml`; they must already contain the instantiated task ID, the exact
+   task-allowed `writable_paths`, check references, and real commands. Do not edit the task contract.
 2. Use the caller-provided writable `PROGRESS_FILE` outside the task package. If starting new work
    without a progress file, set `TASK_FORMAT_ROOT` to the task-format checkout and copy the seed:
 
    ```sh
    TASK_FORMAT_ROOT=/path/to/task-format
-   PROGRESS_FILE="${TMPDIR:-/tmp}/taskfmt-progress/progress.md"
+   TASK_ID=TASK-042
+   FIRST_LEAF=2.1
+   PROGRESS_FILE="${TMPDIR:-/tmp}/taskfmt-progress/${TASK_ID}.md"
    mkdir -p "$(dirname "$PROGRESS_FILE")"
    cp "$TASK_FORMAT_ROOT/reference/task-template/progress.md" "$PROGRESS_FILE"
+   PROGRESS_TMP="${PROGRESS_FILE}.tmp"
+   sed \
+     -e "s/^task: TASK-000$/task: ${TASK_ID}/" \
+     -e "s/^current: 1\\.1$/current: ${FIRST_LEAF}/" \
+     -e "s/^- 1 | STARTED | 1\\.1$/- 1 | STARTED | ${FIRST_LEAF}/" \
+     "$PROGRESS_FILE" > "$PROGRESS_TMP"
+   mv "$PROGRESS_TMP" "$PROGRESS_FILE"
    ```
 
-   Set `task` to the task ID. Set `current` and the initial `STARTED` event's leaf to the first
-   checklist leaf. Keep `state: IN_PROGRESS` and `latest_event: 1` for this initial event. There is
-   no taskfmt initialization or progress-writing command. For resumed work, use the supplied valid
-   progress file unchanged.
+   Set `TASK_ID` and `FIRST_LEAF` to the instantiated task ID and first checklist leaf before
+   running the commands. They replace `task`, `current`, and the initial `STARTED` event's leaf.
+   Keep `state: IN_PROGRESS` and `latest_event: 1` for this initial event. There is no taskfmt
+   initialization or progress-writing command. For resumed work, use the supplied valid progress
+   file unchanged.
 3. Run `taskfmt lint TASK_DIR` before editing the workspace. Start at the current checklist leaf,
    unless valid progress identifies a different leaf.
 
@@ -36,7 +46,7 @@ from the full stream.
 - `DONE` closes and completes the active leaf. If work remains, immediately append `STARTED` for
   the next leaf. When every leaf is complete, set `state: DONE` and `current: NONE`.
 - `FAILED` closes the active leaf without completing it. If work remains, append `STARTED` for the
-  next leaf or a retry before saving.
+  next leaf or retry that failed, incomplete leaf before saving.
 - `REOPENED` opens a completed, inactive leaf again.
 - `BLOCKED` and `NEEDS_REPLAN` end the stream with the active leaf still current.
 
