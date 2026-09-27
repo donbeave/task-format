@@ -32,10 +32,10 @@ full_commands = ["mbx fmt --manifest-path 'Cargo.toml' -- --check", "mbx clippy 
 platform = "linux-x64"
 trust = "untrusted-ok"
 [unit.capabilities]
-docker = true
+docker = false
 nested_privileged_docker = false
 buildx_compose = false
-testcontainers = true
+testcontainers = false
 services_with_readiness = false
 browser_binaries = false
 native_macos_arm64 = false

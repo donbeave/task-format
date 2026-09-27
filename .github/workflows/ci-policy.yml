@@ -29,7 +29,9 @@ jobs:
     # read-only github.token confined to the Acquire/Ruleset API steps,
     # and both candidate exec points tokenless.
     permissions:
+      actions: read
       contents: read
+      pull-requests: read
     steps:
       - name: Checkout repository history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -49,9 +51,9 @@ jobs:
           fi
           git checkout --quiet --detach "$HEAD_SHA"
       - name: Set up Velnor workflow runtime
-        uses: tailrocks/velnor/.github/actions/setup-velnor-workflow@42590cead02a75f097fd4013a09d8d6348ec3f93
+        uses: tailrocks/velnor/.github/actions/setup-velnor-workflow@de6c792cdff92f1631447b498323920904c7fdcb
         with:
-          rev: 42590cead02a75f097fd4013a09d8d6348ec3f93
+          rev: de6c792cdff92f1631447b498323920904c7fdcb
           checkout-path: ${{ github.workspace }}/policy-checkout
       - name: Read declared generator pin
         id: pin
@@ -64,13 +66,13 @@ jobs:
           echo "value=$pin" >> "$GITHUB_OUTPUT"
       - name: Set up declared generator product
         id: renderer
-        if: steps.pin.outputs.value != '42590cead02a75f097fd4013a09d8d6348ec3f93'
-        uses: tailrocks/velnor/.github/actions/setup-velnor-workflow@42590cead02a75f097fd4013a09d8d6348ec3f93
+        if: steps.pin.outputs.value != 'de6c792cdff92f1631447b498323920904c7fdcb'
+        uses: tailrocks/velnor/.github/actions/setup-velnor-workflow@de6c792cdff92f1631447b498323920904c7fdcb
         with:
           rev: ${{ steps.pin.outputs.value }}
           checkout-path: ${{ github.workspace }}/policy-checkout
       - name: Resolve declared generator product
-        if: steps.pin.outputs.value != '42590cead02a75f097fd4013a09d8d6348ec3f93'
+        if: steps.pin.outputs.value != 'de6c792cdff92f1631447b498323920904c7fdcb'
         run: |
           set -euo pipefail
           binary="$HOME/.cache/velnor/workflow-runtime/${{ steps.renderer.outputs.closure }}/bin/velnor-workflow"
@@ -104,7 +106,7 @@ jobs:
           WORKFLOW_ROOT: ${{ github.workspace }}/policy-checkout
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
-          VELNOR_WORKFLOW_POLICY_REVISION: 42590cead02a75f097fd4013a09d8d6348ec3f93
+          VELNOR_WORKFLOW_POLICY_REVISION: de6c792cdff92f1631447b498323920904c7fdcb
         run: |
           set -euo pipefail
           velnor-workflow policy \
