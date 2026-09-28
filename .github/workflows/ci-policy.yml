@@ -19,17 +19,22 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     # Trust invariant: this job runs the base branch's Stage-0 validator
-    # product against the audited tree under pull_request_target. It holds
-    # `contents: read` only, references no secrets, persists no credentials,
-    # and never compiles. When the audited tree differs from the declared
-    # pin's render, it additionally EXECUTES the PR run's prebuilt
-    # candidate generator — PR-built code, same-repository runs only, bound
-    # to the audited tree by manifest closure plus binary digest before
-    # execution — with no secret references, no persisted credentials, the
-    # read-only github.token confined to the Acquire/Ruleset API steps,
-    # and both candidate exec points tokenless.
+    # product against the audited tree under pull_request_target.
+    # Permissions are read-only: `actions: read`, `contents: read`, and
+    # `pull-requests: read` for candidate artifact and ruleset API access.
+    # It references no secrets, persists no credentials, and never compiles.
+    # When the audited tree differs from the declared pin's render, it
+    # additionally EXECUTES the PR run's prebuilt candidate generator —
+    # PR-built code, same-repository runs only, bound to the audited tree by
+    # manifest closure plus binary digest before execution — with no secret
+    # references, no persisted credentials, the read-only github.token
+    # confined to the Acquire/Ruleset API steps, and both candidate exec
+    # points tokenless. The trusted pinned renderer computes candidate
+    # closures in Acquire without executing the candidate binary.
     permissions:
+      actions: read
       contents: read
+      pull-requests: read
     steps:
       - name: Checkout repository history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -49,9 +54,9 @@ jobs:
           fi
           git checkout --quiet --detach "$HEAD_SHA"
       - name: Set up Velnor workflow runtime
-        uses: tailrocks/velnor/.github/actions/setup-velnor-workflow@0eeac75a157da9c1e4171d56b663fe5943e85fed
+        uses: tailrocks/velnor/.github/actions/setup-velnor-workflow@28b7e7fee86f8787c45c85bcded26d157953de4f
         with:
-          rev: 0eeac75a157da9c1e4171d56b663fe5943e85fed
+          rev: 28b7e7fee86f8787c45c85bcded26d157953de4f
           checkout-path: ${{ github.workspace }}/policy-checkout
       - name: Read declared generator pin
         id: pin
@@ -64,13 +69,13 @@ jobs:
           echo "value=$pin" >> "$GITHUB_OUTPUT"
       - name: Set up declared generator product
         id: renderer
-        if: steps.pin.outputs.value != '0eeac75a157da9c1e4171d56b663fe5943e85fed'
-        uses: tailrocks/velnor/.github/actions/setup-velnor-workflow@0eeac75a157da9c1e4171d56b663fe5943e85fed
+        if: steps.pin.outputs.value != '28b7e7fee86f8787c45c85bcded26d157953de4f'
+        uses: tailrocks/velnor/.github/actions/setup-velnor-workflow@28b7e7fee86f8787c45c85bcded26d157953de4f
         with:
           rev: ${{ steps.pin.outputs.value }}
           checkout-path: ${{ github.workspace }}/policy-checkout
       - name: Resolve declared generator product
-        if: steps.pin.outputs.value != '0eeac75a157da9c1e4171d56b663fe5943e85fed'
+        if: steps.pin.outputs.value != '28b7e7fee86f8787c45c85bcded26d157953de4f'
         run: |
           set -euo pipefail
           binary="$HOME/.cache/velnor/workflow-runtime/${{ steps.renderer.outputs.closure }}/bin/velnor-workflow"
@@ -104,7 +109,7 @@ jobs:
           WORKFLOW_ROOT: ${{ github.workspace }}/policy-checkout
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
-          VELNOR_WORKFLOW_POLICY_REVISION: 0eeac75a157da9c1e4171d56b663fe5943e85fed
+          VELNOR_WORKFLOW_POLICY_REVISION: 28b7e7fee86f8787c45c85bcded26d157953de4f
         run: |
           set -euo pipefail
           velnor-workflow policy \

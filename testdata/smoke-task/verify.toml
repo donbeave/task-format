@@ -1,3 +1,4 @@
+# Synthetic CLI smoke fixture only. These `true` commands are no-op test data, not real checks.
 schema = "verify/v2"
 task_id = "TASK-042"
 writable_paths = ["src/auth/session", "tests/auth", "Cargo.lock"]

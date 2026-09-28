@@ -247,13 +247,13 @@ mod tests {
     use std::path::Path;
 
     fn task() -> TaskFile {
-        TaskFile::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/example/README.md"))
+        TaskFile::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/smoke-task/README.md"))
             .unwrap()
     }
 
     fn progress(events: &str, state: &str, current: &str, latest: u64) -> ProgressFile {
         let text = format!(
-            "---\nschema: progress/v1\ntask: TASK-042\nstate: {state}\ncurrent: {current}\nlatest_event: {latest}\n---\n\n## Events\n{events}\n\n## Handoff\nCURRENT_FAILURE: none\n"
+            "---\nschema: progress/v1\ntask: TASK-042\nstate: {state}\ncurrent: {current}\nlatest_event: {latest}\n---\n\n## Events\n{events}\n\n## Handoff\nWorking notes may go here.\n"
         );
         ProgressFile::parse(&text, &task()).unwrap()
     }

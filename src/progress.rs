@@ -43,13 +43,13 @@ mod exhaustive_tests {
     use super::*;
 
     fn task() -> TaskFile {
-        TaskFile::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/example/README.md"))
+        TaskFile::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/smoke-task/README.md"))
             .unwrap()
     }
 
     fn text(events: &str, state: &str, current: &str, latest: u64) -> String {
         format!(
-            "---\nschema: progress/v1\ntask: TASK-042\nstate: {state}\ncurrent: {current}\nlatest_event: {latest}\n---\n\n## Events\n{events}\n\n## Handoff\nCURRENT_FAILURE: none\n"
+            "---\nschema: progress/v1\ntask: TASK-042\nstate: {state}\ncurrent: {current}\nlatest_event: {latest}\n---\n\n## Events\n{events}\n\n## Handoff\nWorking notes may go here.\n"
         )
     }
 
@@ -184,6 +184,51 @@ mod exhaustive_tests {
                 "unknown checklist leaf",
             ),
             (
+                "starts past first leaf",
+                text("- 1 | STARTED | 2.1", "IN_PROGRESS", "2.1", 1),
+                "skips ordered incomplete leaf `1.1`",
+            ),
+            (
+                "skips next leaf after done",
+                text(
+                    "- 1 | STARTED | 1.1\n- 2 | DONE | 1.1\n- 3 | STARTED | 2.2",
+                    "IN_PROGRESS",
+                    "2.2",
+                    3,
+                ),
+                "skips ordered incomplete leaf `2.1`",
+            ),
+            (
+                "skips immediate successor after failed",
+                text(
+                    "- 1 | STARTED | 1.1\n- 2 | FAILED | 1.1\n- 3 | STARTED | 2.2",
+                    "IN_PROGRESS",
+                    "2.2",
+                    3,
+                ),
+                "advance to its immediate successor `2.1`",
+            ),
+            (
+                "skips immediate successor after second failure",
+                text(
+                    "- 1 | STARTED | 1.1\n- 2 | FAILED | 1.1\n- 3 | STARTED | 2.1\n- 4 | FAILED | 2.1\n- 5 | STARTED | 2.3",
+                    "IN_PROGRESS",
+                    "2.3",
+                    5,
+                ),
+                "advance to its immediate successor `2.2`",
+            ),
+            (
+                "done after failed next cannot skip unresolved failure",
+                text(
+                    "- 1 | STARTED | 1.1\n- 2 | FAILED | 1.1\n- 3 | STARTED | 2.1\n- 4 | DONE | 2.1\n- 5 | STARTED | 2.2",
+                    "IN_PROGRESS",
+                    "2.2",
+                    5,
+                ),
+                "skips ordered incomplete leaf `1.1`",
+            ),
+            (
                 "started active",
                 text(
                     "- 1 | STARTED | 1.1\n- 2 | STARTED | 2.1",
@@ -268,17 +313,17 @@ mod exhaustive_tests {
             ),
             (
                 "event in handoff",
-                initial.replacen("CURRENT_FAILURE: none", "- 2 | DONE | 1.1", 1),
+                initial.replacen("Working notes may go here.", "- 2 | DONE | 1.1", 1),
                 "not allowed in handoff",
             ),
             (
                 "events heading in handoff",
-                initial.replacen("CURRENT_FAILURE: none", "## Events", 1),
+                initial.replacen("Working notes may go here.", "## Events", 1),
                 "not allowed in handoff",
             ),
             (
                 "fence in handoff",
-                initial.replacen("CURRENT_FAILURE: none", "---", 1),
+                initial.replacen("Working notes may go here.", "---", 1),
                 "not allowed in handoff",
             ),
         ];
@@ -298,16 +343,68 @@ mod exhaustive_tests {
         assert_eq!(retry.current.as_deref(), Some("1.1"));
         assert!(retry.completed.is_empty());
 
-        let reopened = "- 1 | STARTED | 1.1\n- 2 | DONE | 1.1\n- 3 | REOPENED | 1.1";
+        let reopened = "- 1 | STARTED | 1.1\n- 2 | DONE | 1.1\n- 3 | STARTED | 2.1\n- 4 | DONE | 2.1\n- 5 | STARTED | 2.2\n- 6 | DONE | 2.2\n- 7 | STARTED | 2.3\n- 8 | DONE | 2.3\n- 9 | STARTED | 3.1\n- 10 | DONE | 3.1\n- 11 | REOPENED | 2.1";
         let reopened =
-            ProgressFile::parse(&text(reopened, "IN_PROGRESS", "1.1", 3), &task()).unwrap();
+            ProgressFile::parse(&text(reopened, "IN_PROGRESS", "2.1", 11), &task()).unwrap();
         assert_eq!(reopened.state, State::InProgress);
-        assert!(reopened.completed.is_empty());
+        assert!(!reopened.completed.contains("2.1"));
+        assert_eq!(reopened.completed.len(), 4);
+
+        let reopened_during_work = "- 1 | STARTED | 1.1\n- 2 | DONE | 1.1\n- 3 | REOPENED | 1.1";
+        let reopened_during_work = ProgressFile::parse(
+            &text(reopened_during_work, "IN_PROGRESS", "1.1", 3),
+            &task(),
+        )
+        .unwrap();
+        assert!(reopened_during_work.completed.is_empty());
+
+        let reopened_after_failed = "- 1 | STARTED | 1.1\n- 2 | DONE | 1.1\n- 3 | STARTED | 2.1\n- 4 | FAILED | 2.1\n- 5 | REOPENED | 1.1";
+        let reopened_after_failed = ProgressFile::parse(
+            &text(reopened_after_failed, "IN_PROGRESS", "1.1", 5),
+            &task(),
+        )
+        .unwrap();
+        assert_eq!(reopened_after_failed.current.as_deref(), Some("1.1"));
+        assert!(!reopened_after_failed.completed.contains("1.1"));
 
         let blocked = "- 1 | STARTED | 1.1\n- 2 | BLOCKED | 1.1";
         let blocked = ProgressFile::parse(&text(blocked, "BLOCKED", "1.1", 2), &task()).unwrap();
         assert_eq!(blocked.state, State::Blocked);
         assert_eq!(blocked.current.as_deref(), Some("1.1"));
+    }
+
+    #[test]
+    fn ordered_progress_allows_failed_retry_or_one_step_advance_then_returns_to_earliest_gap() {
+        let retry = "- 1 | STARTED | 1.1\n- 2 | FAILED | 1.1\n- 3 | STARTED | 1.1";
+        let retry = ProgressFile::parse(&text(retry, "IN_PROGRESS", "1.1", 3), &task()).unwrap();
+        assert_eq!(retry.current.as_deref(), Some("1.1"));
+
+        let advance = "- 1 | STARTED | 1.1\n- 2 | FAILED | 1.1\n- 3 | STARTED | 2.1";
+        let advance =
+            ProgressFile::parse(&text(advance, "IN_PROGRESS", "2.1", 3), &task()).unwrap();
+        assert_eq!(advance.current.as_deref(), Some("2.1"));
+
+        let repeated_failure = "- 1 | STARTED | 1.1\n- 2 | FAILED | 1.1\n- 3 | STARTED | 1.1\n- 4 | FAILED | 1.1\n- 5 | STARTED | 2.1";
+        let repeated_failure =
+            ProgressFile::parse(&text(repeated_failure, "IN_PROGRESS", "2.1", 5), &task()).unwrap();
+        assert_eq!(repeated_failure.current.as_deref(), Some("2.1"));
+
+        let failure_chain = "- 1 | STARTED | 1.1\n- 2 | FAILED | 1.1\n- 3 | STARTED | 2.1\n- 4 | FAILED | 2.1\n- 5 | STARTED | 2.2";
+        let failure_chain =
+            ProgressFile::parse(&text(failure_chain, "IN_PROGRESS", "2.2", 5), &task()).unwrap();
+        assert_eq!(failure_chain.current.as_deref(), Some("2.2"));
+
+        // Each FAILED event permits a one-leaf advance. Once that leaf is DONE,
+        // retry the earliest unresolved leaf before moving farther through the checklist.
+        let revisit_gap = "- 1 | STARTED | 1.1\n- 2 | FAILED | 1.1\n- 3 | STARTED | 2.1\n- 4 | DONE | 2.1\n- 5 | STARTED | 1.1";
+        let revisit_gap =
+            ProgressFile::parse(&text(revisit_gap, "IN_PROGRESS", "1.1", 5), &task()).unwrap();
+        assert_eq!(revisit_gap.current.as_deref(), Some("1.1"));
+
+        let completed_gap = "- 1 | STARTED | 1.1\n- 2 | FAILED | 1.1\n- 3 | STARTED | 2.1\n- 4 | DONE | 2.1\n- 5 | STARTED | 1.1\n- 6 | DONE | 1.1\n- 7 | STARTED | 2.2";
+        let completed_gap =
+            ProgressFile::parse(&text(completed_gap, "IN_PROGRESS", "2.2", 7), &task()).unwrap();
+        assert_eq!(completed_gap.current.as_deref(), Some("2.2"));
     }
 }
 
@@ -468,7 +565,6 @@ impl ProgressFile {
                 .any(|line| line == "## Events" || line == "---" || line.starts_with("- ")),
             "progress: state-machine content is not allowed in handoff"
         );
-
         let mut events = Vec::new();
         for line in &lines[events_start..events_end] {
             let parts: Vec<_> = line
@@ -566,6 +662,42 @@ fn reduce(
                     "progress: STARTED completed leaf `{}`",
                     event.leaf
                 );
+                let first_incomplete = leaves
+                    .iter()
+                    .find(|leaf| !completed.contains(*leaf))
+                    .expect("an uncompleted leaf exists after the completed check");
+                let previous = index
+                    .checked_sub(1)
+                    .and_then(|previous| events.get(previous));
+                let retries_failed_leaf = previous.is_some_and(|previous| {
+                    previous.status == EventStatus::Failed && previous.leaf == event.leaf
+                });
+                let advances_after_failure = previous
+                    .filter(|previous| previous.status == EventStatus::Failed)
+                    .and_then(|previous| leaves.iter().position(|leaf| leaf == &previous.leaf))
+                    .is_some_and(|failed_index| leaves.get(failed_index + 1) == Some(&event.leaf));
+                if let Some(previous) =
+                    previous.filter(|previous| previous.status == EventStatus::Failed)
+                {
+                    let successor = leaves
+                        .iter()
+                        .position(|leaf| leaf == &previous.leaf)
+                        .and_then(|failed_index| leaves.get(failed_index + 1));
+                    ensure!(
+                        retries_failed_leaf || advances_after_failure,
+                        "progress: STARTED leaf `{}` after FAILED `{}` must retry it or advance to its immediate successor `{}`",
+                        event.leaf,
+                        previous.leaf,
+                        successor.map_or("NONE", String::as_str)
+                    );
+                } else {
+                    ensure!(
+                        event.leaf == *first_incomplete,
+                        "progress: STARTED leaf `{}` skips ordered incomplete leaf `{}`",
+                        event.leaf,
+                        first_incomplete
+                    );
+                }
                 active = Some(event.leaf.clone());
             }
             EventStatus::Done => {
@@ -636,12 +768,12 @@ fn reduce(
 mod tests {
     use super::*;
     fn task() -> TaskFile {
-        TaskFile::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/example/README.md"))
+        TaskFile::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/smoke-task/README.md"))
             .unwrap()
     }
     fn text(events: &str, state: &str, current: &str, latest: u64) -> String {
         format!(
-            "---\nschema: progress/v1\ntask: TASK-042\nstate: {state}\ncurrent: {current}\nlatest_event: {latest}\n---\n\n## Events\n{events}\n\n## Handoff\nCURRENT_FAILURE: none\n"
+            "---\nschema: progress/v1\ntask: TASK-042\nstate: {state}\ncurrent: {current}\nlatest_event: {latest}\n---\n\n## Events\n{events}\n\n## Handoff\nWorking notes may go here.\n"
         )
     }
     #[test]
