@@ -427,7 +427,16 @@ fn verify_checks_only_ends_with_checks_pass_and_full_completion_ends_with_done()
     assert_eq!(incomplete.status.code(), Some(1));
     assert!(text(&incomplete).contains("CHECK progress FAIL"));
     assert!(!text(&incomplete).ends_with("DONE\n"));
+}
 
+#[test]
+fn verify_nonzero_declared_command_fails_with_completed_progress_without_done() {
+    let temp = TempDir::new().unwrap();
+    let root = base_workspace(temp.path());
+    let task_dir = copy_task(temp.path());
+    let progress_path = temp.path().join("progress.md");
+    let mut full_args = verify_args(&root, &task_dir, "HEAD");
+    full_args.extend(["--progress".into(), progress_path.display().to_string()]);
     let config_path = task_dir.join("verify.toml");
     let original_config = fs::read_to_string(&config_path).unwrap();
     let config = original_config.replacen(
@@ -444,10 +453,14 @@ fn verify_checks_only_ends_with_checks_pass_and_full_completion_ends_with_done()
     );
     fs::write(config_path, config).unwrap();
     fs::write(&progress_path, completed_progress()).unwrap();
-    let failing_check_with_done_progress = cli(&full_args);
-    assert_eq!(failing_check_with_done_progress.status.code(), Some(1));
-    assert!(text(&failing_check_with_done_progress).contains("CHECK CHK-001 FAIL"));
-    assert!(!text(&failing_check_with_done_progress).ends_with("DONE\n"));
+    let output = cli(&full_args);
+    let report = text(&output);
+    assert_eq!(output.status.code(), Some(1), "{report}");
+    assert!(report.contains("CHECK CHK-001 FAIL"), "{report}");
+    assert!(report.contains("CHK-001 exited with"), "{report}");
+    assert!(report.contains("expected exit 0, got"), "{report}");
+    assert!(report.contains("CHECK progress PASS"), "{report}");
+    assert!(!report.lines().any(|line| line == "DONE"), "{report}");
 }
 
 #[test]
