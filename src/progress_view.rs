@@ -247,7 +247,7 @@ mod tests {
     use std::path::Path;
 
     fn task() -> TaskFile {
-        TaskFile::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/example/README.md"))
+        TaskFile::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/smoke-task/README.md"))
             .unwrap()
     }
 

@@ -95,7 +95,8 @@ with a standalone `DONE` line.
 
 [`examples/README.md`](examples/README.md) describes the authentic `pgtui` task sequence, target
 workspace requirements, and caller-provided inputs. Examples are task packages, not a self-running
-campaign.
+campaign. [`testdata/smoke-task/`](testdata/smoke-task/) is separate synthetic CLI test data; its
+no-op checks do not verify real work and it is not an authentic target example.
 
 ## Development
 

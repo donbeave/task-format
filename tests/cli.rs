@@ -28,15 +28,15 @@ fn text(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
-fn task_fixture() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/example")
+fn smoke_task_fixture() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/smoke-task")
 }
 
 fn copy_task(parent: &Path) -> PathBuf {
     let task_dir = parent.join("task");
     fs::create_dir_all(&task_dir).unwrap();
     for name in ["README.md", "verify.toml"] {
-        fs::copy(task_fixture().join(name), task_dir.join(name)).unwrap();
+        fs::copy(smoke_task_fixture().join(name), task_dir.join(name)).unwrap();
     }
     task_dir
 }

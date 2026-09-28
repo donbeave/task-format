@@ -1,9 +1,9 @@
 [tasks.taskfmt-ci]
-description = "Check/build taskfmt; lint the template seed, smoke fixture, and canonical examples."
+description = "Check/build taskfmt; lint the template seed, synthetic CLI smoke fixture, and canonical examples."
 run = [
   "cargo check --locked --all-targets --all-features",
   "cargo build --locked --release --bin taskfmt",
   "cargo run --locked --bin taskfmt -- lint reference/task-template",
-  "cargo run --locked --bin taskfmt -- lint testdata/example",
+  "cargo run --locked --bin taskfmt -- lint testdata/smoke-task",
   'set -e; found=0; for example in examples/TASK-*; do if [ -d "$example" ]; then found=1; cargo run --locked --bin taskfmt -- lint "$example"; fi; done; test "$found" -eq 1',
 ]

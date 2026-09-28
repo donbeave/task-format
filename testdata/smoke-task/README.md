@@ -1,11 +1,16 @@
 ---
 schema: task/v5
 id: TASK-042
-title: "Reject expired refresh tokens before session rotation"
+title: "Synthetic CLI smoke fixture"
 kind: bugfix
 ---
 
-# TASK-042 — Reject expired refresh tokens before session rotation
+This package is synthetic CLI test data, not an authentic task for a target repository. Its
+`verify.toml` checks deliberately run no-op `true` commands so CLI tests can exercise task parsing
+and verification plumbing; they do not verify implementation behavior. Use `examples/TASK-001`
+through `examples/TASK-007` for the canonical authentic task examples.
+
+# TASK-042 — Synthetic CLI smoke fixture
 
 ## Goal
 

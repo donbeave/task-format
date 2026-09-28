@@ -15,7 +15,7 @@ services, and other prerequisites.
    ```sh
    TASK_FORMAT_ROOT=/path/to/task-format
    TASK_ID=TASK-042
-   FIRST_LEAF=2.1
+   FIRST_LEAF=1.1
    PROGRESS_FILE="${TMPDIR:-/tmp}/taskfmt-progress/${TASK_ID}.md"
    mkdir -p "$(dirname "$PROGRESS_FILE")"
    cp "$TASK_FORMAT_ROOT/reference/task-template/progress.md" "$PROGRESS_FILE"
@@ -42,13 +42,31 @@ Append event rows in order. Sequence numbers start at 1 and stay contiguous. The
 source of truth; after each update, set `state`, `current`, and `latest_event` to the values derived
 from the full stream.
 
-- `STARTED` opens an incomplete leaf when no leaf is active.
-- `DONE` closes and completes the active leaf. If work remains, immediately append `STARTED` for
-  the next leaf. When every leaf is complete, set `state: DONE` and `current: NONE`.
-- `FAILED` closes the active leaf without completing it. If work remains, append `STARTED` for the
-  next leaf or retry that failed, incomplete leaf before saving.
-- `REOPENED` opens a completed, inactive leaf again.
+- `STARTED` opens the globally earliest incomplete leaf when no leaf is active, except immediately
+  after `FAILED`, when it may retry that failed leaf or advance to its immediate ordered successor
+  only if that successor is incomplete. If the successor is already complete or the failed leaf is
+  last, retry the failed leaf.
+- `DONE` closes and completes the active leaf. If work remains, immediately append `STARTED` for the
+  globally earliest incomplete leaf. When every leaf is complete, set `state: DONE` and
+  `current: NONE`.
+- `FAILED` closes the active leaf without completing it. The next event may be `REOPENED` for a
+  completed inactive leaf; otherwise immediately append `STARTED` for the failed leaf, or its
+  immediate ordered successor only if that successor is incomplete. If the successor is already
+  complete or the failed leaf is last, retry the failed leaf. After a started successor is completed,
+  `DONE` rules apply again: return to the globally earliest incomplete leaf. On the final checklist
+  leaf, there is no successor, so retry it; a valid `REOPENED` event for a completed inactive leaf is
+  also allowed.
+- `REOPENED` opens any completed, inactive leaf whenever no leaf is active, including immediately
+  after `FAILED` and while other leaves remain incomplete. After any reopened leaf is completed with
+  `DONE`, the next `STARTED` selects the globally earliest incomplete leaf.
 - `BLOCKED` and `NEEDS_REPLAN` end the stream with the active leaf still current.
+
+The `progress/v1` schema and event serialization are unchanged, but validation now enforces these
+ordered `STARTED` rules. Only previously accepted out-of-order event streams may now fail
+validation. Correct historical events only when they are factually wrong, and preserve the original
+log. If the history is factually accurate but out of order, do not mutate or reorder it: preserve or
+archive the old log, then start a replacement ordered progress stream based on actual workspace
+state, beginning with the earliest unresolved leaf.
 
 The final event number is `latest_event`. `IN_PROGRESS` requires an active leaf. `DONE` requires a
 `DONE` event for every checklist leaf not later reopened, with no active leaf. Do not add events

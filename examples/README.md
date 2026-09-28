@@ -3,6 +3,8 @@
 These seven `task/v5` packages are authentic, ordered implementation tasks for the `pgtui` Rust
 workspace. They demonstrate real task contracts; they are not self-contained `taskfmt` smoke
 fixtures. Each task keeps its own `verify.toml` and lists its prerequisites and writable scope.
+The synthetic CLI smoke fixture lives separately at [`../testdata/smoke-task/`](../testdata/smoke-task/)
+and is not one of these authentic target examples.
 
 ## Order and prerequisites
 

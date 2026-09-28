@@ -76,11 +76,11 @@ only to checklist leaves. Use one blank line after the header fence and one blan
 last event row and `## Handoff`.
 
 For example, from the task-format repository root, create an external progress file for task
-`TASK-042` whose first checklist leaf is `2.1`:
+`TASK-042` whose first checklist leaf is `1.1`:
 
 ```sh
 TASK_ID=TASK-042
-FIRST_LEAF=2.1
+FIRST_LEAF=1.1
 PROGRESS_FILE="${TMPDIR:-/tmp}/taskfmt-progress/${TASK_ID}.md"
 mkdir -p "$(dirname "$PROGRESS_FILE")"
 cp reference/task-template/progress.md "$PROGRESS_FILE"
@@ -98,12 +98,26 @@ The commands replace the task ID and initial leaf while keeping `state: IN_PROGR
 
 Allowed statuses are `STARTED`, `DONE`, `FAILED`, `REOPENED`, `BLOCKED`, and `NEEDS_REPLAN`:
 
-- `STARTED` opens an incomplete, not-yet-completed leaf when none is active.
+- `STARTED` opens the globally earliest incomplete leaf when none is active, except immediately
+  after `FAILED`, when it may retry that failed leaf or advance to its immediate ordered successor
+  only if that successor is incomplete. If the successor is already complete or the failed leaf is
+  last, retry the failed leaf.
 - `DONE` closes the active leaf and records it complete.
-- `FAILED` closes the active leaf without completing it. A following `STARTED` may open the next leaf
-  or retry that failed, incomplete leaf.
-- `REOPENED` opens a previously completed, inactive leaf again.
+- `FAILED` closes the active leaf without completing it. It may be retried; the next incomplete
+  immediate successor may be started instead. After that successor is completed, the next `STARTED`
+  returns to the globally earliest incomplete leaf. On the final checklist leaf, there is no
+  successor, so retry it; a valid `REOPENED` event for a completed inactive leaf is also allowed.
+- `REOPENED` opens any previously completed, inactive leaf again whenever no leaf is active,
+  including immediately after `FAILED` and while other leaves remain incomplete. After the reopened
+  leaf is completed with `DONE`, the next `STARTED` selects the globally earliest incomplete leaf.
 - `BLOCKED` and `NEEDS_REPLAN` end the event stream and leave the active leaf current.
+
+The `progress/v1` schema and event serialization are unchanged, but validation now enforces these
+ordered `STARTED` rules. Only previously accepted out-of-order event streams may now fail
+validation. Correct historical events only when they are factually wrong, and preserve the original
+log. If the history is factually accurate but out of order, do not mutate or reorder it: preserve or
+archive the old log, then start a replacement ordered progress stream based on actual workspace
+state, beginning with the earliest unresolved leaf.
 
 Keep `state`, `current`, and `latest_event` synchronized with the complete event stream:
 
@@ -114,9 +128,15 @@ Keep `state`, `current`, and `latest_event` synchronized with the complete event
 | `NEEDS_REPLAN` | Active leaf ID | The final event is `NEEDS_REPLAN`. |
 | `DONE` | `NONE` | Every leaf has a `DONE` event not later reopened. |
 
-After `DONE` or `FAILED`, if work remains, append `STARTED` for the next leaf or retry the failed,
-incomplete leaf before saving. An `IN_PROGRESS` file must have an active leaf. `latest_event` equals
-the last event's sequence. The header's task ID matches the task README.
+At the beginning and after `DONE`, if work remains, append `STARTED` for the globally earliest
+incomplete leaf. After `FAILED`, the next event may be `REOPENED` for a completed inactive leaf;
+otherwise append `STARTED` for the failed leaf, or its immediate ordered successor only when that
+successor is incomplete. If the successor is already complete or the failed leaf is last, retry the
+failed leaf. On the final checklist leaf, no successor exists, so retry it; a valid `REOPENED` event
+for a completed inactive leaf is also allowed. After a started successor or reopened leaf is
+completed with `DONE`, resume `STARTED` events at the globally earliest incomplete leaf. An
+`IN_PROGRESS` file must have an active leaf.
+`latest_event` equals the last event's sequence. The header's task ID matches the task README.
 
 Write optional handoff notes as paragraphs or labels. Do not begin a handoff line with `- ` or use a
 line exactly equal to `## Events` or `---`; those are reserved for the event structure.
