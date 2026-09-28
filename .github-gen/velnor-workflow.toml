@@ -2,7 +2,7 @@ schema = 2
 
 [generator]
 repository = "donbeave/task-format"
-revision = "8f7682cedc98b58fdb9a4fbe1a1fb111bd9d29e7"
+revision = "28b7e7fee86f8787c45c85bcded26d157953de4f"
 
 [workflow]
 providers = ["github-hosted"]
